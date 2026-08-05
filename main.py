@@ -55,7 +55,7 @@ app.include_router(sas_sas_router)
 
 @app.on_event("startup")
 def on_startup():
-    from profile.context import active_profile_id, get_active_profile
+    from spectrum_profiles.context import active_profile_id, get_active_profile
 
     profile = get_active_profile()
     print(

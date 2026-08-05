@@ -212,7 +212,7 @@ def peer_has_grant_for_cbsd(db: Session, cbsd: Cbsd) -> bool:
 
 
 def _peer_esc_params() -> tuple[float, int, int]:
-    from profile.context import get_active_profile
+    from spectrum_profiles.context import get_active_profile
 
     profile = get_active_profile()
     rule = profile.get_protection("peer_esc")
@@ -226,7 +226,7 @@ def _peer_esc_params() -> tuple[float, int, int]:
 
 
 def _peer_ppa_buffer_m() -> float:
-    from profile.context import get_active_profile
+    from spectrum_profiles.context import get_active_profile
 
     rule = get_active_profile().get_protection("peer_ppa")
     if rule and rule.enabled:

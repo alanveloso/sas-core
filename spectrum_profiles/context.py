@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from config import get_settings
-from profile.loader import clear_profile_cache, load_profile
-from profile.schema import SpectrumProfile
+from spectrum_profiles.loader import clear_profile_cache, load_profile
+from spectrum_profiles.schema import SpectrumProfile
 
 DEFAULT_PROFILE_ID = "cbrs_winnforum"
 
