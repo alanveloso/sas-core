@@ -1,0 +1,123 @@
+"""Dependency pinning and Uvicorn ssl_context_factory compatibility (P0-003)."""
+
+from __future__ import annotations
+
+import inspect
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+import uvicorn
+from uvicorn.config import Config
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_python_meets_declared_minimum():
+    assert sys.version_info >= (3, 11), (
+        f"requires-python is >=3.11 but interpreter is {sys.version}"
+    )
+
+
+def test_pyproject_declares_python_311_and_pinned_deps():
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requires = data["project"]["requires-python"]
+    assert requires.startswith(">="), requires
+    assert "3.11" in requires
+    deps = data["project"]["dependencies"]
+    assert deps, "project.dependencies must not be empty"
+    for dep in deps:
+        assert "==" in dep, f"dependency must be pinned with == : {dep}"
+        assert ">=" not in dep.split(";")[0], f"floating lower-bound left in {dep}"
+
+
+def test_requirements_txt_has_no_floating_lower_bounds():
+    text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        assert ">=" not in line, f"floating requirement: {line}"
+        assert "==" in line, f"unpinned requirement: {line}"
+
+
+def test_requirements_lock_pins_direct_dependencies():
+    lock_lines = {
+        line.strip()
+        for line in (ROOT / "requirements.lock.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    required_names = {
+        "fastapi": "0.141.1",
+        "uvicorn": "0.52.1",
+        "SQLAlchemy": "2.0.51",
+        "pydantic": "2.13.4",
+        "pydantic-settings": "2.14.2",
+        "psycopg2-binary": "2.9.12",
+        "celery": "5.6.3",
+        "cryptography": "50.0.0",
+        "httpx": "0.28.1",
+        "PyYAML": "6.0.3",
+    }
+    for name, version in required_names.items():
+        assert f"{name}=={version}" in lock_lines, f"lock missing {name}=={version}"
+    for line in lock_lines:
+        assert "==" in line and ">=" not in line, f"lock entry not exact: {line}"
+
+
+def test_dockerfile_pins_base_image_by_digest():
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(
+        r"FROM\s+python:3\.11-slim-bookworm@sha256:[0-9a-f]{64}",
+        text,
+    ), "Dockerfile must pin python:3.11-slim-bookworm by sha256 digest"
+    assert "requirements.lock.txt" in text
+    assert "pip==" in text, "Dockerfile must pin pip version used for lock installs"
+
+
+def test_requirements_txt_matches_pyproject_dependencies():
+    """Direct runtime pins must stay aligned across install entrypoints."""
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject_deps = {
+        _normalize_req(dep) for dep in data["project"]["dependencies"]
+    }
+    req_deps = set()
+    for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        req_deps.add(_normalize_req(line))
+    assert pyproject_deps == req_deps, (
+        f"pyproject/requirements drift: only_in_pyproject={pyproject_deps - req_deps} "
+        f"only_in_requirements={req_deps - pyproject_deps}"
+    )
+
+
+def _normalize_req(dep: str) -> str:
+    """Normalize extras and package name case for set comparison."""
+    dep = dep.strip()
+    name, _, version = dep.partition("==")
+    # Drop extras: uvicorn[standard] -> uvicorn
+    name = name.split("[", 1)[0].strip().lower().replace("_", "-")
+    return f"{name}=={version.strip()}"
+
+
+def test_uvicorn_run_accepts_ssl_context_factory():
+    """mTLS entrypoint passes ssl_context_factory into uvicorn.run (main.py)."""
+    assert uvicorn.__version__ == "0.52.1", (
+        f"installed uvicorn {uvicorn.__version__} != locked 0.52.1"
+    )
+    params = inspect.signature(uvicorn.run).parameters
+    assert "ssl_context_factory" in params
+    config_params = inspect.signature(Config.__init__).parameters
+    assert "ssl_context_factory" in config_params
+
+
+def test_uvicorn_h11_request_response_cycle_still_patchable():
+    """mtls_auth.patch_uvicorn_for_client_cert depends on this private API surface."""
+    from uvicorn.protocols.http.h11_impl import RequestResponseCycle
+
+    init = RequestResponseCycle.__init__
+    params = list(inspect.signature(init).parameters)
+    assert "transport" in params
