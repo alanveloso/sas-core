@@ -9,7 +9,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import BlacklistedFccId, Cbsd, FccIdRecord, Grant
+from models.models import Cbsd, FccIdRecord, Grant
+from services.blacklist_service import is_cbsd_blacklisted
 from services.geometry import point_in_geojson
 from services.spectrum_inquiry_service import (
     CBRS_HIGH_HZ,
@@ -248,7 +249,7 @@ def process_grant(
             responses.append(_resp(INVALID_PARAM))
             continue
 
-        if db.query(BlacklistedFccId).filter_by(fcc_id=cbsd.fcc_id).first():
+        if is_cbsd_blacklisted(db, cbsd.fcc_id, cbsd.cbsd_serial_number):
             responses.append(_resp(BLACKLISTED, cbsd_id=cbsd_id))
             continue
 

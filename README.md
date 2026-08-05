@@ -117,7 +117,22 @@ Diagnose the layout before starting:
 python -m tools.doctor
 ```
 
-### 3. Start the service
+### 3. Docker Compose (optional stack)
+
+Compose no longer requires a project `.env` file (`env_file` is optional; service
+defaults are built in). For local overrides, copy `.env.example` → `.env`
+(host/`pytest` should keep the sqlite `DATABASE_URL`; api/worker containers
+always receive the in-stack Postgres URL).
+
+```bash
+# Validates the stack definition (no .env required):
+docker compose config
+
+# Runtime still needs ./certs provisioned (see above) before `up`:
+docker compose up --build
+```
+
+### 4. Start the service
 
 ```bash
 python main.py

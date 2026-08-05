@@ -1,6 +1,7 @@
 from models.models import (
     AdminInjectedData,
     BlacklistedFccId,
+    BlacklistedFccIdSerial,
     Cbsd,
     ConditionalRegistration,
     CpiUser,
@@ -18,6 +19,7 @@ from models.models import (
 __all__ = [
     "AdminInjectedData",
     "BlacklistedFccId",
+    "BlacklistedFccIdSerial",
     "Cbsd",
     "ConditionalRegistration",
     "CpiUser",

@@ -10,7 +10,6 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models.models import (
-    BlacklistedFccId,
     Cbsd,
     ConditionalRegistration,
     CpiUser,
@@ -18,6 +17,7 @@ from models.models import (
     Grant,
     UserIdRecord,
 )
+from services.blacklist_service import is_cbsd_blacklisted
 
 # WINNF response codes
 SUCCESS = 0
@@ -315,7 +315,7 @@ def process_registration(
         fcc_id = request["fccId"]
         serial = request["cbsdSerialNumber"]
 
-        if db.query(BlacklistedFccId).filter_by(fcc_id=fcc_id).first():
+        if is_cbsd_blacklisted(db, fcc_id, serial):
             responses.append({"response": {"responseCode": BLACKLISTED}})
             continue
 

@@ -42,6 +42,21 @@ class BlacklistedFccId(Base):
     fcc_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
 
+class BlacklistedFccIdSerial(Base):
+    """Per-CBSD blacklist (fccId + cbsdSerialNumber), Admin BlacklistByFccIdAndSerialNumber."""
+
+    __tablename__ = "blacklisted_fcc_id_serials"
+    __table_args__ = (
+        UniqueConstraint(
+            "fcc_id", "cbsd_serial_number", name="uq_blacklist_fcc_serial"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fcc_id: Mapped[str] = mapped_column(String(64), index=True)
+    cbsd_serial_number: Mapped[str] = mapped_column(String(128), index=True)
+
+
 class ConditionalRegistration(Base):
     __tablename__ = "conditional_registrations"
     __table_args__ = (
