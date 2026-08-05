@@ -7,7 +7,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import AdminInjectedData, BlacklistedFccId, Cbsd
+from models.models import AdminInjectedData, Cbsd
+from services.blacklist_service import is_cbsd_blacklisted
 from services.geometry import haversine_m, point_in_geojson
 
 SUCCESS = 0
@@ -342,7 +343,7 @@ def process_spectrum_inquiry(
             responses.append({"response": {"responseCode": INVALID_PARAM}})
             continue
 
-        if db.query(BlacklistedFccId).filter_by(fcc_id=cbsd.fcc_id).first():
+        if is_cbsd_blacklisted(db, cbsd.fcc_id, cbsd.cbsd_serial_number):
             responses.append(
                 {
                     "cbsdId": cbsd_id,

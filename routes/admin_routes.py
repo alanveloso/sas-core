@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from database import get_db, reset_db
 from models.models import (
     AdminInjectedData,
-    BlacklistedFccId,
     ConditionalRegistration,
     CpiUser,
     EscSensor,
@@ -22,11 +21,13 @@ from models.models import (
 )
 from schemas.admin import (
     BlacklistFccIdRequest,
+    BlacklistFccIdSerialRequest,
     ConditionalRegistrationRequest,
     InjectCpiUserRequest,
     InjectFccIdRequest,
     InjectUserIdRequest,
 )
+from services.blacklist_service import add_fcc_id_blacklist, add_fcc_id_serial_blacklist
 from services.cpas_service import (
     get_daily_activities_completed,
     trigger_daily_activities,
@@ -42,6 +43,17 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 def _empty_ok() -> Response:
     return Response(status_code=200, content=b"", media_type="application/json")
+
+
+async def _read_json_object(request: Request) -> dict[str, Any]:
+    """Parse JSON object body; invalid/non-object payloads become {} (harness inject)."""
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return {}
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
 
 
 def _store_injection(db: Session, kind: str, payload: Any) -> None:
@@ -128,9 +140,7 @@ def inject_cpi_user(body: InjectCpiUserRequest, db: Session = Depends(get_db)):
 
 @router.post("/injectdata/blacklist_fcc_id")
 def blacklist_fcc_id(body: BlacklistFccIdRequest, db: Session = Depends(get_db)):
-    if not db.query(BlacklistedFccId).filter_by(fcc_id=body.fccId).first():
-        db.add(BlacklistedFccId(fcc_id=body.fccId))
-        db.commit()
+    add_fcc_id_blacklist(db, body.fccId)
     return _empty_ok()
 
 
@@ -393,14 +403,84 @@ def trigger_enable_scheduled_daily_activities(db: Session = Depends(get_db)):
     return _empty_ok()
 
 
-# Catch-all stubs so the harness never gets HTTP 404 on admin paths.
-@router.api_route(
-    "/{full_path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-)
-async def admin_stub(full_path: str, request: Request):
-    if request.method == "POST" and full_path.endswith(
-        ("get_daily_activities_status",)
-    ):
-        return JSONResponse({"completed": True})
+@router.post("/injectdata/esc_zone")
+async def inject_esc_zone(request: Request, db: Session = Depends(get_db)):
+    """Persist ESC zone injection payload (harness InjectEscZone)."""
+    body = await _read_json_object(request)
+    _store_injection(db, "esc_zone", body)
     return _empty_ok()
+
+
+@router.post("/injectdata/cluster_list")
+async def inject_cluster_list(request: Request, db: Session = Depends(get_db)):
+    """Persist PPA cluster list injection (harness InjectClusterList)."""
+    body = await _read_json_object(request)
+    _store_injection(db, "cluster_list", body)
+    return _empty_ok()
+
+
+@router.post("/injectdata/blacklist_fcc_id_and_serial_number")
+def blacklist_fcc_id_and_serial_number(
+    body: BlacklistFccIdSerialRequest, db: Session = Depends(get_db)
+):
+    """Blacklist a specific CBSD (fccId + cbsdSerialNumber); enforced on REG/SIQ/GRA/HBT."""
+    add_fcc_id_serial_blacklist(db, body.fccId, body.cbsdSerialNumber)
+    return _empty_ok()
+
+
+@router.post("/injectdata/sas_admin")
+async def inject_sas_admin(request: Request, db: Session = Depends(get_db)):
+    """Persist SasAdministrator record injection."""
+    body = await _read_json_object(request)
+    _store_injection(db, "sas_admin", body)
+    return _empty_ok()
+
+
+@router.post("/trigger/esc_detection")
+async def trigger_esc_detection(request: Request, db: Session = Depends(get_db)):
+    from services.meas_report import set_admin_flag
+
+    body = await _read_json_object(request)
+    set_admin_flag(db, "esc_detection", body)
+    return _empty_ok()
+
+
+@router.post("/trigger/esc_reset")
+def trigger_esc_reset(db: Session = Depends(get_db)):
+    from services.meas_report import clear_admin_flags
+
+    clear_admin_flags(db, "esc_detection")
+    return _empty_ok()
+
+
+@router.post("/trigger/dpa_deactivation")
+async def trigger_dpa_deactivation(request: Request, db: Session = Depends(get_db)):
+    """Explicit DPA deactivation path used by harness TriggerDpaDeactivation."""
+    from services.meas_report import FLAG_DPA_ACTIVE, clear_admin_flags
+
+    del request  # body unused; deactivation is unconditional for this trigger
+    clear_admin_flags(db, FLAG_DPA_ACTIVE)
+    return _empty_ok()
+
+
+@router.post("/trigger/disconnect_esc")
+def trigger_disconnect_esc(db: Session = Depends(get_db)):
+    from services.meas_report import set_admin_flag
+
+    set_admin_flag(db, "esc_disconnected", {"disconnected": True})
+    return _empty_ok()
+
+
+@router.post("/query/propagation_and_antenna_model")
+async def query_propagation_and_antenna_model(request: Request):
+    """PAT admin query — not implemented; must not return a fake success body."""
+    del request
+    return JSONResponse(
+        {
+            "detail": (
+                "Admin query/propagation_and_antenna_model is not implemented "
+                "(PAT family pending)."
+            )
+        },
+        status_code=501,
+    )

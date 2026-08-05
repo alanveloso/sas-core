@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,8 +56,11 @@ class Settings(BaseSettings):
     rsa_port: int = 9000
     ecc_port: int = 9001
 
-    # mTLS / certificates
-    certs_dir: Path = _DEFAULT_CERTS
+    # mTLS / certificates — canonical root is <repo>/certs (override with CERTS_DIR).
+    certs_dir: Path = Field(
+        default=_DEFAULT_CERTS,
+        description="Canonical certificate directory (CERTS_DIR).",
+    )
     ssl_certfile: Optional[Path] = None
     ssl_keyfile: Optional[Path] = None
     ssl_ecc_certfile: Optional[Path] = None
@@ -67,12 +70,33 @@ class Settings(BaseSettings):
     client_certfile: Optional[Path] = None
     client_keyfile: Optional[Path] = None
 
+    # Execution mode: production uses Celery; certification runs CPAS inline.
+    sas_execution_mode: Literal["production", "certification"] = Field(
+        default="production",
+        description="SAS_EXECUTION_MODE=production|certification",
+    )
+
     # External federal / marketplace DB basic auth
     db_sync_username: str = "username"
     db_sync_password: str = "password"
 
+    @field_validator("sas_execution_mode", mode="before")
+    @classmethod
+    def _normalize_execution_mode(cls, value: object) -> object:
+        if value is None or value == "":
+            return "production"
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("certs_dir", mode="before")
+    @classmethod
+    def _coerce_certs_dir(cls, value: object) -> object:
+        if value is None or value == "":
+            return _DEFAULT_CERTS
+        return Path(str(value))
+
     @field_validator(
-        "certs_dir",
         "ssl_certfile",
         "ssl_keyfile",
         "ssl_ecc_certfile",
@@ -84,7 +108,7 @@ class Settings(BaseSettings):
         mode="before",
     )
     @classmethod
-    def _coerce_path(cls, value: object) -> object:
+    def _coerce_optional_path(cls, value: object) -> object:
         if value is None or value == "":
             return None
         if isinstance(value, Path):

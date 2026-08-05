@@ -37,4 +37,11 @@ class InjectCpiUserRequest(BaseModel):
 class BlacklistFccIdRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    fccId: str
+    fccId: str = Field(min_length=1)
+
+
+class BlacklistFccIdSerialRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    fccId: str = Field(min_length=1)
+    cbsdSerialNumber: str = Field(min_length=1)

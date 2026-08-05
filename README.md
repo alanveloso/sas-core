@@ -86,21 +86,53 @@ pip install -r requirements.txt
 
 ### 2. mTLS certificates
 
-The server expects test certificates at the relative path `../src/harness/certs/` (WInnForum harness default). Generate them with the official script:
+The canonical certificate directory is **`./certs`** at the repository root
+(override with the `CERTS_DIR` environment variable). This is the same path
+used by `config.py` and Docker (`CERTS_HOST_DIR=./certs` → `/certs` in the
+container).
+
+Generate WInnForum harness test material with the official script, then copy
+it into `CERTS_DIR`:
 
 ```bash
 git clone https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness.git /tmp/cbrs-harness
 cd /tmp/cbrs-harness/certs
 bash generate_fake_certs.sh
 
-# Adjust the path to match your local layout, for example:
-mkdir -p ../src/harness
-cp -r /tmp/cbrs-harness/certs ../src/harness/
+# From the sas-core repository root:
+mkdir -p certs
+cp -a /tmp/cbrs-harness/certs/. ./certs/
 ```
 
-Required files: `server.cert`, `server.key`, `server-ecc.cert`, `server-ecc.key`, `ca.cert`.
+Required under `CERTS_DIR`:
 
-### 3. Start the service
+- `server.cert`, `server.key` (RSA listener)
+- `server-ecc.cert`, `server-ecc.key` (ECDSA listener / SSS_3–SSS_4)
+- `ca.cert`
+- `crl/` directory with at least one `*.crl.pem` (required for CRL checks)
+
+Diagnose the layout before starting:
+
+```bash
+python -m tools.doctor
+```
+
+### 3. Docker Compose (optional stack)
+
+Compose no longer requires a project `.env` file (`env_file` is optional; service
+defaults are built in). For local overrides, copy `.env.example` → `.env`
+(host/`pytest` should keep the sqlite `DATABASE_URL`; api/worker containers
+always receive the in-stack Postgres URL).
+
+```bash
+# Validates the stack definition (no .env required):
+docker compose config
+
+# Runtime still needs ./certs provisioned (see above) before `up`:
+docker compose up --build
+```
+
+### 4. Start the service
 
 ```bash
 python main.py

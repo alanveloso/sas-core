@@ -8,7 +8,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import AdminInjectedData, BlacklistedFccId, Cbsd, Grant
+from models.models import AdminInjectedData, Cbsd, Grant
+from services.blacklist_service import is_cbsd_blacklisted
 from services.grant_service import DEFAULT_GRANT_DURATION_SEC, HEARTBEAT_INTERVAL_SEC
 from services.meas_report import (
     FLAG_DPA_ACTIVE,
@@ -140,7 +141,9 @@ def process_heartbeat(
             continue
 
         cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if cbsd and db.query(BlacklistedFccId).filter_by(fcc_id=cbsd.fcc_id).first():
+        if cbsd and is_cbsd_blacklisted(
+            db, cbsd.fcc_id, cbsd.cbsd_serial_number
+        ):
             responses.append(
                 _base(BLACKLISTED, cbsd_id=cbsd_id, grant_id=grant_id)
             )

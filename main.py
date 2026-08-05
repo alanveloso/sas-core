@@ -55,7 +55,7 @@ app.include_router(sas_sas_router)
 
 @app.on_event("startup")
 def on_startup():
-    from profile.context import active_profile_id, get_active_profile
+    from spectrum_profiles.context import active_profile_id, get_active_profile
 
     profile = get_active_profile()
     print(
@@ -142,42 +142,33 @@ def _run_uvicorn(port: int, certfile: Path, keyfile: Path, ssl_factory) -> None:
 
 def main():
     settings = get_settings()
+    from services.cert_layout import format_certificate_error, validate_certificate_layout
+
+    cert_check = validate_certificate_layout(settings)
+    if not cert_check.ok:
+        raise SystemExit(format_certificate_error(cert_check))
+
     certfile = settings.resolved_ssl_certfile
     keyfile = settings.resolved_ssl_keyfile
-    ca_certs = settings.resolved_ssl_ca_certs
     ecc_certfile = settings.resolved_ssl_ecc_certfile
     ecc_keyfile = settings.resolved_ssl_ecc_keyfile
 
-    missing = [p.name for p in (certfile, keyfile, ca_certs) if not p.exists()]
-    if missing:
-        raise SystemExit(
-            f"Certificados TLS não encontrados em {settings.certs_dir}: {missing}. "
-            "Execute: cd src/harness/certs && bash generate_fake_certs.sh "
-            "ou defina CERTS_DIR / SSL_* via variáveis de ambiente."
-        )
-
-    if ecc_certfile.exists() and ecc_keyfile.exists():
-        ecc_thread = threading.Thread(
-            target=_run_uvicorn,
-            kwargs={
-                "port": settings.ecc_port,
-                "certfile": ecc_certfile,
-                "keyfile": ecc_keyfile,
-                "ssl_factory": _ecc_ssl_context_factory,
-            },
-            name="uvicorn-ecc",
-            daemon=True,
-        )
-        ecc_thread.start()
-        print(
-            f"ECDSA mTLS listener starting on "
-            f"https://{settings.api_host}:{settings.ecc_port}"
-        )
-    else:
-        print(
-            f"Aviso: {ecc_certfile.name}/{ecc_keyfile.name} ausentes — "
-            "SSS_3/SSS_4 (ECDSA) não estarão disponíveis."
-        )
+    ecc_thread = threading.Thread(
+        target=_run_uvicorn,
+        kwargs={
+            "port": settings.ecc_port,
+            "certfile": ecc_certfile,
+            "keyfile": ecc_keyfile,
+            "ssl_factory": _ecc_ssl_context_factory,
+        },
+        name="uvicorn-ecc",
+        daemon=True,
+    )
+    ecc_thread.start()
+    print(
+        f"ECDSA mTLS listener starting on "
+        f"https://{settings.api_host}:{settings.ecc_port}"
+    )
 
     print(
         f"RSA mTLS listener starting on "
