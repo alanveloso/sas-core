@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -70,9 +70,24 @@ class Settings(BaseSettings):
     client_certfile: Optional[Path] = None
     client_keyfile: Optional[Path] = None
 
+    # Execution mode: production uses Celery; certification runs CPAS inline.
+    sas_execution_mode: Literal["production", "certification"] = Field(
+        default="production",
+        description="SAS_EXECUTION_MODE=production|certification",
+    )
+
     # External federal / marketplace DB basic auth
     db_sync_username: str = "username"
     db_sync_password: str = "password"
+
+    @field_validator("sas_execution_mode", mode="before")
+    @classmethod
+    def _normalize_execution_mode(cls, value: object) -> object:
+        if value is None or value == "":
+            return "production"
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
     @field_validator("certs_dir", mode="before")
     @classmethod

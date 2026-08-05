@@ -89,6 +89,13 @@ def run_doctor() -> DoctorReport:
             detail=settings.database_url,
         )
     )
+    report.findings.append(
+        DoctorFinding(
+            name="sas_execution_mode",
+            ok=settings.sas_execution_mode in {"production", "certification"},
+            detail=settings.sas_execution_mode,
+        )
+    )
     return report
 
 

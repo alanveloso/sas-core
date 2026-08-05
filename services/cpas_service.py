@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import ssl
+import threading
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ from services.mtls_auth import ALLOWED_CIPHERS
 logger = logging.getLogger(__name__)
 
 FLAG_CPAS_RUNNING = "cpas_running"
+_cpas_dispatch_lock = threading.RLock()
 
 
 def is_cpas_running(db: Session) -> bool:
@@ -28,30 +30,85 @@ def is_cpas_running(db: Session) -> bool:
 
 
 def get_daily_activities_completed(db: Session) -> bool:
+    """Harness async contract: completed=true only when CPAS is not running."""
     return not is_cpas_running(db)
 
 
-def trigger_daily_activities(db: Session) -> None:
-    """Mark CPAS running and enqueue the Celery worker (no local threads)."""
-    if is_cpas_running(db):
-        return
-
-    set_admin_flag(db, FLAG_CPAS_RUNNING)
+def _clear_cpas_running_flag(db: Session) -> None:
     try:
-        from tasks import run_cpas
-
-        run_cpas.delay()
+        clear_admin_flags(db, FLAG_CPAS_RUNNING)
     except Exception:
-        logger.exception("Failed to enqueue CPAS Celery task; clearing running flag")
+        logger.exception("Failed to clear CPAS running flag")
         try:
-            clear_admin_flags(db, FLAG_CPAS_RUNNING)
+            db.rollback()
         except Exception:
-            logger.exception("Failed to clear CPAS running flag after enqueue error")
-        raise
+            logger.exception("Failed to rollback after CPAS flag clear error")
+
+
+def trigger_daily_activities(db: Session) -> None:
+    """Start CPAS once.
+
+    - ``production``: enqueue Celery ``run_cpas`` (requires broker/worker).
+    - ``certification``: run the same ``execute_cpas_pipeline`` in-process
+      without a broker, on a worker thread so ``/get_daily_activities_status``
+      can still observe ``completed=false`` while CPAS runs.
+
+    Duplicate calls while CPAS is already running are no-ops.
+    """
+    with _cpas_dispatch_lock:
+        if is_cpas_running(db):
+            return
+
+        set_admin_flag(db, FLAG_CPAS_RUNNING)
+        mode = get_settings().sas_execution_mode
+
+        if mode == "production":
+            try:
+                from tasks import run_cpas
+
+                run_cpas.delay()
+            except Exception:
+                logger.exception(
+                    "Failed to enqueue CPAS Celery task; clearing running flag"
+                )
+                _clear_cpas_running_flag(db)
+                raise
+            return
+
+        # certification: claim under the lock, then run domain logic off-request.
+        try:
+            worker = threading.Thread(
+                target=_run_certification_cpas,
+                name="cpas-certification",
+                daemon=True,
+            )
+            worker.start()
+        except Exception:
+            logger.exception("Failed to start certification CPAS thread")
+            _clear_cpas_running_flag(db)
+            raise
+
+
+def _run_certification_cpas() -> None:
+    """In-process CPAS worker for certification mode (same domain pipeline)."""
+    from database import SessionLocal
+
+    session = SessionLocal()
+    try:
+        execute_cpas_pipeline(session)
+    except Exception:
+        logger.exception("CPAS certification-mode pipeline failed")
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("Failed to rollback certification CPAS session")
+    finally:
+        _clear_cpas_running_flag(session)
+        session.close()
 
 
 def execute_cpas_pipeline(db: Session) -> None:
-    """Synchronous CPAS body used by the Celery task."""
+    """Synchronous CPAS body shared by Celery workers and certification mode."""
     from services.database_sync_service import sync_injected_database_urls
 
     sync_injected_database_urls(db)
