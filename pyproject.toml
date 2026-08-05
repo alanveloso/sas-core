@@ -32,7 +32,7 @@ dev = [
 py-modules = ["main", "config", "database", "celery_app", "tasks"]
 
 [tool.setuptools.packages.find]
-include = ["models*", "routes*", "schemas*", "services*", "spectrum_profiles*"]
+include = ["models*", "routes*", "schemas*", "services*", "spectrum_profiles*", "tools*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

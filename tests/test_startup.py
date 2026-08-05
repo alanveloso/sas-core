@@ -138,7 +138,8 @@ def test_entrypoint_missing_certificates_exits_clearly(
         clear_settings_cache()
 
     message = str(excinfo.value)
-    assert "Certificados TLS não encontrados" in message
+    assert "Certificados TLS incompletos" in message
+    assert "CERTS_DIR=" in message
     assert "server.cert" in message or "ca.cert" in message or "server.key" in message
 
 
@@ -158,7 +159,7 @@ def test_entrypoint_missing_certificates_subprocess(tmp_path: Path, sqlite_url: 
     )
     output = _combined_output(result)
     assert result.returncode != 0, output
-    assert "Certificados TLS não encontrados" in output
+    assert "Certificados TLS incompletos" in output
 
 
 def _postgres_url_from_env() -> str | None:
