@@ -38,6 +38,35 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 _init_lock = threading.Lock()
 
 
+def rebind_engine(database_url: str, *, echo: bool = False) -> None:
+    """Replace the process-wide engine/session factory.
+
+    Intended for isolated test databases. Callers that did
+    ``from database import SessionLocal`` keep the old binding; prefer
+    ``database.SessionLocal`` after rebind, or use the ``db_session`` fixture.
+    """
+    global engine, SessionLocal
+
+    kwargs: dict = {"echo": echo}
+    if database_url.startswith("sqlite"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        kwargs.update(
+            {
+                "pool_size": _settings.db_pool_size,
+                "max_overflow": _settings.db_max_overflow,
+                "pool_timeout": _settings.db_pool_timeout,
+                "pool_recycle": _settings.db_pool_recycle,
+                "pool_pre_ping": _settings.db_pool_pre_ping,
+            }
+        )
+    with _init_lock:
+        previous = engine
+        engine = create_engine(database_url, **kwargs)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        previous.dispose()
+
+
 class Base(DeclarativeBase):
     pass
 

@@ -26,6 +26,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest==9.1.1",
+  "pytest-cov==6.2.1",
+  "coverage==7.10.2",
+  "freezegun==1.5.2",
 ]
 
 [tool.setuptools]
@@ -37,3 +40,29 @@ include = ["models*", "routes*", "schemas*", "services*", "spectrum_profiles*", 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Parallel pytest workers are intentionally not configured: database.engine /
+# SessionLocal are process-global. Enable after shared state is removed.
+markers = [
+  "integration: crosses process/Docker boundaries",
+  "contract: Admin/harness path contracts",
+  "security: certificate and doctor checks",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+  "main",
+  "config",
+  "database",
+  "models",
+  "routes",
+  "schemas",
+  "services",
+  "spectrum_profiles",
+  "tools",
+]
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

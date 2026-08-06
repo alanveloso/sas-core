@@ -1,0 +1,5 @@
+# Development / test tooling (not required for production runtime).
+pytest==9.1.1
+pytest-cov==6.2.1
+coverage==7.10.2
+freezegun==1.5.2

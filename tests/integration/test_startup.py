@@ -16,7 +16,7 @@ import pytest
 from config import clear_settings_cache
 from spectrum_profiles.loader import load_profile
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.support.repo import REPO_ROOT as ROOT
 PYTHON = sys.executable
 
 # Settings keys that would otherwise leak host TLS paths into smoke tests.

@@ -6,3 +6,6 @@ sas_mvp.db
 .env
 .env.local
 certs/
+.coverage
+htmlcov/
+.pytest_cache/

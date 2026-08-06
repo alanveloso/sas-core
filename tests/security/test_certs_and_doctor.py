@@ -18,7 +18,7 @@ from services.cert_layout import (
 from tools.doctor import main as doctor_main
 from tools.doctor import run_doctor
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.support.repo import REPO_ROOT as ROOT
 PYTHON = sys.executable
 
 _PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -16,8 +15,8 @@ from services.admin_api_inventory import (
 from services.blacklist_service import add_fcc_id_serial_blacklist
 from services.registration_service import BLACKLISTED, process_registration
 from database import SessionLocal, init_db
+from tests.support.repo import REPO_ROOT as ROOT
 
-ROOT = Path(__file__).resolve().parents[1]
 ADMIN_ROUTES = ROOT / "routes" / "admin_routes.py"
 
 client = TestClient(app)

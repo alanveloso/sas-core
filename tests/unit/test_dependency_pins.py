@@ -6,12 +6,11 @@ import inspect
 import re
 import sys
 import tomllib
-from pathlib import Path
 
 import uvicorn
 from uvicorn.config import Config
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.support.repo import REPO_ROOT as ROOT
 
 
 def test_python_meets_declared_minimum():
@@ -40,6 +39,20 @@ def test_requirements_txt_has_no_floating_lower_bounds():
             continue
         assert ">=" not in line, f"floating requirement: {line}"
         assert "==" in line, f"unpinned requirement: {line}"
+
+
+def test_requirements_dev_pins_match_pyproject_optional_dev():
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    optional = data["project"]["optional-dependencies"]["dev"]
+    for dep in optional:
+        assert "==" in dep, dep
+    dev_txt = {
+        line.strip()
+        for line in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    for dep in optional:
+        assert dep in dev_txt, f"missing from requirements-dev.txt: {dep}"
 
 
 def test_requirements_lock_pins_direct_dependencies():
