@@ -336,6 +336,12 @@ def process_registration(
         cbsd_id = _make_cbsd_id(fcc_id, serial)
         existing = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
         if existing:
+            from services.cbsd_auth import cbsd_certificate_mismatch
+
+            # Prevent certificate takeover of an already-bound cbsdId.
+            if cbsd_certificate_mismatch(existing, certificate_hash):
+                responses.append({"response": {"responseCode": INVALID_PARAM}})
+                continue
             existing.user_id = request["userId"]
             existing.cbsd_category = merged.get("cbsdCategory")
             existing.registration_json = json.dumps(merged)

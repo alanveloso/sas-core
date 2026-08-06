@@ -20,8 +20,11 @@ from models.models import PeerSas
 
 logger = logging.getLogger(__name__)
 
-# WInnForum certificate policy OIDs (cert/openssl.cnf)
+# WInnForum certificate policy OIDs (WINNF-TS-0022 / cert/openssl.cnf)
 OID_ROLE_SAS = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.1")
+OID_ROLE_INSTALLER = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.2")
+OID_ROLE_CBSD = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.3")
+OID_ROLE_DOMAIN_PROXY = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.4")
 OID_ZONE = ObjectIdentifier("1.3.6.1.4.1.46609.1.2")
 
 # Ciphers allowed on the SAS↔SAS / CBSD interface (mirrors Fake SAS).
@@ -69,7 +72,8 @@ def load_client_certificate(request: Request) -> Optional[x509.Certificate]:
         return None
 
 
-def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
+def certificate_policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
+    """Return certificatePolicies OIDs present on ``cert`` (empty if missing)."""
     try:
         ext = cert.extensions.get_extension_for_oid(ExtensionOID.CERTIFICATE_POLICIES)
     except x509.ExtensionNotFound:
@@ -78,6 +82,11 @@ def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
     for policy in ext.value:
         oids.add(policy.policy_identifier)
     return oids
+
+
+def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
+    """Backward-compatible alias for ``certificate_policy_oids``."""
+    return certificate_policy_oids(cert)
 
 
 def _has_client_auth(cert: x509.Certificate) -> bool:

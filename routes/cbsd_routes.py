@@ -15,12 +15,17 @@ from schemas.heartbeat import HeartbeatRequestItem
 from schemas.registration import RegistrationRequestItem
 from schemas.relinquishment import RelinquishmentRequestItem
 from schemas.spectrum_inquiry import SpectrumInquiryRequestItem
+from services.cbsd_auth import authorize_cbsd_operation
 from services.cbsd_batch import merge_schema_and_service_responses, parse_item_batch
 from services.deregistration_service import process_deregistration
-from services.error_handlers import INVALID_VALUE, MAXIMUM_BATCH_SIZE, MISSING_PARAM
+from services.error_handlers import (
+    CERT_ERROR,
+    INVALID_VALUE,
+    MAXIMUM_BATCH_SIZE,
+    MISSING_PARAM,
+)
 from services.grant_service import process_grant
 from services.heartbeat_service import process_heartbeat
-from services.mtls_auth import load_client_certificate, sha1_fingerprint_colon
 from services.registration_service import process_registration
 from services.relinquishment_service import process_relinquishment
 from services.spectrum_inquiry_service import process_spectrum_inquiry
@@ -45,12 +50,7 @@ _RESPONSE_KEYS = {
     "deregistration": "deregistrationResponse",
 }
 
-
-def _client_cert_hash(request: Request) -> str | None:
-    cert = load_client_certificate(request)
-    if cert is None:
-        return None
-    return sha1_fingerprint_colon(cert)
+ServiceRunner = Callable[[list[dict[str, Any]], str | None], list[dict[str, Any]]]
 
 
 def _single_code_response(procedure: str, code: int) -> JSONResponse:
@@ -66,8 +66,13 @@ def _run_batch(
     response_key: str,
     body: dict[str, Any],
     item_model: type,
-    run_service: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+    run_service: ServiceRunner,
+    request: Request,
 ) -> JSONResponse:
+    auth = authorize_cbsd_operation(request)
+    if not auth.allowed:
+        return _single_code_response(procedure, auth.denial_code or CERT_ERROR)
+
     request_key = _REQUEST_KEYS[procedure]
     raw_items = body.get(request_key)
     if raw_items is None:
@@ -93,7 +98,9 @@ def _run_batch(
         return _single_code_response(procedure, INVALID_VALUE)
 
     service_responses = (
-        run_service(parsed.items_for_service) if parsed.items_for_service else []
+        run_service(parsed.items_for_service, auth.certificate_hash)
+        if parsed.items_for_service
+        else []
     )
     merged = merge_schema_and_service_responses(
         schema_error_codes=parsed.schema_error_codes,
@@ -115,8 +122,9 @@ def registration(
         response_key="registrationResponse",
         body=body,
         item_model=RegistrationRequestItem,
-        run_service=lambda items: process_registration(
-            db, items, certificate_hash=_client_cert_hash(request)
+        request=request,
+        run_service=lambda items, cert_hash: process_registration(
+            db, items, certificate_hash=cert_hash
         ),
     )
 
@@ -132,14 +140,16 @@ def grant(
         response_key="grantResponse",
         body=body,
         item_model=GrantRequestItem,
-        run_service=lambda items: process_grant(
-            db, items, certificate_hash=_client_cert_hash(request)
+        request=request,
+        run_service=lambda items, cert_hash: process_grant(
+            db, items, certificate_hash=cert_hash
         ),
     )
 
 
 @router.post("/heartbeat")
 def heartbeat(
+    request: Request,
     body: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
@@ -148,7 +158,10 @@ def heartbeat(
         response_key="heartbeatResponse",
         body=body,
         item_model=HeartbeatRequestItem,
-        run_service=lambda items: process_heartbeat(db, items),
+        request=request,
+        run_service=lambda items, cert_hash: process_heartbeat(
+            db, items, certificate_hash=cert_hash
+        ),
     )
 
 
@@ -163,14 +176,16 @@ def spectrum_inquiry(
         response_key="spectrumInquiryResponse",
         body=body,
         item_model=SpectrumInquiryRequestItem,
-        run_service=lambda items: process_spectrum_inquiry(
-            db, items, certificate_hash=_client_cert_hash(request)
+        request=request,
+        run_service=lambda items, cert_hash: process_spectrum_inquiry(
+            db, items, certificate_hash=cert_hash
         ),
     )
 
 
 @router.post("/relinquishment")
 def relinquishment(
+    request: Request,
     body: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
@@ -179,12 +194,16 @@ def relinquishment(
         response_key="relinquishmentResponse",
         body=body,
         item_model=RelinquishmentRequestItem,
-        run_service=lambda items: process_relinquishment(db, items),
+        request=request,
+        run_service=lambda items, cert_hash: process_relinquishment(
+            db, items, certificate_hash=cert_hash
+        ),
     )
 
 
 @router.post("/deregistration")
 def deregistration(
+    request: Request,
     body: dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
@@ -193,5 +212,8 @@ def deregistration(
         response_key="deregistrationResponse",
         body=body,
         item_model=DeregistrationRequestItem,
-        run_service=lambda items: process_deregistration(db, items),
+        request=request,
+        run_service=lambda items, cert_hash: process_deregistration(
+            db, items, certificate_hash=cert_hash
+        ),
     )

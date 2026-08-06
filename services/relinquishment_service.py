@@ -28,8 +28,13 @@ def _resp(
 
 
 def process_relinquishment(
-    db: Session, requests: list[dict[str, Any]]
+    db: Session,
+    requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
+    from services.cbsd_auth import cbsd_certificate_mismatch
+
     responses: list[dict[str, Any]] = []
 
     for req in requests:
@@ -47,6 +52,11 @@ def process_relinquishment(
         cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
         if not cbsd:
             # Unknown CBSD → 103 without echoing identifiers (RLQ_3).
+            responses.append(_resp(INVALID_PARAM))
+            continue
+
+        # Wrong client cert for this cbsdId → 103 without echoing identifiers.
+        if cbsd_certificate_mismatch(cbsd, certificate_hash):
             responses.append(_resp(INVALID_PARAM))
             continue
 

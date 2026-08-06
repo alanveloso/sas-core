@@ -218,6 +218,7 @@ def process_grant(
     *,
     certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
+    from services.cbsd_auth import cbsd_certificate_mismatch
     from services.meas_report import (
         FLAG_MEAS_REG,
         MEAS_WITHOUT_GRANT,
@@ -225,7 +226,6 @@ def process_grant(
         cbsd_meas_capabilities,
         validate_meas_report,
     )
-    from services.spectrum_inquiry_service import _cert_mismatch
 
     ask_meas = admin_flag_set(db, FLAG_MEAS_REG)
     responses: list[dict[str, Any]] = []
@@ -245,7 +245,7 @@ def process_grant(
             continue
 
         # Wrong client cert for this cbsdId → 103 without cbsdId/grantId (GRA.4).
-        if _cert_mismatch(cbsd, certificate_hash):
+        if cbsd_certificate_mismatch(cbsd, certificate_hash):
             responses.append(_resp(INVALID_PARAM))
             continue
 

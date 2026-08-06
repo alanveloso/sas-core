@@ -108,8 +108,13 @@ def _grant_overlaps_active_dpa(db: Session, grant: Grant) -> bool:
 
 
 def process_heartbeat(
-    db: Session, requests: list[dict[str, Any]]
+    db: Session,
+    requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
+    from services.cbsd_auth import cbsd_certificate_mismatch
+
     ask_meas = admin_flag_set(db, FLAG_MEAS_HBT)
     responses: list[dict[str, Any]] = []
 
@@ -130,6 +135,12 @@ def process_heartbeat(
             )
             continue
 
+        cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
+        # Wrong client cert → 103 without echoing ids (before grant existence probe).
+        if cbsd and cbsd_certificate_mismatch(cbsd, certificate_hash):
+            responses.append(_base(INVALID_PARAM))
+            continue
+
         grant = (
             db.query(Grant)
             .filter_by(grant_id=grant_id, cbsd_id=cbsd_id)
@@ -140,8 +151,12 @@ def process_heartbeat(
             responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
             continue
 
-        cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if cbsd and is_cbsd_blacklisted(
+        if cbsd is None:
+            # Orphan grant row without a registration cannot be heartbeated.
+            responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+            continue
+
+        if is_cbsd_blacklisted(
             db, cbsd.fcc_id, cbsd.cbsd_serial_number
         ):
             responses.append(
@@ -152,7 +167,7 @@ def process_heartbeat(
         # GRA_6: peer FAD reports an active grant for the same CBSD → terminate (500).
         from services.cpas_service import peer_has_grant_for_cbsd
 
-        if cbsd and peer_has_grant_for_cbsd(db, cbsd):
+        if peer_has_grant_for_cbsd(db, cbsd):
             grant.terminated = True
             responses.append(
                 _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
