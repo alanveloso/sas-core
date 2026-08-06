@@ -92,6 +92,10 @@ class Cbsd(Base):
     cbsd_category: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # SHA-1 fingerprint of the registering client cert (``AA:BB:...``), for mTLS binding.
     certificate_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # CBSD lifecycle: UNREGISTERED | REGISTERED | DEREGISTERED (persisted while row exists).
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(32), default="REGISTERED", nullable=False, index=True
+    )
     registration_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -119,6 +123,10 @@ class Grant(Base):
     authorized: Mapped[bool] = mapped_column(Boolean, default=False)
     meas_report_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     terminated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Grant lifecycle: GRANTED | AUTHORIZED | SUSPENDED | TERMINATED | EXPIRED | RELINQUISHED
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(32), default="GRANTED", nullable=False, index=True
+    )
     grant_json: Mapped[str] = mapped_column(Text, default="{}")
     cbsd: Mapped[Cbsd] = relationship("Cbsd", back_populates="grants")
 

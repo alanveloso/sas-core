@@ -278,9 +278,15 @@ def _make_cbsd_id(fcc_id: str, serial: str) -> str:
 
 
 def _terminate_grants(db: Session, cbsd_id: str) -> None:
+    from services.lifecycle import GrantEvent, apply_grant_event
+
     grants = db.query(Grant).filter_by(cbsd_id=cbsd_id, terminated=False).all()
     for grant in grants:
-        grant.terminated = True
+        apply_grant_event(
+            grant,
+            GrantEvent.TERMINATE,
+            payload={"cbsdId": cbsd_id, "grantId": grant.grant_id},
+        )
 
 
 def process_registration(
@@ -337,18 +343,44 @@ def process_registration(
         existing = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
         if existing:
             from services.cbsd_auth import cbsd_certificate_mismatch
+            from services.lifecycle import (
+                CbsdEvent,
+                CbsdState,
+                apply_cbsd_state,
+                evaluate_cbsd_transition,
+                resolve_cbsd_state,
+            )
 
             # Prevent certificate takeover of an already-bound cbsdId.
             if cbsd_certificate_mismatch(existing, certificate_hash):
                 responses.append({"response": {"responseCode": INVALID_PARAM}})
+                continue
+            outcome = evaluate_cbsd_transition(
+                CbsdEvent.REREGISTER,
+                current=resolve_cbsd_state(existing),
+                payload=request,
+            )
+            if not outcome.ok:
+                responses.append({"response": {"responseCode": outcome.response_code}})
                 continue
             existing.user_id = request["userId"]
             existing.cbsd_category = merged.get("cbsdCategory")
             existing.registration_json = json.dumps(merged)
             if certificate_hash is not None:
                 existing.certificate_hash = certificate_hash
+            apply_cbsd_state(existing, CbsdState.REGISTERED)
             _terminate_grants(db, cbsd_id)
         else:
+            from services.lifecycle import CbsdEvent, CbsdState, evaluate_cbsd_transition
+
+            outcome = evaluate_cbsd_transition(
+                CbsdEvent.REGISTER,
+                current=CbsdState.UNREGISTERED,
+                payload=request,
+            )
+            if not outcome.ok:
+                responses.append({"response": {"responseCode": outcome.response_code}})
+                continue
             db.add(
                 Cbsd(
                     cbsd_id=cbsd_id,
@@ -357,6 +389,7 @@ def process_registration(
                     cbsd_serial_number=serial,
                     cbsd_category=merged.get("cbsdCategory"),
                     certificate_hash=certificate_hash,
+                    lifecycle_state=CbsdState.REGISTERED.value,
                     registration_json=json.dumps(merged),
                 )
             )

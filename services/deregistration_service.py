@@ -47,11 +47,34 @@ def process_deregistration(
             responses.append(_resp(INVALID_PARAM))
             continue
 
+        from services.lifecycle import (
+            CbsdEvent,
+            CbsdState,
+            GrantEvent,
+            apply_grant_event,
+            evaluate_cbsd_transition,
+            resolve_cbsd_state,
+        )
+
+        outcome = evaluate_cbsd_transition(
+            CbsdEvent.DEREGISTER,
+            current=resolve_cbsd_state(cbsd),
+            payload={"cbsdId": cbsd_id},
+        )
+        if not outcome.ok:
+            responses.append(_resp(outcome.response_code))
+            continue
+
         # Invalidate grants immediately, then remove the CBSD registration.
         # Cascade delete-orphan also removes Grant rows so re-registration cannot
         # reuse old grantIds (DRG_5) and new Grants for this cbsdId return 103 (DRG_1).
         for grant in db.query(Grant).filter_by(cbsd_id=cbsd_id).all():
-            grant.terminated = True
+            apply_grant_event(
+                grant,
+                GrantEvent.TERMINATE,
+                payload={"cbsdId": cbsd_id, "grantId": grant.grant_id},
+            )
+        cbsd.lifecycle_state = CbsdState.DEREGISTERED.value
         db.delete(cbsd)
         responses.append(_resp(SUCCESS, cbsd_id=cbsd_id))
 

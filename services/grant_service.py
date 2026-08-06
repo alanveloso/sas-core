@@ -339,6 +339,7 @@ def process_grant(
         grant_id = f"grant/{uuid.uuid4().hex}"
         expire = _grant_expire_time(pal_exp)
         from services.federal_db_service import grant_sync_stamp
+        from services.lifecycle import GrantState
 
         stamp = grant_sync_stamp(db)
         grant_payload = dict(req) if isinstance(req, dict) else {}
@@ -357,6 +358,7 @@ def process_grant(
                 max_eirp=max_eirp,
                 grant_expire_time=expire,
                 heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
+                lifecycle_state=GrantState.GRANTED.value,
                 grant_json=json.dumps(grant_payload),
             )
         )

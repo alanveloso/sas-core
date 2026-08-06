@@ -60,17 +60,22 @@ def process_relinquishment(
             responses.append(_resp(INVALID_PARAM))
             continue
 
-        grant = (
-            db.query(Grant)
-            .filter_by(grant_id=grant_id, cbsd_id=cbsd_id, terminated=False)
-            .first()
-        )
-        if not grant:
+        from services.lifecycle import GrantEvent, apply_grant_event, lock_grant_row
+
+        grant = lock_grant_row(db, grant_id, cbsd_id)
+        if not grant or grant.terminated:
             # Unknown / foreign / already relinquished grant → 103, echo cbsdId only.
             responses.append(_resp(INVALID_PARAM, cbsd_id=cbsd_id))
             continue
 
-        grant.terminated = True
+        outcome = apply_grant_event(
+            grant,
+            GrantEvent.RELINQUISH,
+            payload={"cbsdId": cbsd_id, "grantId": grant_id},
+        )
+        if not outcome.ok:
+            responses.append(_resp(outcome.response_code, cbsd_id=cbsd_id))
+            continue
         responses.append(_resp(SUCCESS, cbsd_id=cbsd_id, grant_id=grant_id))
 
     db.commit()

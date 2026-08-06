@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -85,11 +85,19 @@ def make_grant(
     channel_type: str = "GAA",
     authorized: bool = True,
     terminated: bool = False,
+    lifecycle_state: str | None = None,
     commit: bool = True,
 ) -> Grant:
     gid = grant_id or _next_token("grant")
     if cbsd.id is None:
         db.flush()
+    if lifecycle_state is None:
+        if terminated:
+            lifecycle_state = "TERMINATED"
+        elif authorized:
+            lifecycle_state = "AUTHORIZED"
+        else:
+            lifecycle_state = "GRANTED"
     row = Grant(
         grant_id=gid,
         cbsd_pk=cbsd.id,
@@ -98,10 +106,11 @@ def make_grant(
         low_frequency=low_hz,
         high_frequency=high_hz,
         max_eirp=max_eirp,
-        grant_expire_time=utc_now(),
+        grant_expire_time=utc_now() + timedelta(hours=1),
         heartbeat_interval=60,
         authorized=authorized,
         terminated=terminated,
+        lifecycle_state=lifecycle_state,
         grant_json="{}",
     )
     db.add(row)

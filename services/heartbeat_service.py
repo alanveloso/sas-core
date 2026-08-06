@@ -114,6 +114,11 @@ def process_heartbeat(
     certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
     from services.cbsd_auth import cbsd_certificate_mismatch
+    from services.lifecycle import (
+        GrantEvent,
+        apply_grant_event,
+        heartbeat_operation_allowed,
+    )
 
     ask_meas = admin_flag_set(db, FLAG_MEAS_HBT)
     responses: list[dict[str, Any]] = []
@@ -168,19 +173,44 @@ def process_heartbeat(
         from services.cpas_service import peer_has_grant_for_cbsd
 
         if peer_has_grant_for_cbsd(db, cbsd):
-            grant.terminated = True
+            apply_grant_event(
+                grant,
+                GrantEvent.TERMINATE,
+                payload={"cbsdId": cbsd_id, "grantId": grant_id},
+            )
             responses.append(
                 _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
             )
             continue
 
-        if grant.terminated:
-            # Relinquished / no longer valid grant → 103 (RLQ_2 requires 103;
-            # RLQ_1 / HBT_5 also accept 500). Do not echo grantId.
-            responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+        life = heartbeat_operation_allowed(grant, operation_state=str(op_state))
+        if not life.ok:
+            if life.response_code == INVALID_PARAM:
+                # Terminal relinquished/terminated: do not echo grantId.
+                responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+            elif life.response_code == SUSPENDED_GRANT:
+                responses.append(
+                    _base(
+                        SUSPENDED_GRANT,
+                        cbsd_id=cbsd_id,
+                        grant_id=grant_id,
+                        grant_expire=grant.grant_expire_time,
+                        heartbeat_interval=grant.heartbeat_interval
+                        or HEARTBEAT_INTERVAL_SEC,
+                    )
+                )
+            else:
+                responses.append(
+                    _base(
+                        life.response_code,
+                        cbsd_id=cbsd_id,
+                        grant_id=grant_id,
+                    )
+                )
             continue
 
         # DPA activation → suspend grant (501), do not terminate (GRA.1).
+        # Transient suspension: response only; clear when DPA inactive (no persist).
         # HBT.12 also accepts 501; transmitExpireTime stays in the past via _base.
         if _grant_overlaps_active_dpa(db, grant):
             responses.append(
@@ -197,20 +227,22 @@ def process_heartbeat(
         if grant.grant_expire_time.replace(microsecond=0) <= datetime.utcnow().replace(
             microsecond=0
         ):
+            apply_grant_event(
+                grant,
+                GrantEvent.EXPIRE,
+                payload={"cbsdId": cbsd_id, "grantId": grant_id},
+            )
             responses.append(
                 _base(INVALID_PARAM, cbsd_id=cbsd_id, grant_id=grant_id)
             )
             continue
 
-        # Out-of-sync: AUTHORIZED before first successful GRANTED heartbeat.
-        if op_state == "AUTHORIZED" and not grant.authorized:
-            responses.append(
-                _base(UNSYNC_OP_PARAM, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
-
         if _grant_overlaps_wisp(db, grant):
-            grant.terminated = True
+            apply_grant_event(
+                grant,
+                GrantEvent.TERMINATE,
+                payload={"cbsdId": cbsd_id, "grantId": grant_id},
+            )
             responses.append(
                 _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
             )
@@ -221,12 +253,17 @@ def process_heartbeat(
 
         federal_code = heartbeat_federal_code(db, cbsd, grant)
         if federal_code == TERMINATED_GRANT:
-            grant.terminated = True
+            apply_grant_event(
+                grant,
+                GrantEvent.TERMINATE,
+                payload={"cbsdId": cbsd_id, "grantId": grant_id},
+            )
             responses.append(
                 _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
             )
             continue
         if federal_code == SUSPENDED_GRANT:
+            # Transient federal suspend — do not persist SUSPENDED.
             responses.append(
                 _base(
                     SUSPENDED_GRANT,
@@ -258,7 +295,15 @@ def process_heartbeat(
 
         tx = _future_tx(grant.grant_expire_time)
         grant.transmit_expire_time = tx
-        grant.authorized = True
+        apply_grant_event(
+            grant,
+            GrantEvent.AUTHORIZE,
+            payload={
+                "cbsdId": cbsd_id,
+                "grantId": grant_id,
+                "operationState": op_state,
+            },
+        )
 
         meas_config: list[str] | None = None
         if ask_meas and MEAS_WITH_GRANT in capabilities:

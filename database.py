@@ -91,12 +91,14 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
         for attempt in range(1, retries + 1):
             try:
                 Base.metadata.create_all(bind=engine)
+                _ensure_lifecycle_columns(engine)
                 return
             except OperationalError as exc:
                 last_exc = exc
                 message = str(exc).lower()
                 # Concurrent create_all can race on SQLite ("table already exists").
                 if "already exists" in message:
+                    _ensure_lifecycle_columns(engine)
                     return
                 logger.warning(
                     "init_db attempt %s/%s failed: %s", attempt, retries, exc
@@ -105,6 +107,34 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
                     time.sleep(delay_seconds)
         if last_exc is not None:
             raise last_exc
+
+
+def _ensure_lifecycle_columns(bind) -> None:
+    """Add lifecycle_state columns on existing DBs (create_all does not ALTER)."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(bind)
+    statements: list[str] = []
+    if "cbsds" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("cbsds")}
+        if "lifecycle_state" not in cols:
+            statements.append(
+                "ALTER TABLE cbsds ADD COLUMN lifecycle_state VARCHAR(32) "
+                "DEFAULT 'REGISTERED' NOT NULL"
+            )
+    if "grants" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("grants")}
+        if "lifecycle_state" not in cols:
+            statements.append(
+                "ALTER TABLE grants ADD COLUMN lifecycle_state VARCHAR(32) "
+                "DEFAULT 'GRANTED' NOT NULL"
+            )
+    if not statements:
+        return
+    with bind.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+    logger.info("Applied lifecycle schema patches: %s", statements)
 
 
 def reset_db() -> None:
