@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from models.models import AdminInjectedData, Cbsd, Grant
 from services.blacklist_service import is_cbsd_blacklisted
-from services.grant_service import DEFAULT_GRANT_DURATION_SEC, HEARTBEAT_INTERVAL_SEC
+from services.grant_service import HEARTBEAT_INTERVAL_SEC
 from services.meas_report import (
     FLAG_DPA_ACTIVE,
     FLAG_MEAS_HBT,
@@ -289,9 +289,18 @@ def process_heartbeat(
                 continue
 
         if req.get("grantRenew") is True:
-            grant.grant_expire_time = datetime.utcnow() + timedelta(
-                seconds=DEFAULT_GRANT_DURATION_SEC
-            )
+            from services.grant_renewal import apply_renewal
+
+            renew = apply_renewal(db, grant)
+            if not renew.ok:
+                responses.append(
+                    _base(
+                        renew.response_code,
+                        cbsd_id=cbsd_id,
+                        grant_id=grant_id,
+                    )
+                )
+                continue
 
         tx = _future_tx(grant.grant_expire_time)
         grant.transmit_expire_time = tx

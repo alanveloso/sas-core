@@ -156,6 +156,7 @@ def _ppa_pal_context(
                     "in_ppa": in_ppa,
                     "license_exp": license_exp,
                     "user_id": pal.get("userId"),
+                    "pal_id": pal_id,
                 }
             )
     return contexts
@@ -163,9 +164,9 @@ def _ppa_pal_context(
 
 def _resolve_channel(
     contexts: list[dict[str, Any]], low: int, high: int, *, cbsd_user_id: str
-) -> tuple[int | None, str | None, datetime | None]:
+) -> tuple[int | None, str | None, datetime | None, str | None]:
     """
-    Return (error_code, channel_type, pal_license_exp).
+    Return (error_code, channel_type, pal_license_exp, pal_id).
     error_code None means OK.
     """
     covering_pal: list[dict[str, Any]] = []
@@ -179,12 +180,12 @@ def _resolve_channel(
     # Inside claimed PPA but not in cluster → interference on PAL overlap.
     for ctx in overlapping_pal:
         if ctx["in_ppa"] and not ctx["in_cluster"]:
-            return INTERFERENCE, None, None
+            return INTERFERENCE, None, None, None
 
     # Mix of PAL + GAA: request overlaps PAL for cluster member but not fully inside.
     for ctx in overlapping_pal:
         if ctx["in_cluster"] and not (low >= ctx["low"] and high <= ctx["high"]):
-            return INVALID_PARAM, None, None
+            return INVALID_PARAM, None, None, None
 
     if covering_pal:
         for ctx in covering_pal:
@@ -197,11 +198,11 @@ def _resolve_channel(
                         )
                     except (TypeError, ValueError):
                         exp = None
-                return None, "PAL", exp
+                return None, "PAL", exp, ctx.get("pal_id")
         # Fully inside a PAL channel but not authorized → interference.
-        return INTERFERENCE, None, None
+        return INTERFERENCE, None, None, None
 
-    return None, "GAA", None
+    return None, "GAA", None, None
 
 
 def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
@@ -289,7 +290,7 @@ def process_grant(
             continue
 
         contexts = _ppa_pal_context(db, cbsd)
-        ch_err, channel_type, pal_exp = _resolve_channel(
+        ch_err, channel_type, pal_exp, pal_id = _resolve_channel(
             contexts, low, high, cbsd_user_id=cbsd.user_id
         )
         if ch_err is not None:
@@ -347,6 +348,13 @@ def process_grant(
         grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
         grant_payload["exz_gen"] = stamp.get("exz", 0)
         grant_payload["dpa_gen"] = stamp.get("dpa", 0)
+        from services.grant_renewal import AUTH_CONTEXT_KEY, build_auth_context
+
+        grant_payload[AUTH_CONTEXT_KEY] = build_auth_context(
+            channel_type=channel_type or "GAA",
+            pal_license_exp=pal_exp,
+            pal_id=str(pal_id) if pal_id else None,
+        )
         db.add(
             Grant(
                 grant_id=grant_id,
