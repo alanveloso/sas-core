@@ -20,8 +20,9 @@ cases:
     tests:
       - tests/unit/test_cbsd_schemas.py
       - tests/contract/test_cbsd_schema_validation.py
+      - tests/contract/test_cbsd_version_dispatch.py
     evidence: null
-    notes: "CSV Parcial ~45%; CPI/PKI/HAAT gaps. P2-001: strict RegistrationRequestItem + per-item schema codes."
+    notes: "CSV Parcial ~45%; CPI/PKI/HAAT gaps. P2-001 schemas; P2-002 version→100 on all procedures."
 
   - id: FAMILY.SIQ
     family: SIQ
@@ -61,20 +62,22 @@ cases:
       - tests/unit/test_cbsd_schemas.py
       - tests/contract/test_cbsd_schema_validation.py
     evidence: null
-    notes: "CSV Parcial ~40%; invalid-state and cert-binding gaps. P2-001: operationState enum strict (no | str)."
+    notes: "CSV Parcial ~40%; invalid-state and cert-binding gaps. P2-001 operationState; P2-002 version→100 + past transmitExpireTime."
 
   - id: WINNF.FT.S.HBT.3
     family: HBT
     case_scope: case
     status: failing
     implementation:
-      - main.py
+      - services/cbsd_version.py
+      - routes/cbsd_version_routes.py
       - services/heartbeat_service.py
       - schemas/heartbeat.py
     tests:
-      - tests/contract/test_cbsd_schema_validation.py
+      - tests/contract/test_cbsd_version_dispatch.py
+      - tests/unit/test_cbsd_version.py
     evidence: null
-    notes: "Plan example row; pending official harness execution artifact. P2-001 closed unknown operationState at schema layer."
+    notes: "Unsupported-version path unified in P2-002 (responseCode 100 + past transmitExpireTime). Official harness evidence still pending."
 
   - id: FAMILY.RLQ
     family: RLQ
