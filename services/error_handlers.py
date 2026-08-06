@@ -110,8 +110,40 @@ async def request_validation_exception_handler(
 
     code = _code_from_errors(errors)
 
-    # CBSD endpoints: always reply in WINNF batch envelope (HTTP 200).
+    # CBSD endpoints: HTTP 200 with per-item envelope when the body lists items.
     if method is not None:
+        body = exc.body
+        request_key = f"{method}Request"
+        raw_items = None
+        if isinstance(body, dict):
+            raw_items = body.get(request_key)
+        if isinstance(raw_items, list) and raw_items:
+            responses: list[dict[str, Any]] = []
+            # Map errors to indices; default INVALID_VALUE for unmapped slots only
+            # when the failure is at the batch envelope (not per-item).
+            index_codes: dict[int, int] = {}
+            for err in errors:
+                loc = err.get("loc") or ()
+                for i, part in enumerate(loc):
+                    if part == request_key and i + 1 < len(loc) and isinstance(
+                        loc[i + 1], int
+                    ):
+                        idx = int(loc[i + 1])
+                        index_codes[idx] = _code_from_errors([err])
+                        break
+            for idx, raw in enumerate(raw_items):
+                item_code = index_codes.get(idx, code if not index_codes else None)
+                if item_code is None:
+                    # Sibling items without schema errors were not processed.
+                    item_code = INVALID_VALUE
+                entry: dict[str, Any] = {"response": {"responseCode": item_code}}
+                if isinstance(raw, dict):
+                    for echo in ("cbsdId", "grantId"):
+                        if raw.get(echo) is not None:
+                            entry[echo] = raw[echo]
+                responses.append(entry)
+            key = _CBSD_RESPONSE_KEYS[method]
+            return JSONResponse(status_code=200, content={key: responses})
         return JSONResponse(status_code=200, content=_winnf_body(method, code))
 
     # Admin / other: keep a compact JSON error without FastAPI 422 noise.

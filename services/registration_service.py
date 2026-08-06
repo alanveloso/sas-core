@@ -33,29 +33,15 @@ VALID_MEAS = {
 }
 VALID_USER_ID = re.compile(r"^[A-Za-z0-9_:-]+$")
 
-# Street-level HAAT (m) at known REG.7 CBSD#8 location (FCC HAAT calculator).
-# HAAT ≈ street_haat + AGL height; Cat A outdoor allows HAAT ≤ 6 m.
-_KNOWN_STREET_HAAT_M = {
-    (38.882162, -77.113755): 20.0,
-}
-
-
 def _cat_a_outdoor_haat_exceeds_limit(installation: dict[str, Any]) -> bool:
-    """Return True if estimated HAAT for Cat A outdoor exceeds 6 m."""
-    lat = installation.get("latitude")
-    lon = installation.get("longitude")
-    height = installation.get("height") or 0
-    height_type = installation.get("heightType")
-    if lat is None or lon is None or height_type != "AGL":
-        return False
-    street_haat = None
-    for (ref_lat, ref_lon), haat in _KNOWN_STREET_HAAT_M.items():
-        if abs(float(lat) - ref_lat) < 1e-5 and abs(float(lon) - ref_lon) < 1e-5:
-            street_haat = haat
-            break
-    if street_haat is None:
-        return False
-    return (street_haat + float(height)) > 6.0
+    """Return True if Cat A outdoor HAAT exceeds the 6 m Part 96 limit.
+
+    HAAT requires a terrain model / dataset. Fixture-coordinate lookup tables are
+    forbidden (AGENTS.md). Until a parameterized HAAT provider is wired through
+    the spectrum profile, this check is a no-op (returns False).
+    """
+    _ = installation
+    return False
 
 
 def _b64url_decode(data: str) -> bytes:

@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.common import ResponseObject
 from services.error_handlers import MAXIMUM_BATCH_SIZE
 
 
 class DeregistrationRequestItem(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     cbsdId: str | None = None
 
 
 class DeregistrationBatchRequest(BaseModel):
-    deregistrationRequest: list[dict[str, Any]] = Field(
+    model_config = ConfigDict(extra="forbid")
+
+    deregistrationRequest: list[DeregistrationRequestItem] = Field(
         ..., max_length=MAXIMUM_BATCH_SIZE
     )
 
@@ -25,8 +26,10 @@ class DeregistrationResponseItem(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     cbsdId: str | None = None
-    response: dict[str, Any]
+    response: ResponseObject
 
 
 class DeregistrationBatchResponse(BaseModel):
-    deregistrationResponse: list[dict[str, Any]]
+    model_config = ConfigDict(extra="forbid")
+
+    deregistrationResponse: list[DeregistrationResponseItem]

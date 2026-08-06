@@ -14,9 +14,14 @@ cases:
       - services/registration_service.py
       - services/blacklist_service.py
       - routes/cbsd_routes.py
-    tests: []
+      - schemas/registration.py
+      - schemas/common.py
+      - services/cbsd_batch.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+      - tests/contract/test_cbsd_schema_validation.py
     evidence: null
-    notes: "CSV Parcial ~45%; CPI/PKI/HAAT gaps (CPI logic lives in registration_service). Case-level rows added as harness evidence arrives."
+    notes: "CSV Parcial ~45%; CPI/PKI/HAAT gaps. P2-001: strict RegistrationRequestItem + per-item schema codes."
 
   - id: FAMILY.SIQ
     family: SIQ
@@ -24,9 +29,12 @@ cases:
     status: failing
     implementation:
       - services/spectrum_inquiry_service.py
-    tests: []
+      - schemas/spectrum_inquiry.py
+      - schemas/common.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~55%; RF validation simplified."
+    notes: "CSV Parcial ~55%; RF validation simplified. P2-001: FrequencyRange + inquiredSpectrum cardinality."
 
   - id: FAMILY.GRA
     family: GRA
@@ -34,9 +42,12 @@ cases:
     status: failing
     implementation:
       - services/grant_service.py
-    tests: []
+      - schemas/grant.py
+      - schemas/common.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~50%; concurrency/IAP/aggregate protection gaps."
+    notes: "CSV Parcial ~50%; concurrency/IAP/aggregate protection gaps. P2-001: OperationParam/maxEirp bounds."
 
   - id: FAMILY.HBT
     family: HBT
@@ -44,9 +55,13 @@ cases:
     status: failing
     implementation:
       - services/heartbeat_service.py
-    tests: []
+      - schemas/heartbeat.py
+      - schemas/common.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+      - tests/contract/test_cbsd_schema_validation.py
     evidence: null
-    notes: "CSV Parcial ~40%; invalid-state and cert-binding gaps."
+    notes: "CSV Parcial ~40%; invalid-state and cert-binding gaps. P2-001: operationState enum strict (no | str)."
 
   - id: WINNF.FT.S.HBT.3
     family: HBT
@@ -55,9 +70,11 @@ cases:
     implementation:
       - main.py
       - services/heartbeat_service.py
-    tests: []
+      - schemas/heartbeat.py
+    tests:
+      - tests/contract/test_cbsd_schema_validation.py
     evidence: null
-    notes: "Plan example row; pending official harness execution artifact."
+    notes: "Plan example row; pending official harness execution artifact. P2-001 closed unknown operationState at schema layer."
 
   - id: FAMILY.RLQ
     family: RLQ
@@ -65,9 +82,11 @@ cases:
     status: failing
     implementation:
       - services/relinquishment_service.py
-    tests: []
+      - schemas/relinquishment.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~50%."
+    notes: "CSV Parcial ~50%. P2-001: strict RelinquishmentRequestItem."
 
   - id: FAMILY.DRG
     family: DRG
@@ -75,9 +94,11 @@ cases:
     status: failing
     implementation:
       - services/deregistration_service.py
-    tests: []
+      - schemas/deregistration.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~50%; cert binding and state/version gaps."
+    notes: "CSV Parcial ~50%; cert binding and state/version gaps. P2-001: strict DeregistrationRequestItem."
 
   - id: FAMILY.FAD
     family: FAD
