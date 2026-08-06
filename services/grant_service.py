@@ -324,63 +324,81 @@ def process_grant(
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
-        existing = _active_grants(db, cbsd_id)
-        pending = pending_by_cbsd.get(cbsd_id, [])
-        if _has_freq_conflict(existing, low, high, also_pending=pending):
-            responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
-            continue
-
-        # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
+        # Serialize grant creation per CBSD (process lock + row/advisory locks).
+        from services.concurrency import (
+            acquire_cbsd_xact_lock,
+            exclusive_cbsd,
+            lock_cbsd_row,
+        )
         from services.cpas_service import peer_has_grant_for_cbsd
-
-        if peer_has_grant_for_cbsd(db, cbsd):
-            responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
-            continue
-
-        grant_id = f"grant/{uuid.uuid4().hex}"
-        expire = _grant_expire_time(pal_exp)
         from services.federal_db_service import grant_sync_stamp
+        from services.grant_renewal import AUTH_CONTEXT_KEY, build_auth_context
         from services.lifecycle import GrantState
 
-        stamp = grant_sync_stamp(db)
-        grant_payload = dict(req) if isinstance(req, dict) else {}
-        grant_payload["fss_gen"] = stamp.get("fss", 0)
-        grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
-        grant_payload["exz_gen"] = stamp.get("exz", 0)
-        grant_payload["dpa_gen"] = stamp.get("dpa", 0)
-        from services.grant_renewal import AUTH_CONTEXT_KEY, build_auth_context
+        with exclusive_cbsd(cbsd_id):
+            try:
+                acquire_cbsd_xact_lock(db, cbsd_id)
+                cbsd = lock_cbsd_row(db, cbsd_id)
+                if not cbsd:
+                    responses.append(_resp(INVALID_PARAM))
+                    continue
+                if cbsd_certificate_mismatch(cbsd, certificate_hash):
+                    responses.append(_resp(INVALID_PARAM))
+                    continue
 
-        grant_payload[AUTH_CONTEXT_KEY] = build_auth_context(
-            channel_type=channel_type or "GAA",
-            pal_license_exp=pal_exp,
-            pal_id=str(pal_id) if pal_id else None,
-        )
-        db.add(
-            Grant(
-                grant_id=grant_id,
-                cbsd_pk=cbsd.id,
-                cbsd_id=cbsd_id,
-                channel_type=channel_type,
-                low_frequency=low,
-                high_frequency=high,
-                max_eirp=max_eirp,
-                grant_expire_time=expire,
-                heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
-                lifecycle_state=GrantState.GRANTED.value,
-                grant_json=json.dumps(grant_payload),
-            )
-        )
-        pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))
-        responses.append(
-            {
-                "cbsdId": cbsd_id,
-                "grantId": grant_id,
-                "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
-                "channelType": channel_type,
-                "response": {"responseCode": SUCCESS},
-            }
-        )
+                existing = _active_grants(db, cbsd_id)
+                pending = pending_by_cbsd.get(cbsd_id, [])
+                if _has_freq_conflict(existing, low, high, also_pending=pending):
+                    responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+                    continue
 
-    db.commit()
+                # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
+                if peer_has_grant_for_cbsd(db, cbsd):
+                    responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+                    continue
+
+                grant_id = f"grant/{uuid.uuid4().hex}"
+                expire = _grant_expire_time(pal_exp)
+
+                stamp = grant_sync_stamp(db)
+                grant_payload = dict(req) if isinstance(req, dict) else {}
+                grant_payload["fss_gen"] = stamp.get("fss", 0)
+                grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
+                grant_payload["exz_gen"] = stamp.get("exz", 0)
+                grant_payload["dpa_gen"] = stamp.get("dpa", 0)
+
+                grant_payload[AUTH_CONTEXT_KEY] = build_auth_context(
+                    channel_type=channel_type or "GAA",
+                    pal_license_exp=pal_exp,
+                    pal_id=str(pal_id) if pal_id else None,
+                )
+                db.add(
+                    Grant(
+                        grant_id=grant_id,
+                        cbsd_pk=cbsd.id,
+                        cbsd_id=cbsd_id,
+                        channel_type=channel_type,
+                        low_frequency=low,
+                        high_frequency=high,
+                        max_eirp=max_eirp,
+                        grant_expire_time=expire,
+                        heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
+                        lifecycle_state=GrantState.GRANTED.value,
+                        grant_json=json.dumps(grant_payload),
+                    )
+                )
+                pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))
+                responses.append(
+                    {
+                        "cbsdId": cbsd_id,
+                        "grantId": grant_id,
+                        "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
+                        "channelType": channel_type,
+                        "response": {"responseCode": SUCCESS},
+                    }
+                )
+            finally:
+                db.commit()
+
     return responses

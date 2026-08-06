@@ -14,7 +14,6 @@ from models.models import (
     ConditionalRegistration,
     CpiUser,
     FccIdRecord,
-    Grant,
     UserIdRecord,
 )
 from services.blacklist_service import is_cbsd_blacklisted
@@ -278,10 +277,12 @@ def _make_cbsd_id(fcc_id: str, serial: str) -> str:
 
 
 def _terminate_grants(db: Session, cbsd_id: str) -> None:
+    from services.concurrency import lock_grants_for_cbsd
     from services.lifecycle import GrantEvent, apply_grant_event
 
-    grants = db.query(Grant).filter_by(cbsd_id=cbsd_id, terminated=False).all()
-    for grant in grants:
+    for grant in lock_grants_for_cbsd(db, cbsd_id):
+        if grant.terminated:
+            continue
         apply_grant_event(
             grant,
             GrantEvent.TERMINATE,
@@ -340,66 +341,96 @@ def process_registration(
             continue
 
         cbsd_id = _make_cbsd_id(fcc_id, serial)
-        existing = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if existing:
-            from services.cbsd_auth import cbsd_certificate_mismatch
-            from services.lifecycle import (
-                CbsdEvent,
-                CbsdState,
-                apply_cbsd_state,
-                evaluate_cbsd_transition,
-                resolve_cbsd_state,
-            )
+        from sqlalchemy.exc import IntegrityError
 
-            # Prevent certificate takeover of an already-bound cbsdId.
-            if cbsd_certificate_mismatch(existing, certificate_hash):
-                responses.append({"response": {"responseCode": INVALID_PARAM}})
-                continue
-            outcome = evaluate_cbsd_transition(
-                CbsdEvent.REREGISTER,
-                current=resolve_cbsd_state(existing),
-                payload=request,
-            )
-            if not outcome.ok:
-                responses.append({"response": {"responseCode": outcome.response_code}})
-                continue
-            existing.user_id = request["userId"]
-            existing.cbsd_category = merged.get("cbsdCategory")
-            existing.registration_json = json.dumps(merged)
-            if certificate_hash is not None:
-                existing.certificate_hash = certificate_hash
-            apply_cbsd_state(existing, CbsdState.REGISTERED)
-            _terminate_grants(db, cbsd_id)
-        else:
-            from services.lifecycle import CbsdEvent, CbsdState, evaluate_cbsd_transition
-
-            outcome = evaluate_cbsd_transition(
-                CbsdEvent.REGISTER,
-                current=CbsdState.UNREGISTERED,
-                payload=request,
-            )
-            if not outcome.ok:
-                responses.append({"response": {"responseCode": outcome.response_code}})
-                continue
-            db.add(
-                Cbsd(
-                    cbsd_id=cbsd_id,
-                    fcc_id=fcc_id,
-                    user_id=request["userId"],
-                    cbsd_serial_number=serial,
-                    cbsd_category=merged.get("cbsdCategory"),
-                    certificate_hash=certificate_hash,
-                    lifecycle_state=CbsdState.REGISTERED.value,
-                    registration_json=json.dumps(merged),
-                )
-            )
-
-        responses.append(
-            {
-                "cbsdId": cbsd_id,
-                "response": {"responseCode": SUCCESS},
-            }
+        from services.concurrency import (
+            acquire_cbsd_xact_lock,
+            exclusive_cbsd,
+            lock_cbsd_row,
         )
+
+        with exclusive_cbsd(cbsd_id):
+            try:
+                acquire_cbsd_xact_lock(db, cbsd_id)
+                existing = lock_cbsd_row(db, cbsd_id)
+                if existing:
+                    from services.cbsd_auth import cbsd_certificate_mismatch
+                    from services.lifecycle import (
+                        CbsdEvent,
+                        CbsdState,
+                        apply_cbsd_state,
+                        evaluate_cbsd_transition,
+                        resolve_cbsd_state,
+                    )
+
+                    # Prevent certificate takeover of an already-bound cbsdId.
+                    if cbsd_certificate_mismatch(existing, certificate_hash):
+                        responses.append({"response": {"responseCode": INVALID_PARAM}})
+                        continue
+                    outcome = evaluate_cbsd_transition(
+                        CbsdEvent.REREGISTER,
+                        current=resolve_cbsd_state(existing),
+                        payload=request,
+                    )
+                    if not outcome.ok:
+                        responses.append(
+                            {"response": {"responseCode": outcome.response_code}}
+                        )
+                        continue
+                    existing.user_id = request["userId"]
+                    existing.cbsd_category = merged.get("cbsdCategory")
+                    existing.registration_json = json.dumps(merged)
+                    if certificate_hash is not None:
+                        existing.certificate_hash = certificate_hash
+                    apply_cbsd_state(existing, CbsdState.REGISTERED)
+                    _terminate_grants(db, cbsd_id)
+                else:
+                    from services.lifecycle import (
+                        CbsdEvent,
+                        CbsdState,
+                        evaluate_cbsd_transition,
+                    )
+
+                    outcome = evaluate_cbsd_transition(
+                        CbsdEvent.REGISTER,
+                        current=CbsdState.UNREGISTERED,
+                        payload=request,
+                    )
+                    if not outcome.ok:
+                        responses.append(
+                            {"response": {"responseCode": outcome.response_code}}
+                        )
+                        continue
+                    db.add(
+                        Cbsd(
+                            cbsd_id=cbsd_id,
+                            fcc_id=fcc_id,
+                            user_id=request["userId"],
+                            cbsd_serial_number=serial,
+                            cbsd_category=merged.get("cbsdCategory"),
+                            certificate_hash=certificate_hash,
+                            lifecycle_state=CbsdState.REGISTERED.value,
+                            registration_json=json.dumps(merged),
+                        )
+                    )
+                    try:
+                        # Surface unique races (multi-worker create) as protocol 103.
+                        db.flush()
+                    except IntegrityError:
+                        db.rollback()
+                        responses.append(
+                            {"response": {"responseCode": INVALID_PARAM}}
+                        )
+                        continue
+
+                responses.append(
+                    {
+                        "cbsdId": cbsd_id,
+                        "response": {"responseCode": SUCCESS},
+                    }
+                )
+            finally:
+                db.commit()
 
     # MES_1: when triggered, ask for WITHOUT_GRANT measurement reports.
     from services.meas_report import (

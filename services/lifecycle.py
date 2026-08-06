@@ -408,13 +408,14 @@ def apply_grant_event(
 
 
 def lock_grant_row(db: Session, grant_id: str, cbsd_id: str) -> Grant | None:
-    """Load a grant with a row lock when the dialect supports it."""
-    query = db.query(Grant).filter_by(grant_id=grant_id, cbsd_id=cbsd_id)
-    try:
-        query = query.with_for_update()
-    except Exception:
-        pass
-    return query.first()
+    """Load a grant with a row lock when the dialect supports it.
+
+    Delegates to ``services.concurrency.lock_grant_row`` (FOR UPDATE only).
+    Callers must also hold the process-level exclusive lock / advisory lock.
+    """
+    from services.concurrency import lock_grant_row as _lock
+
+    return _lock(db, grant_id, cbsd_id)
 
 
 def heartbeat_operation_allowed(

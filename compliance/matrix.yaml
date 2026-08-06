@@ -48,7 +48,7 @@ cases:
     tests:
       - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~50%; concurrency/IAP/aggregate protection gaps. P2-001: OperationParam/maxEirp bounds."
+    notes: "CSV Parcial ~55%; IAP/aggregate gaps. P2-005 renew; P2-006 locks (no harness PASS)."
 
   - id: FAMILY.HBT
     family: HBT
@@ -62,7 +62,7 @@ cases:
       - tests/unit/test_cbsd_schemas.py
       - tests/contract/test_cbsd_schema_validation.py
     evidence: null
-    notes: "CSV Parcial ~40%; invalid-state and cert-binding gaps. P2-001 operationState; P2-002 version→100 + past transmitExpireTime."
+    notes: "CSV Parcial ~55%; P2-003…P2-006 lifecycle/renew/locks. Harness cases still failing."
 
   - id: WINNF.FT.S.HBT.3
     family: HBT
@@ -89,7 +89,7 @@ cases:
     tests:
       - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~50%. P2-001: strict RelinquishmentRequestItem."
+    notes: "CSV Parcial ~60%. P2-003…P2-006 cert-under-lock/lifecycle/serialized RLQ."
 
   - id: FAMILY.DRG
     family: DRG
@@ -101,7 +101,7 @@ cases:
     tests:
       - tests/unit/test_cbsd_schemas.py
     evidence: null
-    notes: "CSV Parcial ~50%; cert binding and state/version gaps. P2-001: strict DeregistrationRequestItem."
+    notes: "CSV Parcial ~60%; P2-003/P2-004/P2-006 cert-under-lock/lifecycle/CBSD lock."
 
   - id: FAMILY.FAD
     family: FAD
