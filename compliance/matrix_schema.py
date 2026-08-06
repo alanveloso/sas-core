@@ -66,9 +66,7 @@ def resolve_under_repo(repo_root: Path, relative: str) -> Path:
     try:
         resolved.relative_to(root)
     except ValueError as exc:
-        raise MatrixValidationError(
-            f"path escapes repo root: {relative!r}"
-        ) from exc
+        raise MatrixValidationError(f"path escapes repo root: {relative!r}") from exc
     return resolved
 
 
@@ -155,9 +153,7 @@ def parse_matrix_document(data: Any) -> ComplianceMatrix:
     return ComplianceMatrix(version=version, cases=tuple(cases))
 
 
-def assert_passing_evidence_exists(
-    matrix: ComplianceMatrix, *, repo_root: Path
-) -> None:
+def assert_passing_evidence_exists(matrix: ComplianceMatrix, *, repo_root: Path) -> None:
     """Fail if any passing row has missing or disallowed evidence."""
     for case in matrix.cases:
         if case.status != "passing":
@@ -169,9 +165,7 @@ def assert_passing_evidence_exists(
             raise MatrixValidationError(f"{case.id}: {exc}") from exc
 
 
-def assert_referenced_paths_exist(
-    matrix: ComplianceMatrix, *, repo_root: Path
-) -> None:
+def assert_referenced_paths_exist(matrix: ComplianceMatrix, *, repo_root: Path) -> None:
     """Fail if implementation/tests entries do not exist under the repo."""
     for case in matrix.cases:
         for field, paths in (
@@ -184,9 +178,7 @@ def assert_referenced_paths_exist(
                 except MatrixValidationError as exc:
                     raise MatrixValidationError(f"{case.id}: {field}: {exc}") from exc
                 if not resolved.is_file():
-                    raise MatrixValidationError(
-                        f"{case.id}: {field} path missing: {rel}"
-                    )
+                    raise MatrixValidationError(f"{case.id}: {field} path missing: {rel}")
 
 
 def load_matrix(path: Path, *, repo_root: Path | None = None) -> ComplianceMatrix:

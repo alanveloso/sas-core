@@ -29,6 +29,9 @@ dev = [
   "pytest-cov==6.2.1",
   "coverage==7.10.2",
   "freezegun==1.5.2",
+  "ruff==0.12.8",
+  "mypy==1.17.1",
+  "types-PyYAML==6.0.12.20250822",
 ]
 
 [tool.setuptools]
@@ -69,3 +72,29 @@ omit = ["tests/*", "*/__pycache__/*"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv", "artifacts", ".cache"]
+
+[tool.ruff.lint]
+# Keep CI lint focused on correctness; avoid mass I/UP churn on legacy modules.
+select = ["E", "F"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"main.py" = ["E402"]
+"tasks.py" = ["E402"]
+"celery_app.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+pretty = true
+files = ["compliance", "tools"]
