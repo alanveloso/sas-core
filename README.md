@@ -144,7 +144,30 @@ The SQLite database (`sas_mvp.db`) is created automatically on startup.
 
 ## Validation with the WInnForum harness
 
-The harness is **not part of** this repository. To validate `sas-core`:
+The harness is **not part of** this repository. Prefer the local runner:
+
+```bash
+# Prepare artifact layout without claiming PASS (no certs/harness required):
+python -m tools.run_winnforum --dry-run --family REG
+
+# Full run (requires ./certs and a harness checkout or --harness-ref):
+python -m tools.run_winnforum \
+  --harness-ref <commit-or-tag> \
+  --family REG --family SIQ \
+  --client-cert "$WINNFORUM_CLIENT_CERT" \
+  --client-key "$WINNFORUM_CLIENT_KEY" \
+  --ca-certs "$WINNFORUM_CA_CERTS" \
+  --start-uut
+```
+
+Certificate paths must be supplied explicitly (CLI or `WINNFORUM_CLIENT_CERT` /
+`WINNFORUM_CLIENT_KEY` / `WINNFORUM_CA_CERTS`); the runner does not hardcode harness
+certificate filenames.
+
+Artifacts land under `artifacts/winnforum/<timestamp>/` (`environment.json`, `sas.cfg`,
+`uut.log`, `harness.log`, `results.json`, `junit.xml`, `summary.md`).
+
+Manual alternative:
 
 1. Keep the service running (`python main.py`).
 2. Configure the harness `sas.cfg` to point at `localhost:9000` / `:9001` (versions `v1.2` / `v1.3`).

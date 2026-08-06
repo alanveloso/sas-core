@@ -9,3 +9,5 @@ certs/
 .coverage
 htmlcov/
 .pytest_cache/
+artifacts/
+.cache/
