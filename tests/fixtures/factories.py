@@ -12,10 +12,13 @@ from sqlalchemy.orm import Session
 from models.models import (
     AdminInjectedData,
     Cbsd,
+    ConditionalRegistration,
     EscSensor,
+    FccIdRecord,
     Grant,
     PalRecord,
     PeerSas,
+    UserIdRecord,
 )
 
 _counter = itertools.count(1)
@@ -127,15 +130,39 @@ def make_pal(
     user_id: str | None = None,
     low_hz: int = 3550_000_000,
     high_hz: int = 3560_000_000,
+    license_status: str = "VALID",
+    license_expiration: str | None = None,
+    record_json: dict[str, Any] | None = None,
     commit: bool = True,
 ) -> PalRecord:
+    """Create a PAL record. ``record_json``, when given, is stored verbatim so
+    ``services.pal_service.load_pal_records`` returns exactly that shape;
+    otherwise ``pal_record_to_dict`` derives channelAssignment/palId/userId
+    from the row columns (see services/pal_service.py).
+    """
+    pid = pal_id or _next_token("pal")
+    uid = user_id or _next_token("pal-user")
+    body = record_json if record_json is not None else {
+        "palId": pid,
+        "userId": uid,
+        "channelAssignment": {
+            "primaryAssignment": {
+                "lowFrequency": low_hz,
+                "highFrequency": high_hz,
+            }
+        },
+        "licenseStatus": license_status,
+    }
+    if license_expiration:
+        body.setdefault("license", {"licenseExpiration": license_expiration})
     row = PalRecord(
-        pal_id=pal_id or _next_token("pal"),
-        user_id=user_id or _next_token("pal-user"),
+        pal_id=pid,
+        user_id=uid,
         low_frequency=low_hz,
         high_frequency=high_hz,
-        license_status="VALID",
-        record_json="{}",
+        license_status=license_status,
+        license_expiration=license_expiration,
+        record_json=json.dumps(body),
     )
     db.add(row)
     if commit:
@@ -154,6 +181,37 @@ def make_ppa_zone(
     """PPA is represented as admin-injected zone data (kind=zone)."""
     zid = zone_id or _next_token("ppa")
     body = payload or {"record": {"id": zid, "type": "PPA"}}
+    row = AdminInjectedData(kind="zone", data_json=json.dumps(body))
+    db.add(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def make_ppa_with_pal(
+    db: Session,
+    *,
+    pal: PalRecord,
+    cbsd_reference_ids: list[str],
+    zone: dict[str, Any] | None = None,
+    zone_id: str | None = None,
+    commit: bool = True,
+) -> AdminInjectedData:
+    """Admin-injected PPA (kind=zone) linking a PAL and cluster of cbsdIds."""
+    zid = zone_id or _next_token("ppa")
+    body = {
+        "record": {
+            "id": zid,
+            "type": "PPA",
+            "usage": "PPA",
+            "ppaInfo": {
+                "palId": [pal.pal_id],
+                "cbsdReferenceId": cbsd_reference_ids,
+            },
+            "zone": zone or square_polygon(-105.27, 40.0),
+        }
+    }
     row = AdminInjectedData(kind="zone", data_json=json.dumps(body))
     db.add(row)
     if commit:
@@ -235,3 +293,102 @@ def make_peer_sas(
         db.commit()
         db.refresh(row)
     return row
+
+
+def make_fcc_id(
+    db: Session,
+    *,
+    fcc_id: str | None = None,
+    fcc_max_eirp: float = 47.0,
+    commit: bool = True,
+) -> FccIdRecord:
+    row = FccIdRecord(fcc_id=fcc_id or _next_token("fcc"), fcc_max_eirp=fcc_max_eirp)
+    db.add(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def make_user_id(
+    db: Session,
+    *,
+    user_id: str | None = None,
+    commit: bool = True,
+) -> UserIdRecord:
+    row = UserIdRecord(user_id=user_id or _next_token("user"))
+    db.add(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def make_conditionals(
+    db: Session,
+    *,
+    fcc_id: str,
+    cbsd_serial_number: str,
+    data: dict[str, Any],
+    commit: bool = True,
+) -> ConditionalRegistration:
+    row = ConditionalRegistration(
+        fcc_id=fcc_id,
+        cbsd_serial_number=cbsd_serial_number,
+        data_json=json.dumps(data),
+    )
+    db.add(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def square_polygon(lon: float, lat: float, delta: float = 0.05) -> dict[str, Any]:
+    """Closed GeoJSON Polygon ring (RFC 7946 [lon, lat] order) centered on a point."""
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [lon - delta, lat - delta],
+                [lon - delta, lat + delta],
+                [lon + delta, lat + delta],
+                [lon + delta, lat - delta],
+                [lon - delta, lat - delta],
+            ]
+        ],
+    }
+
+
+def full_cbrs_meas_report() -> dict[str, Any]:
+    """15 x 10 MHz measReport entries spanning the full 3550-3700 MHz CBRS band."""
+    reports = []
+    low = 3_550_000_000
+    step = 10_000_000
+    for i in range(15):
+        freq = low + i * step
+        reports.append(
+            {
+                "measFrequency": freq,
+                "measBandwidth": step,
+                "measRcvdPower": -80.0,
+            }
+        )
+    return {"rcvdPowerMeasReports": reports}
+
+
+def cat_a_install(
+    lat: float = 40.0,
+    lon: float = -105.27,
+    *,
+    indoor: bool = True,
+    height: float = 3.0,
+) -> dict[str, Any]:
+    """Category A installationParam with common AGL height + indoor flag."""
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "height": height,
+        "heightType": "AGL",
+        "indoorDeployment": indoor,
+    }

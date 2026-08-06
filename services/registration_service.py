@@ -198,19 +198,26 @@ def _validate_params(
             if item not in VALID_MEAS:
                 return INVALID_PARAM
 
-    if "latitude" in installation:
+    # Optional fields may be present-but-None once a request has round-tripped
+    # through the Pydantic schema layer (which emits every declared key). Treat
+    # None the same as "not provided" so schema-validated and raw-dict callers
+    # behave identically.
+    if installation.get("latitude") is not None:
         lat = installation["latitude"]
         if not isinstance(lat, (int, float)) or lat < -90 or lat > 90:
             return INVALID_PARAM
-    if "longitude" in installation:
+    if installation.get("longitude") is not None:
         lon = installation["longitude"]
         if not isinstance(lon, (int, float)) or lon < -180 or lon > 180:
             return INVALID_PARAM
-    if "antennaAzimuth" in installation:
+    if installation.get("antennaAzimuth") is not None:
         az = installation["antennaAzimuth"]
         if not isinstance(az, (int, float)) or az < 0 or az >= 360:
             return INVALID_PARAM
-    if "heightType" in installation and installation["heightType"] not in ("AGL", "AMSL"):
+    if installation.get("heightType") is not None and installation["heightType"] not in (
+        "AGL",
+        "AMSL",
+    ):
         return INVALID_PARAM
 
     eirp = installation.get("eirpCapability")
