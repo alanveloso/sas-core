@@ -429,14 +429,26 @@ def trigger_disconnect_esc(db: Session = Depends(get_db)):
 
 @router.post("/query/propagation_and_antenna_model")
 async def query_propagation_and_antenna_model(request: Request):
-    """PAT admin query — not implemented; must not return a fake success body."""
-    del request
-    return JSONResponse(
-        {
-            "detail": (
-                "Admin query/propagation_and_antenna_model is not implemented "
-                "(PAT family pending)."
-            )
-        },
-        status_code=501,
+    """PAT Admin query — path loss + antenna gains (modelType 1/2/3)."""
+    from services.propagation import (
+        PropagationRequestError,
+        PropagationUnavailableError,
+        compute_propagation_and_antenna_model,
+        load_reference_engines,
     )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"detail": "request must be a JSON object"}, status_code=400)
+
+    try:
+        engines = load_reference_engines()
+        result = compute_propagation_and_antenna_model(body, engines=engines)
+    except PropagationRequestError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    except PropagationUnavailableError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=503)
+    return JSONResponse(result, status_code=200)

@@ -46,7 +46,9 @@ _UUT_JSON_RESPONSE_HINTS: dict[str, str] = {
     "get_ppa_status": "{completed: bool, withError: bool}",
     "trigger/create_ppa": "ppa_id string | empty",
     "injectdata/zone": "zone id JSON",
-    "query/propagation_and_antenna_model": "501 Not Implemented",
+    "query/propagation_and_antenna_model": (
+        "{pathlossDb, txAntennaGainDbi?, rxAntennaGainDbi?} or HTTP 400/503"
+    ),
 }
 
 # Tokens that indicate real domain mutation / service use (not AdminInjectedData-only).
@@ -80,6 +82,7 @@ _UUT_DOMAIN_TOKENS: tuple[str, ...] = (
     "disconnect_esc",
     "enable_measurement_report_registration",
     "enable_measurement_report_heartbeat",
+    "compute_propagation_and_antenna_model",
     "FccIdRecord",
     "PeerSas",
     "ConditionalRegistration",

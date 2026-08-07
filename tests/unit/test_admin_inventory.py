@@ -117,7 +117,7 @@ def test_build_inventory_synthetic_marks_stub_and_none_request(tmp_path: Path):
     assert by_name["Reset"].request_schema == "(none)"
     assert by_name["TriggerLoadDpas"].request_schema == "(none)"
     assert by_name["TriggerLoadDpas"].uut_status == "implemented"
-    assert by_name["QueryPropagationAndAntennaModel"].uut_status == "unimplemented"
+    assert by_name["QueryPropagationAndAntennaModel"].uut_status == "implemented"
     assert "fccId" in by_name["InjectFccId"].request_schema
     assert "GRA" in by_name["Reset"].consumers
 
@@ -173,7 +173,7 @@ def test_build_inventory_has_required_columns_and_marks_stubs():
     assert reset.consumers
     assert by_name["TriggerLoadDpas"].uut_status == "implemented"
     assert by_name["TriggerLoadDpas"].request_schema == "(none)"
-    assert by_name["QueryPropagationAndAntennaModel"].uut_status == "unimplemented"
+    assert by_name["QueryPropagationAndAntennaModel"].uut_status == "implemented"
     assert by_name["InjectExclusionZone"].uut_status == "implemented"
     assert by_name["GetDailyActivitiesStatus"].uut_status == "implemented"
     assert by_name["GetDailyActivitiesStatus"].request_schema == "(none)"

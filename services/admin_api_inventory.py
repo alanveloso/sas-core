@@ -90,15 +90,13 @@ EXPLICIT_ROUTED_ADMIN_POST_PATHS: frozenset[str] = frozenset(
         "trigger/create_full_activity_dump",
         "get_daily_activities_status",
         "get_ppa_status",
+        "query/propagation_and_antenna_model",
     }
 )
 
 # Official paths with an explicit non-success handler (must not fake PASS).
-EXPLICIT_UNIMPLEMENTED_ADMIN_POST_PATHS: frozenset[str] = frozenset(
-    {
-        "query/propagation_and_antenna_model",
-    }
-)
+# Empty after P6-003: propagation query is implemented (may still 400/503).
+EXPLICIT_UNIMPLEMENTED_ADMIN_POST_PATHS: frozenset[str] = frozenset()
 
 
 def missing_official_admin_paths() -> frozenset[str]:

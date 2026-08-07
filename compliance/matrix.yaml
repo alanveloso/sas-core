@@ -271,16 +271,19 @@ cases:
   - id: FAMILY.PAT
     family: PAT
     case_scope: family
-    status: blocked
+    status: failing
     implementation:
       - routes/admin_routes.py
+      - services/propagation/service.py
+      - services/propagation/engines.py
       - protection_data/loader.py
       - protection_data/schema.py
     tests:
       - tests/contract/test_admin_no_catchall.py
       - tests/unit/test_protection_data.py
-    evidence: compliance/evidence/P6-001_protection_data.md
-    notes: "P6-001 packaging/VERSION layout. Propagation API still 501 (P6-003)."
+      - tests/unit/test_propagation_service.py
+    evidence: compliance/evidence/P6-003_propagation_api.md
+    notes: "P6-003 Admin API implemented (FSS/PPA/DPA wiring). Official PAT PASS pending compiled ITM + NLCD + harness campaign (P6-005/P7-003)."
 
   - id: FAMILY.IPR
     family: IPR

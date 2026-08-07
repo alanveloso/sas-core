@@ -314,12 +314,12 @@ methods:
   request_schema: 'A dictionary with multiple key-value pairs where the keys are reliabilityLevel: (permitted
     values: -1, 0.05, 0.95) cbsd: dictionary defining cbsd fss(optional): dictionary defining fss ppa(optional):
     GeoJSON Object'
-  response_schema: 501 Not Implemented
+  response_schema: '{pathlossDb, txAntennaGainDbi?, rxAntennaGainDbi?} or HTTP 400/503'
   state_changed: read-only status/query
-  uut_status: unimplemented
+  uut_status: implemented
   consumers:
   - PAT
-  notes: explicit HTTP 501
+  notes: P6-003 propagation service; 400 invalid request; 503 if reference models/ITM unavailable
 - method: Reset
   endpoint: /admin/reset
   http_method: POST
@@ -540,5 +540,4 @@ methods:
 gaps:
   official_paths_missing_from_impl_parse: []
   impl_paths_not_in_official_inventory: []
-  stub_or_unimplemented:
-  - /admin/query/propagation_and_antenna_model
+  stub_or_unimplemented: []
