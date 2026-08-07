@@ -3,7 +3,7 @@
 | `BlacklistByFccId` | `/admin/injectdata/blacklist_fcc_id` | A dictionary with a single key-value pair where the key is "fccId" and the value | empty_200 | persist injection (injectdata/blacklist_ | implemented | GRA,HBT,REG,SIQ |
 | `BlacklistByFccIdAndSerialNumber` | `/admin/injectdata/blacklist_fcc_id_and_serial_number` | A dictionary with the following key-value pairs: "fccId": (string) blacklisted F | empty_200 | persist injection (injectdata/blacklist_ | implemented | — |
 | `GetDailyActivitiesStatus` | `/admin/get_daily_activities_status` | (none) | {completed: bool} | read-only status/query | implemented | EXZ,FAD,FDB,FPR,GPR,GRA,HBT,HELPER,IPR,MCP,PPR,SIQ,WDB |
-| `GetPpaCreationStatus` | `/admin/get_ppa_status` | (none) | {completed: bool, withError: bool} | read-only status/query | partial | HELPER,PCR,WDB |
+| `GetPpaCreationStatus` | `/admin/get_ppa_status` | (none) | {completed: bool, withError: bool} | read-only status/query | implemented | HELPER,PCR,WDB |
 | `InjectClusterList` | `/admin/injectdata/cluster_list` | (unspecified) | empty_200 | persist injection (injectdata/cluster_li | thin | — |
 | `InjectCpiUser` | `/admin/injectdata/cpi_user` | A dictionary with the following key-value pairs: "cpiId": (string) valid cpiId t | empty_200 | persist injection (injectdata/cpi_user) | implemented | REG |
 | `InjectDatabaseUrl` | `/admin/injectdata/database_url` | Contains database url to be injected. | empty_200 | persist injection (injectdata/database_u | thin | FDB,IPR,WDB |

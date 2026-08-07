@@ -64,6 +64,8 @@ _UUT_DOMAIN_TOKENS: tuple[str, ...] = (
     "activate_dpa",
     "bulk_dpa_activation",
     "deactivate_dpa",
+    "create_ppa",
+    "get_ppa_creation_status",
     "FccIdRecord",
     "PeerSas",
     "ConditionalRegistration",

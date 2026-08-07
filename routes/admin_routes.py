@@ -340,48 +340,19 @@ async def trigger_bulk_dpa_activation(request: Request, db: Session = Depends(ge
 @router.post("/get_ppa_status")
 def get_ppa_status(db: Session = Depends(get_db)):
     """WDB/PCR: poll until PPA creation finishes."""
-    row = db.query(AdminInjectedData).filter_by(kind="ppa_creation_status").first()
-    if row:
-        try:
-            status = json.loads(row.data_json or "{}")
-            return JSONResponse(
-                {
-                    "completed": bool(status.get("completed", True)),
-                    "withError": bool(status.get("withError", False)),
-                }
-            )
-        except json.JSONDecodeError:
-            pass
-    return JSONResponse({"completed": True, "withError": False})
+    from services.ppa_service import get_ppa_creation_status
+
+    return JSONResponse(get_ppa_creation_status(db))
 
 
 @router.post("/trigger/create_ppa")
 async def create_ppa(request: Request, db: Session = Depends(get_db)):
-    """WDB/PCR: create PPA zone; fail when requested PAL IDs are unknown."""
-    from services.meas_report import set_admin_flag
+    """Create PPA zone from PAL + cluster (+ optional providedContour)."""
+    from services.ppa_service import create_ppa as create_ppa_zone
 
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    pal_ids = body.get("palIds") or []
-    from services.pal_service import known_pal_ids
-
-    known_pal_ids_set = known_pal_ids(db)
-
-    missing = [pid for pid in pal_ids if pid not in known_pal_ids_set]
-    if not pal_ids or missing:
-        set_admin_flag(
-            db, "ppa_creation_status", {"completed": True, "withError": True}
-        )
-        # Harness may accept HTTP error OR status.withError; return 200 + status flag.
-        return JSONResponse("")
-
-    set_admin_flag(
-        db, "ppa_creation_status", {"completed": True, "withError": False}
-    )
-    return JSONResponse(f"zone/ppa/mvp/{pal_ids[0]}/0")
+    body = await _read_json_object(request)
+    ppa_id = create_ppa_zone(db, body)
+    return JSONResponse(ppa_id)
 
 
 @router.post("/injectdata/database_url")

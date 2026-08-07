@@ -58,12 +58,12 @@ methods:
   request_schema: (none)
   response_schema: '{completed: bool, withError: bool}'
   state_changed: read-only status/query
-  uut_status: partial
+  uut_status: implemented
   consumers:
   - HELPER
   - PCR
   - WDB
-  notes: returns JSON; domain may be incomplete
+  notes: mutates domain tables/services
 - method: InjectClusterList
   endpoint: /admin/injectdata/cluster_list
   http_method: POST
