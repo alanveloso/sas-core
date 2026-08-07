@@ -157,11 +157,11 @@ def test_freeze_limits_decisions_to_snapshot_grants(db_session):
     c1, g1 = _add_cbsd_with_grant(
         db_session, fcc="fcc-a2", serial="sn-a2", grant_id="G-A2"
     )
+    _seed_peer_conflict(db_session, peer, c1)
     snapshot = freeze_cpas_snapshot(db_session)
     c2, g2 = _add_cbsd_with_grant(
         db_session, fcc="fcc-b2", serial="sn-b2", grant_id="G-B2"
     )
-    _seed_peer_conflict(db_session, peer, c1)
     _seed_peer_conflict(db_session, peer, c2)
     db_session.commit()
 
@@ -169,6 +169,9 @@ def test_freeze_limits_decisions_to_snapshot_grants(db_session):
     pks = {d.grant_pk for d in decisions}
     assert g1.id in pks
     assert g2.id not in pks
+    # Peer rows added after freeze must not expand the frozen peer set.
+    assert snapshot.peer_record_count == 1
+
 
 
 def test_apply_peer_conflict_wrapper_still_commits(db_session):

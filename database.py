@@ -111,6 +111,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
                 Base.metadata.create_all(bind=engine)
                 _ensure_lifecycle_columns(engine)
                 _ensure_fad_published_column(engine)
+                _ensure_peer_sas_fad_generation_column(engine)
                 _assert_required_tables(engine)
                 return
             except OperationalError as exc:
@@ -120,6 +121,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
                 if "already exists" in message:
                     _ensure_lifecycle_columns(engine)
                     _ensure_fad_published_column(engine)
+                    _ensure_peer_sas_fad_generation_column(engine)
                     _assert_required_tables(engine)
                     return
                 logger.warning(
@@ -219,6 +221,22 @@ def _ensure_fad_published_column(bind) -> None:
                         )
                     )
         logger.info("Applied FAD published schema patches: %s", statements)
+
+
+def _ensure_peer_sas_fad_generation_column(bind) -> None:
+    """Add PeerSas.last_fad_generation for idempotent multi-SAS sync (P5-004)."""
+    from sqlalchemy import text
+
+    inspector = inspect(bind)
+    if "peer_sas" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("peer_sas")}
+    if "last_fad_generation" in cols:
+        return
+    stmt = "ALTER TABLE peer_sas ADD COLUMN last_fad_generation VARCHAR(32)"
+    with bind.begin() as conn:
+        conn.execute(text(stmt))
+    logger.info("Applied peer_sas.last_fad_generation schema patch")
 
 
 def reset_db() -> None:

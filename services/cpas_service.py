@@ -43,6 +43,9 @@ class CpasSnapshot:
     active_grant_pks: tuple[int, ...]
     peer_sync_report: dict[str, Any] = field(default_factory=dict)
     peer_record_count: int = 0
+    # Durable peer FAD rows at freeze time: (record_type, record_id, data_json).
+    # Evaluation must use this set so mid-run peer N→N+1 cannot widen decisions.
+    peer_records: tuple[tuple[str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,25 +160,56 @@ def _append_cpas_audit(db: Session, event: str, detail: dict[str, Any]) -> None:
 def freeze_cpas_snapshot(
     db: Session, peer_sync_report: dict[str, Any] | None = None
 ) -> CpasSnapshot:
-    """Capture active grant PKs after peer sync; decisions only target this set."""
+    """Capture active grant PKs and peer FAD rows; decisions only use this set."""
+    # SessionLocal uses autoflush=False; pending peer/grant rows must be visible.
+    db.flush()
     rows = (
         db.query(Grant.id)
         .filter_by(terminated=False)
         .order_by(Grant.id)
         .all()
     )
+    peer_rows = (
+        db.query(PeerFadRecord)
+        .order_by(PeerFadRecord.peer_sas_id, PeerFadRecord.record_type, PeerFadRecord.id)
+        .all()
+    )
+    peer_records = tuple(
+        (row.record_type, row.record_id, row.data_json) for row in peer_rows
+    )
     return CpasSnapshot(
         frozen_at=utc_now().replace(microsecond=0).isoformat(),
         active_grant_pks=tuple(int(r[0]) for r in rows),
         peer_sync_report=dict(peer_sync_report or {}),
-        peer_record_count=int(db.query(PeerFadRecord).count()),
+        peer_record_count=len(peer_records),
+        peer_records=peer_records,
     )
+
+
+def _frozen_peer_records(
+    snapshot: CpasSnapshot, record_type: str
+) -> list[dict[str, Any]]:
+    """Parse peer records of one type from the frozen snapshot (not live DB)."""
+    out: list[dict[str, Any]] = []
+    for rt, _record_id, data_json in snapshot.peer_records:
+        if rt != record_type:
+            continue
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out.append(data)
+    return out
 
 
 def evaluate_cpas_protections(db: Session, snapshot: CpasSnapshot) -> list[CpasDecision]:
     """Compute grant terminations against the frozen snapshot (no DB writes)."""
     if not snapshot.active_grant_pks:
         return []
+    peer_cbsd = _frozen_peer_records(snapshot, "cbsd")
+    peer_zones = _frozen_peer_records(snapshot, "zone")
+    peer_esc = _frozen_peer_records(snapshot, "esc_sensor")
     decisions: list[CpasDecision] = []
     grants = (
         db.query(Grant)
@@ -190,11 +224,11 @@ def evaluate_cpas_protections(db: Session, snapshot: CpasSnapshot) -> list[CpasD
         if cbsd is None:
             continue
         reason: str | None = None
-        if peer_has_grant_for_cbsd(db, cbsd):
+        if peer_has_grant_for_cbsd(db, cbsd, peer_cbsd_records=peer_cbsd):
             reason = "peer_same_cbsd_grant"
-        elif _grant_conflicts_peer_ppa(db, cbsd, grant):
+        elif _grant_conflicts_peer_ppa(db, cbsd, grant, peer_zones):
             reason = "peer_ppa"
-        elif _grant_conflicts_peer_esc(db, cbsd, grant):
+        elif _grant_conflicts_peer_esc(db, cbsd, grant, peer_esc):
             reason = "peer_esc"
         if reason:
             decisions.append(
@@ -416,10 +450,20 @@ def _active_peer_grants(record: dict[str, Any]) -> list[dict[str, Any]]:
     return active
 
 
-def peer_has_grant_for_cbsd(db: Session, cbsd: Cbsd) -> bool:
+def peer_has_grant_for_cbsd(
+    db: Session,
+    cbsd: Cbsd,
+    *,
+    peer_cbsd_records: list[dict[str, Any]] | None = None,
+) -> bool:
     """True when any peer FAD CBSD record matches this local CBSD and has an active grant."""
     target_id = fad_cbsd_id(cbsd.fcc_id, cbsd.cbsd_serial_number)
-    for record in _peer_cbsd_records(db):
+    records = (
+        peer_cbsd_records
+        if peer_cbsd_records is not None
+        else _peer_cbsd_records(db)
+    )
+    for record in records:
         if record.get("id") != target_id:
             continue
         if _active_peer_grants(record):
@@ -494,7 +538,12 @@ def _ppa_protected_ranges(db: Session, ppa: dict[str, Any]) -> list[tuple[int, i
     return ranges
 
 
-def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
+def _grant_conflicts_peer_ppa(
+    db: Session,
+    cbsd: Cbsd,
+    grant: Grant,
+    peer_zones: list[dict[str, Any]] | None = None,
+) -> bool:
     """True when CBSD is in/near a peer PPA and the grant overlaps the PPA PAL band."""
     from services.geometry import within_geojson_buffer_m
 
@@ -502,7 +551,8 @@ def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     if lat is None or lon is None:
         return False
     buffer_m = _peer_ppa_buffer_m()
-    for record in _peer_records_of_type(db, "zone"):
+    zones = peer_zones if peer_zones is not None else _peer_records_of_type(db, "zone")
+    for record in zones:
         if record.get("usage") != "PPA" and "ppaInfo" not in record:
             continue
         if record.get("terminated") is True:
@@ -515,7 +565,12 @@ def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     return False
 
 
-def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
+def _grant_conflicts_peer_esc(
+    db: Session,
+    cbsd: Cbsd,
+    grant: Grant,
+    peer_esc_records: list[dict[str, Any]] | None = None,
+) -> bool:
     """True when CBSD is within ESC protection distance of a peer ESC sensor."""
     from services.geometry import haversine_m
 
@@ -527,7 +582,12 @@ def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     lat, lon = _cbsd_lat_lon(cbsd)
     if lat is None or lon is None:
         return False
-    for record in _peer_records_of_type(db, "esc_sensor"):
+    sensors = (
+        peer_esc_records
+        if peer_esc_records is not None
+        else _peer_records_of_type(db, "esc_sensor")
+    )
+    for record in sensors:
         inst = record.get("installationParam") or {}
         esc_lat, esc_lon = inst.get("latitude"), inst.get("longitude")
         if esc_lat is None or esc_lon is None:

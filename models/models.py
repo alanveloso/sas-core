@@ -167,6 +167,8 @@ class PeerSas(Base):
     certificate_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     url: Mapped[str] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Last successfully applied FullActivityDump.generationDateTime (P5-004).
+    last_fad_generation: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class EscSensor(Base):

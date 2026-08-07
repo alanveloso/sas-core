@@ -117,8 +117,9 @@ cases:
     tests:
       - tests/unit/test_fad_server.py
       - tests/unit/test_fad_client.py
-    evidence: compliance/evidence/P5-002_fad_client.md
-    notes: "CSV Parcial; P5-001 server + P5-002 secure client. Official PASS pending harness FAD suite."
+      - tests/unit/test_multi_sas.py
+    evidence: compliance/evidence/P5-004_multi_sas.md
+    notes: "CSV Parcial; P5-001/002 client + P5-004 multi-SAS resilience. Official PASS pending harness FAD suite."
 
   - id: FAMILY.SSS
     family: SSS
@@ -201,8 +202,9 @@ cases:
       - tests/unit/test_cpas_execution_mode.py
       - tests/unit/test_cpas_schedule.py
       - tests/unit/test_cpas_pipeline.py
-    evidence: compliance/evidence/P5-003_cpas_transactional.md
-    notes: "CSV Parcial; P5-003 transactional CPAS pipeline. Official PASS pending harness."
+      - tests/unit/test_multi_sas.py
+    evidence: compliance/evidence/P5-004_multi_sas.md
+    notes: "CSV Parcial; P5-003 pipeline + P5-004 multi-SAS/CPAS concurrency. Official PASS pending harness."
 
   - id: FAMILY.SCS
     family: SCS

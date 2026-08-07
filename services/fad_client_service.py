@@ -291,10 +291,18 @@ def validate_activity_envelope(
 
 
 def _http_get_bytes(client: httpx.Client, url: str) -> bytes:
-    resp = client.get(url)
+    try:
+        resp = client.get(url)
+    except httpx.RequestError as exc:
+        raise FadClientError(f"peer unreachable: {exc}") from exc
     if resp.is_redirect:
         raise FadClientError(f"FAD redirect refused: {url} -> {resp.headers.get('location')}")
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise FadClientError(
+            f"peer HTTP {exc.response.status_code} for {url}"
+        ) from exc
     return resp.content
 
 
@@ -370,6 +378,44 @@ def fetch_peer_generation(
     )
 
 
+def _record_data_json(record: dict[str, Any]) -> str:
+    return json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+
+
+def _snapshot_record_fingerprint(
+    snapshot: FadGenerationSnapshot,
+) -> frozenset[tuple[str, str, str]]:
+    """Stable set of (record_type, record_id, canonical JSON) for equality checks."""
+    return frozenset(
+        (record_type, record_id, _record_data_json(record))
+        for record_type, record_id, record in snapshot.records
+    )
+
+
+def _local_peer_record_fingerprint(
+    db: Session, peer_sas_id: int
+) -> frozenset[tuple[str, str, str]]:
+    rows = db.query(PeerFadRecord).filter_by(peer_sas_id=peer_sas_id).all()
+    return frozenset((row.record_type, row.record_id, row.data_json) for row in rows)
+
+
+def peer_generation_already_applied(
+    db: Session, peer: PeerSas, snapshot: FadGenerationSnapshot
+) -> bool:
+    """True when durable peer state already matches this validated generation.
+
+    Matching ``generationDateTime`` alone is not enough: local wipe or content
+    change under a reused timestamp must trigger re-apply (P5-004).
+    """
+    if not peer.last_fad_generation:
+        return False
+    if peer.last_fad_generation != snapshot.generation_datetime:
+        return False
+    return _local_peer_record_fingerprint(db, peer.id) == _snapshot_record_fingerprint(
+        snapshot
+    )
+
+
 def apply_peer_generation(db: Session, snapshot: FadGenerationSnapshot) -> None:
     """Replace all stored records for a peer with the validated generation (atomic)."""
     db.query(PeerFadRecord).filter_by(peer_sas_id=snapshot.peer_sas_id).delete(
@@ -381,9 +427,12 @@ def apply_peer_generation(db: Session, snapshot: FadGenerationSnapshot) -> None:
                 peer_sas_id=snapshot.peer_sas_id,
                 record_type=record_type,
                 record_id=record_id,
-                data_json=json.dumps(record, separators=(",", ":"), ensure_ascii=False),
+                data_json=_record_data_json(record),
             )
         )
+    peer = db.query(PeerSas).filter_by(id=snapshot.peer_sas_id).first()
+    if peer is not None:
+        peer.last_fad_generation = snapshot.generation_datetime
     db.flush()
 
 
@@ -402,7 +451,8 @@ def sync_one_peer(
     """Fetch, validate and atomically apply one peer FAD.
 
     Heavy network I/O runs before the DB critical section. On failure the session
-    is rolled back so the previous peer snapshot remains.
+    is rolled back so the previous peer snapshot remains. Repeating the same
+    generation is a no-op only when durable peer records already match (P5-004).
     """
     if not (peer.url or "").strip():
         return None
@@ -410,11 +460,18 @@ def sync_one_peer(
     owns_client = client is None
     http = client or build_fad_httpx_client()
     try:
-        # Validate fully before mutating durable peer state.
         snapshot = fetch_peer_generation(http, peer)
         locked = _lock_peer_row(db, peer.id)
         if locked is None:
             raise FadClientError(f"peer SAS id={peer.id} disappeared during sync")
+        if peer_generation_already_applied(db, locked, snapshot):
+            logger.info(
+                "Peer FAD generation unchanged peer_id=%s generation=%s; skip apply",
+                peer.id,
+                snapshot.generation_datetime,
+            )
+            db.commit()  # release row lock
+            return snapshot
         apply_peer_generation(db, snapshot)
         db.commit()
         logger.info(
@@ -443,7 +500,13 @@ def run_peer_fad_sync(
 ) -> dict[str, Any]:
     """Sync every allowlisted ``PeerSas`` independently (one failure does not wipe others)."""
     peers = db.query(PeerSas).order_by(PeerSas.id).all()
-    report: dict[str, Any] = {"peers": len(peers), "ok": 0, "failed": 0, "errors": []}
+    report: dict[str, Any] = {
+        "peers": len(peers),
+        "ok": 0,
+        "failed": 0,
+        "skipped_same_generation": 0,
+        "errors": [],
+    }
     if not peers:
         return report
 
@@ -452,8 +515,21 @@ def run_peer_fad_sync(
     try:
         for peer in peers:
             try:
-                sync_one_peer(db, peer, client=http)
+                # Capture durable fingerprint before sync for skip accounting.
+                prior_gen = peer.last_fad_generation
+                prior_fp = (
+                    _local_peer_record_fingerprint(db, peer.id) if prior_gen else None
+                )
+                snapshot = sync_one_peer(db, peer, client=http)
                 report["ok"] += 1
+                if (
+                    snapshot is not None
+                    and prior_gen
+                    and prior_gen == snapshot.generation_datetime
+                    and prior_fp is not None
+                    and prior_fp == _snapshot_record_fingerprint(snapshot)
+                ):
+                    report["skipped_same_generation"] += 1
             except Exception as exc:  # noqa: BLE001 — continue other peers
                 report["failed"] += 1
                 report["errors"].append(
