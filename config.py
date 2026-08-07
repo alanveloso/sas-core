@@ -95,6 +95,22 @@ class Settings(BaseSettings):
         default=None,
         description="Override path to NED GridFloat tiles (SAS_TERRAIN_DIR).",
     )
+    # Protection / RF dataset packaging (P6-001).
+    sas_protection_data_bundle: str = Field(
+        default="cbrs_winnforum_protection",
+        description="Manifest id under protection_data/manifests/.",
+    )
+    sas_protection_data_root: Optional[Path] = Field(
+        default=None,
+        description="Override data root (default: <repo>/data). SAS_PROTECTION_DATA_ROOT.",
+    )
+    sas_protection_data_strict: bool = Field(
+        default=False,
+        description=(
+            "When true, required payload globs (NED .flt, DPA .kml, …) must be present; "
+            "doctor/startup fail otherwise. SAS_PROTECTION_DATA_STRICT."
+        ),
+    )
 
     @field_validator("sas_execution_mode", mode="before")
     @classmethod
@@ -130,6 +146,24 @@ class Settings(BaseSettings):
             return None
         return Path(str(value))
 
+    @field_validator("sas_protection_data_root", mode="before")
+    @classmethod
+    def _coerce_protection_data_root(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        return Path(str(value))
+
+    @field_validator("sas_protection_data_strict", mode="before")
+    @classmethod
+    def _coerce_protection_data_strict(cls, value: object) -> object:
+        if value is None or value == "":
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
+
     @field_validator(
         "ssl_certfile",
         "ssl_keyfile",
@@ -157,6 +191,12 @@ class Settings(BaseSettings):
     def result_backend(self) -> Optional[str]:
         """Optional Celery result backend; None disables result persistence."""
         return self.celery_result_backend
+
+    @property
+    def resolved_protection_data_root(self) -> Path:
+        from protection_data.loader import DEFAULT_DATA_ROOT
+
+        return (self.sas_protection_data_root or DEFAULT_DATA_ROOT).resolve()
 
     @property
     def resolved_ssl_certfile(self) -> Path:

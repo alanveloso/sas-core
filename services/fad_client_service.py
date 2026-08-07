@@ -5,9 +5,11 @@ Fetches peer FADs with:
 - hostname verification enabled by default;
 - peer URL allowlist (only ``PeerSas`` rows from admin injection);
 - SSRF controls (scheme, same-origin files, blocked resolved IPs, no open redirects);
-- checksum / size / version / schema validation before persistence;
+  - checksum / size / version / schema validation before persistence;
 - atomic replace of peer records per generation (purge absent IDs);
-- previous snapshot preserved when fetch or validation fails.
+- previous snapshot preserved when fetch or validation fails;
+- omitted empty ``recordType`` entries allowed (peer/harness may skip
+  empty coordination dumps; absent type ≡ empty set).
 """
 
 from __future__ import annotations
@@ -257,12 +259,8 @@ def validate_manifest(manifest: dict[str, Any]) -> tuple[str, str, list[dict[str
                 "recordType": record_type,
             }
         )
-    present_types = {e["recordType"] for e in normalized}
-    missing_types = sorted(RECORD_TYPES - present_types)
-    if missing_types:
-        raise FadClientError(
-            f"FAD manifest missing required recordType(s): {missing_types}"
-        )
+    # Absent recordTypes are treated as empty (WINNF peers / harness may omit
+    # empty coordination dumps). Unknown types already rejected above.
     return gen, description, normalized
 
 

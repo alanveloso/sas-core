@@ -1,0 +1,101 @@
+id: cbrs_winnforum_protection
+version: "1.0.0"
+description: >
+  Versioned CBRS / WInnForum protection-data layout for ITM, terrain, clutter,
+  antennas, DPA, FSS/GWBL, zones and census/tract inputs. Binary payloads are
+  provisioned under data/; VERSION markers pin the package revision.
+rule_applied: winnforum_protection_data_v1
+slots:
+  - id: itm_wf
+    kind: itm
+    version: "1.0.0"
+    relative_path: models/itm
+    required: true
+    presence: version_marker
+    description: WF-ITM / ITM model package revision (algorithms arrive in P6-003).
+
+  - id: terrain_ned
+    kind: terrain_ned
+    version: "usgs_ned_1_gridfloat_v1"
+    relative_path: geo/ned
+    required: true
+    presence: version_marker
+    description: USGS NED 1″ GridFloat tile set marker.
+
+  - id: terrain_ned_payload
+    kind: terrain_ned
+    version: "usgs_ned_1_gridfloat_v1"
+    relative_path: geo/ned
+    required: true
+    presence: files_glob
+    file_glob: "*.flt"
+    min_files: 1
+    payload_optional_unless_strict: true
+    description: NED .flt tiles (gitignored; required under SAS_PROTECTION_DATA_STRICT).
+
+  - id: nlcd_clutter
+    kind: nlcd
+    version: "1.0.0"
+    relative_path: geo/nlcd
+    required: true
+    presence: version_marker
+    description: NLCD / clutter land-cover package marker.
+
+  - id: antenna_patterns
+    kind: antenna
+    version: "1.0.0"
+    relative_path: models/antenna
+    required: true
+    presence: version_marker
+    description: Antenna pattern tables marker.
+
+  - id: dpa_definitions
+    kind: dpa
+    version: "1.0.0"
+    relative_path: ntia
+    required: true
+    presence: version_marker
+    description: NTIA DPA KML catalogue marker.
+
+  - id: dpa_payload
+    kind: dpa
+    version: "1.0.0"
+    relative_path: ntia
+    required: true
+    presence: files_glob
+    file_glob: "*.kml"
+    min_files: 1
+    payload_optional_unless_strict: true
+    description: DPA KML files (gitignored unless vendored; strict mode requires them).
+
+  - id: fss_sites
+    kind: fss
+    version: "1.0.0"
+    relative_path: federal/fss
+    required: true
+    presence: version_marker
+    description: FSS site database package marker.
+
+  - id: gwbl
+    kind: gwbl
+    version: "1.0.0"
+    relative_path: federal/gwbl
+    required: true
+    presence: version_marker
+    description: GWBL database package marker.
+
+  - id: zones_reference
+    kind: zones
+    version: "1.0.0"
+    relative_path: geo/zones
+    required: true
+    presence: version_marker
+    description: Border / quiet / exclusion reference geometry marker.
+
+  - id: census_tracts
+    kind: census
+    version: "1.0.0"
+    relative_path: geo/census
+    required: true
+    presence: version_marker
+    description: Census / tract inputs for PPA service-area marker.

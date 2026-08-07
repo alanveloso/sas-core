@@ -118,8 +118,8 @@ cases:
       - tests/unit/test_fad_server.py
       - tests/unit/test_fad_client.py
       - tests/unit/test_multi_sas.py
-    evidence: compliance/evidence/P5-004_multi_sas.md
-    notes: "CSV Parcial; P5-001/002 client + P5-004 multi-SAS resilience. Official PASS pending harness FAD suite."
+    evidence: compliance/evidence/P5_GATE_FINAL.md
+    notes: "Family rollup; case-level PASS in WINNF.FT.S.FAD.1/.2 (P5 gate final 3x). Local P5-001…P5-004 + PG."
 
   - id: FAMILY.SSS
     family: SSS
@@ -203,8 +203,8 @@ cases:
       - tests/unit/test_cpas_schedule.py
       - tests/unit/test_cpas_pipeline.py
       - tests/unit/test_multi_sas.py
-    evidence: compliance/evidence/P5-004_multi_sas.md
-    notes: "CSV Parcial; P5-003 pipeline + P5-004 multi-SAS/CPAS concurrency. Official PASS pending harness."
+    evidence: compliance/evidence/P5_GATE_FINAL.md
+    notes: "P5 CPAS/scheduler local+FAD.2 OK. Official FDB.1–6/8 BLOCKED_BY_P6 (EXZ/DPA/FSS/GWBL/IAP RF). Not claimed PASS."
 
   - id: FAMILY.SCS
     family: SCS
@@ -269,10 +269,13 @@ cases:
     status: blocked
     implementation:
       - routes/admin_routes.py
+      - protection_data/loader.py
+      - protection_data/schema.py
     tests:
       - tests/contract/test_admin_no_catchall.py
-    evidence: null
-    notes: "Admin query/propagation_and_antenna_model returns HTTP 501; calculation absent."
+      - tests/unit/test_protection_data.py
+    evidence: compliance/evidence/P6-001_protection_data.md
+    notes: "P6-001 packaging/VERSION layout. Propagation API still 501 (P6-003)."
 
   - id: FAMILY.IPR
     family: IPR
@@ -309,6 +312,34 @@ cases:
     tests: []
     evidence: null
     notes: "CSV Ausente ~5%."
+
+  # P5 gate final — FAD case-level evidence (family rollup stays non-passing).
+  - id: WINNF.FT.S.FAD.1
+    family: FAD
+    case_scope: case
+    status: passing
+    implementation:
+      - services/fad_service.py
+      - routes/sas_sas_routes.py
+    tests:
+      - tests/unit/test_fad_server.py
+    evidence: compliance/evidence/P5_GATE_FINAL.md
+    notes: "Harness OK 2026-08-07 P5 gate final ×3; test_WINNF_FT_S_FAD_1."
+
+  - id: WINNF.FT.S.FAD.2
+    family: FAD
+    case_scope: case
+    status: passing
+    implementation:
+      - services/fad_service.py
+      - services/fad_client_service.py
+      - services/cpas_service.py
+      - routes/sas_sas_routes.py
+    tests:
+      - tests/unit/test_fad_client.py
+      - tests/unit/test_multi_sas.py
+    evidence: compliance/evidence/P5_GATE_FINAL.md
+    notes: "Harness OK 2026-08-07 P5 gate final ×3; empty coordination omitted OK; test_WINNF_FT_S_FAD_2."
 
   # P3-004 case-level evidence (harness Ran 56 … OK; family rollups stay non-passing).
   - id: WINNF.FT.S.SCS.1

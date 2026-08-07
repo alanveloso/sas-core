@@ -205,7 +205,7 @@ def test_reject_url_userinfo():
         )
 
 
-def test_validate_manifest_rejects_bad_version_and_incomplete_types():
+def test_validate_manifest_rejects_bad_version_allows_omitted_types():
     with pytest.raises(FadClientError, match="version"):
         validate_manifest(
             {
@@ -223,18 +223,50 @@ def test_validate_manifest_rejects_bad_version_and_incomplete_types():
                 ],
             }
         )
-    with pytest.raises(FadClientError, match="missing required recordType"):
+    # Peer/harness dumps may omit empty coordination (and other empty types).
+    gen, _desc, files = validate_manifest(
+        {
+            "generationDateTime": GEN,
+            "description": "x",
+            "files": [
+                {
+                    "url": f"{PEER_BASE}/cbsd/a.json",
+                    "checksum": "a" * 40,
+                    "size": 1,
+                    "version": "v1.3",
+                    "recordType": "cbsd",
+                },
+                {
+                    "url": f"{PEER_BASE}/zone/a.json",
+                    "checksum": "b" * 40,
+                    "size": 1,
+                    "version": "v1.3",
+                    "recordType": "zone",
+                },
+                {
+                    "url": f"{PEER_BASE}/esc_sensor/a.json",
+                    "checksum": "c" * 40,
+                    "size": 1,
+                    "version": "v1.3",
+                    "recordType": "esc_sensor",
+                },
+            ],
+        }
+    )
+    assert gen == GEN
+    assert {f["recordType"] for f in files} == {"cbsd", "zone", "esc_sensor"}
+    with pytest.raises(FadClientError, match="unsupported recordType"):
         validate_manifest(
             {
                 "generationDateTime": GEN,
                 "description": "x",
                 "files": [
                     {
-                        "url": f"{PEER_BASE}/cbsd/a.json",
+                        "url": f"{PEER_BASE}/other/a.json",
                         "checksum": "a" * 40,
                         "size": 1,
                         "version": "v1.3",
-                        "recordType": "cbsd",
+                        "recordType": "other",
                     }
                 ],
             }

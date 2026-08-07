@@ -2,6 +2,10 @@
 
 Required for Category A outdoor HAAT validation (47 CFR § 96.43 / WINNF REG.7).
 
+Package contract: `protection_data/manifests/cbrs_winnforum_protection.yaml`
+(slot `terrain_ned` / `terrain_ned_payload`). Keep `VERSION` in sync with the
+manifest; binary `.flt` tiles remain gitignored.
+
 ## Source
 
 WInnForum [Common-Data](https://github.com/Wireless-Innovation-Forum/Common-Data)

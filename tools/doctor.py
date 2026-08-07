@@ -96,8 +96,40 @@ def run_doctor() -> DoctorReport:
             detail=settings.sas_execution_mode,
         )
     )
-    return report
 
+    from protection_data.loader import DatasetError, validate_dataset_bundle
+
+    try:
+        # Pass data_root explicitly — do not mutate process-global set_data_root().
+        pdata = validate_dataset_bundle(
+            settings.sas_protection_data_bundle,
+            data_root=settings.resolved_protection_data_root,
+            strict=settings.sas_protection_data_strict,
+        )
+        missing = pdata.missing_required()
+        if pdata.ok:
+            detail = (
+                f"{pdata.bundle_id} v{pdata.bundle_version} "
+                f"root={pdata.data_root} strict={pdata.strict} "
+                f"slots={len(pdata.slots)}"
+            )
+            soft = [s.slot_id for s in pdata.slots if s.soft_payload_gap and not s.ok]
+            if soft:
+                detail += f" payload_gaps={soft}"
+            report.findings.append(
+                DoctorFinding(name="protection_data", ok=True, detail=detail)
+            )
+        else:
+            detail = "; ".join(f"{s.slot_id}:{s.detail}" for s in missing) or "incomplete"
+            report.findings.append(
+                DoctorFinding(name="protection_data", ok=False, detail=detail)
+            )
+    except DatasetError as exc:
+        report.findings.append(
+            DoctorFinding(name="protection_data", ok=False, detail=str(exc))
+        )
+
+    return report
 
 def render_report(report: DoctorReport) -> str:
     lines = ["sas-core doctor", "=" * 16]
