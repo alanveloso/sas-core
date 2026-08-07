@@ -18,14 +18,19 @@ cases:
       - schemas/registration.py
       - schemas/common.py
       - services/cbsd_batch.py
+      - services/terrain/haat.py
+      - services/terrain/ned.py
     tests:
       - tests/unit/test_cbsd_schemas.py
       - tests/unit/test_cpi_signature.py
       - tests/unit/test_registration_extended.py
       - tests/contract/test_cbsd_schema_validation.py
       - tests/contract/test_cbsd_version_dispatch.py
+      - tests/unit/test_haat_registration.py
+      - tests/unit/test_haat_general.py
+      - tests/unit/test_registration_no_fixture_hardcode.py
     evidence: docs/compliance/evidence/P3-001_cpi_signature.md
-    notes: "CSV Parcial; CPI crypto local (P3-001 unit evidence, not harness PASS); PKI/SCS abertos."
+    notes: "CSV Parcial; CPI crypto local (P3-001); P6-002 general HAAT + NED samples/tolerances (see compliance/evidence/P6-002_haat_general.md). PKI/SCS abertos."
 
   - id: FAMILY.SIQ
     family: SIQ

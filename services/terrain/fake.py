@@ -1,6 +1,8 @@
-"""Deterministic HAAT provider for unit tests only (not certification)."""
+"""Deterministic HAAT / terrain providers for unit tests only (not certification)."""
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from services.terrain.exceptions import TerrainCoordinateError, TerrainDataUnavailable
 
@@ -52,3 +54,30 @@ class DeterministicHaatProvider:
         if height_is_agl:
             return float(height_m) + norm
         return float(height_m) - self._ground_alt_m + norm
+
+
+class CallableTerrainProvider:
+    """Elevation = ``fn(lat, lon)`` for analytic / independent HAAT tests."""
+
+    def __init__(
+        self,
+        elev_fn: Callable[[float, float], float],
+        *,
+        dataset_version: str = "callable-terrain-v1",
+    ) -> None:
+        self._elev_fn = elev_fn
+        self._dataset_version = dataset_version
+
+    @property
+    def dataset_version(self) -> str:
+        return self._dataset_version
+
+    def elevation_m(self, lat: float, lon: float) -> float:
+        if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+            raise TerrainCoordinateError(f"invalid coordinates lat={lat} lon={lon}")
+        return float(self._elev_fn(lat, lon))
+
+    def elevations_m(self, lats: list[float], lons: list[float]) -> list[float]:
+        if len(lats) != len(lons):
+            raise TerrainCoordinateError("lat/lon list length mismatch")
+        return [self.elevation_m(la, lo) for la, lo in zip(lats, lons)]

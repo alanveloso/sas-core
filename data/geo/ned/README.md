@@ -32,6 +32,17 @@ Extract these `.flt` files into this directory (Common-Data naming):
 
 - Default path: `data/geo/ned` (this directory)
 - Override: `SAS_TERRAIN_DIR` / `TERRAIN_DIR`
-- Dataset version label: `SAS_TERRAIN_DATASET_VERSION` (cache key component)
+- Dataset version label precedence: non-empty `SAS_TERRAIN_DATASET_VERSION`,
+  else `VERSION` marker, else built-in default (cache key component)
+
+## HAAT tolerances (P6-002)
+
+Documented in `services/terrain/haat.py`:
+
+| Constant | Value | Use |
+|---|---|---|
+| `HAAT_SYNTHETIC_ABS_TOL_M` | `1e-9` | Analytic terrain regression |
+| `HAAT_NED_ABS_TOL_M` | `1e-3` | NED float32 + bilinear vs recorded refs |
+| `HAAT_REPEATABILITY_ABS_TOL_M` | `0` | Same inputs → bit-identical |
 
 Tiles are gitignored; do not commit binary DEM data.

@@ -16,6 +16,7 @@ from services.terrain import (
     CAT_A_OUTDOOR_HAAT_LIMIT_M,
     CachedHaatProvider,
     DeterministicHaatProvider,
+    HAAT_NED_ABS_TOL_M,
     NedTerrainProvider,
     TerrainDataUnavailable,
     reset_haat_provider,
@@ -378,7 +379,7 @@ def test_ned_winnforum_haat_matches_harness_algorithm_when_tiles_present():
     norm, elev = provider.compute_normalized_haat_m(lat, lon)
     haat = provider.compute_haat_m(lat, lon, height, height_is_agl=True)
     # Bit-level match vs harness TerrainDriver on the same tiles (recorded locally).
-    assert elev == pytest.approx(80.249911, abs=1e-3)
-    assert norm == pytest.approx(18.130659, abs=1e-3)
-    assert haat == pytest.approx(22.130659, abs=1e-3)
+    assert elev == pytest.approx(80.249911, abs=HAAT_NED_ABS_TOL_M)
+    assert norm == pytest.approx(18.130659, abs=HAAT_NED_ABS_TOL_M)
+    assert haat == pytest.approx(22.130659, abs=HAAT_NED_ABS_TOL_M)
     assert haat > CAT_A_OUTDOOR_HAAT_LIMIT_M
