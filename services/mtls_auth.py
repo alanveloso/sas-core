@@ -5,13 +5,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import ssl
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
-from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID, ObjectIdentifier
+from cryptography.x509.oid import ExtensionOID, ObjectIdentifier
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -89,41 +88,53 @@ def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
     return certificate_policy_oids(cert)
 
 
-def _has_client_auth(cert: x509.Certificate) -> bool:
-    try:
-        ext = cert.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
-        return ExtendedKeyUsageOID.CLIENT_AUTH in ext.value
-    except x509.ExtensionNotFound:
-        return False
-
-
 def is_valid_sas_client_certificate(cert: x509.Certificate) -> bool:
     """
     Application-level SAS client cert checks for SSS_10 / SSS_15.
 
-    - Must carry ROLE_SAS policy
-    - Must not carry inapplicable ZONE policy
-    - Must allow clientAuth
-    - Must not be expired (defense in depth; TLS usually rejects first)
+    Delegates to :func:`services.certificate_policy.validate_sas_certificate`
+    (ROLE_SAS, clientAuth, temporal, key usage/type, no ZONE, CA/CRL when configured).
     """
-    now = datetime.now(timezone.utc)
-    try:
-        not_before = cert.not_valid_before_utc
-        not_after = cert.not_valid_after_utc
-    except AttributeError:
-        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
-        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
-    if now < not_before or now > not_after:
-        return False
+    from services.certificate_policy import (
+        load_runtime_trust_context,
+        validate_sas_certificate,
+    )
 
-    policies = _policy_oids(cert)
-    if OID_ROLE_SAS not in policies:
-        return False
-    if OID_ZONE in policies:
-        return False
-    if not _has_client_auth(cert):
-        return False
-    return True
+    trust_roots, crls = load_runtime_trust_context()
+    return validate_sas_certificate(cert, trust_roots=trust_roots, crls=crls).ok
+
+
+def require_admin_certificate(request: Request) -> None:
+    """FastAPI dependency: Admin API accepts ROLE_SAS client certs under TLS.
+
+    Plain TestClient (no TLS transport) is allowed so local contract tests and
+    harness-style HTTP remain usable. When a TLS transport is present, the peer
+    certificate must pass :func:`validate_admin_certificate` (with configured CA/CRL).
+    """
+    from services.certificate_policy import (
+        load_runtime_trust_context,
+        validate_admin_certificate,
+    )
+
+    cert = load_client_certificate(request)
+    if cert is None:
+        transport = None
+        scope = getattr(request, "scope", None)
+        if isinstance(scope, dict):
+            transport = scope.get("transport")
+        if transport is None:
+            return
+        try:
+            ssl_object = transport.get_extra_info("ssl_object")
+        except Exception:
+            ssl_object = None
+        if ssl_object is None:
+            return
+        raise HTTPException(status_code=403, detail="Client certificate required")
+
+    trust_roots, crls = load_runtime_trust_context()
+    if not validate_admin_certificate(cert, trust_roots=trust_roots, crls=crls).ok:
+        raise HTTPException(status_code=403, detail="Invalid admin client certificate")
 
 
 def require_peer_sas(

@@ -37,9 +37,13 @@ from services.fad_service import (
     rewrite_esc_sensor_id,
     rewrite_zone_id,
 )
+from services.mtls_auth import require_admin_certificate
 
-router = APIRouter(prefix="/admin", tags=["admin"])
-
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin_certificate)],
+)
 
 def _empty_ok() -> Response:
     return Response(status_code=200, content=b"", media_type="application/json")

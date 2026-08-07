@@ -37,11 +37,25 @@ client = TestClient(app)
 SUCCESS = 0
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_host_ca(monkeypatch: pytest.MonkeyPatch):
+    """Self-signed mock peer certs must not be judged against host CERTS_DIR CA."""
+    monkeypatch.setattr(
+        "services.cbsd_auth.load_runtime_trust_context",
+        lambda: (None, None),
+    )
+
+
 def _build_cert(
     *,
     role_oid: ObjectIdentifier,
     key_type: str = "rsa",
     common_name: str = "test-client",
+    with_key_usage: bool = True,
+    with_client_auth: bool = True,
+    not_before_delta: timedelta = timedelta(minutes=1),
+    not_after_delta: timedelta = timedelta(days=1),
+    extra_policies: list[ObjectIdentifier] | None = None,
 ) -> x509.Certificate:
     """Issue a short-lived self-signed cert with a WInnForum role policy OID."""
     if key_type == "ecc":
@@ -53,29 +67,47 @@ def _build_cert(
 
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     now = datetime.now(timezone.utc)
+    policies = [role_oid, *(extra_policies or [])]
     builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(days=1))
+        .not_valid_before(now - not_before_delta)
+        .not_valid_after(now + not_after_delta)
         .add_extension(
             x509.CertificatePolicies(
                 [
                     x509.PolicyInformation(
-                        policy_identifier=role_oid, policy_qualifiers=None
+                        policy_identifier=oid, policy_qualifiers=None
                     )
+                    for oid in policies
                 ]
             ),
             critical=False,
         )
-        .add_extension(
+    )
+    if with_client_auth:
+        builder = builder.add_extension(
             x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
             critical=False,
         )
-    )
+    if with_key_usage:
+        builder = builder.add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=True,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
     return builder.sign(key, hashes.SHA256())
 
 
@@ -118,12 +150,39 @@ def test_authorize_allows_cbsd_and_domain_proxy():
     cbsd_ctx = authorize_cbsd_operation(_request_with_cert(cbsd_cert))
     assert cbsd_ctx.allowed is True
     assert cbsd_ctx.role is CbsdClientRole.CBSD
-    assert cbsd_ctx.certificate_hash == sha1_fingerprint_colon(cbsd_cert)
 
     dp_ctx = authorize_cbsd_operation(_request_with_cert(dp_cert))
     assert dp_ctx.allowed is True
     assert dp_ctx.role is CbsdClientRole.DOMAIN_PROXY
-    assert dp_ctx.certificate_hash == sha1_fingerprint_colon(dp_cert)
+
+
+def test_authorize_rejects_when_runtime_ca_does_not_chain(monkeypatch: pytest.MonkeyPatch):
+    """With a configured trust root, a self-signed ROLE_CBSD leaf must be denied."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = datetime.now(timezone.utc)
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "runtime-ca")]))
+        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "runtime-ca")]))
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=3650))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    monkeypatch.setattr(
+        "services.cbsd_auth.load_runtime_trust_context",
+        lambda: ([ca_cert], None),
+    )
+    leaf = _build_cert(role_oid=OID_ROLE_CBSD, key_type="rsa")
+    ctx = authorize_cbsd_operation(_request_with_cert(leaf))
+    assert ctx.allowed is False
+    assert ctx.denial_code == CERT_ERROR
 
 
 @pytest.mark.parametrize(

@@ -122,11 +122,13 @@ cases:
     status: failing
     implementation:
       - services/mtls_auth.py
+      - services/certificate_policy.py
       - main.py
     tests:
       - tests/security/test_certs_and_doctor.py
-    evidence: null
-    notes: "CSV Parcial ~50%; PKI/cipher matrix incomplete."
+      - tests/unit/test_certificate_policy.py
+    evidence: docs/compliance/evidence/P3-002_certificate_policies.md
+    notes: "CSV Parcial; P3-002 ROLE_SAS validators local (not harness PASS); TLS matrix P3-003."
 
   - id: FAMILY.EXZ
     family: EXZ
@@ -197,10 +199,14 @@ cases:
     status: untested
     implementation:
       - services/mtls_auth.py
+      - services/certificate_policy.py
+      - services/cbsd_auth.py
     tests:
       - tests/security/test_certs_and_doctor.py
-    evidence: null
-    notes: "CSV Ausente/parcial ~20%."
+      - tests/unit/test_certificate_policy.py
+      - tests/unit/test_cbsd_auth.py
+    evidence: docs/compliance/evidence/P3-002_certificate_policies.md
+    notes: "CSV Ausente/parcial; P3-002 CBSD validators local (not harness PASS)."
 
   - id: FAMILY.SDS
     family: SDS
@@ -208,9 +214,13 @@ cases:
     status: untested
     implementation:
       - services/mtls_auth.py
-    tests: []
-    evidence: null
-    notes: "CSV Ausente/parcial ~15%."
+      - services/certificate_policy.py
+      - services/cbsd_auth.py
+    tests:
+      - tests/unit/test_certificate_policy.py
+      - tests/unit/test_cbsd_auth.py
+    evidence: docs/compliance/evidence/P3-002_certificate_policies.md
+    notes: "CSV Ausente/parcial; P3-002 Domain Proxy validators local (not harness PASS)."
 
   - id: FAMILY.GPR
     family: GPR
