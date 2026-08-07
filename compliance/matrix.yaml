@@ -12,6 +12,7 @@ cases:
     status: failing
     implementation:
       - services/registration_service.py
+      - services/cpi_signature.py
       - services/blacklist_service.py
       - routes/cbsd_routes.py
       - schemas/registration.py
@@ -19,10 +20,12 @@ cases:
       - services/cbsd_batch.py
     tests:
       - tests/unit/test_cbsd_schemas.py
+      - tests/unit/test_cpi_signature.py
+      - tests/unit/test_registration_extended.py
       - tests/contract/test_cbsd_schema_validation.py
       - tests/contract/test_cbsd_version_dispatch.py
-    evidence: null
-    notes: "CSV Parcial ~45%; CPI/PKI/HAAT gaps. P2-001 schemas; P2-002 version→100 on all procedures."
+    evidence: docs/compliance/evidence/P3-001_cpi_signature.md
+    notes: "CSV Parcial ~45%; CPI crypto (P3-001) local; PKI/SCS ainda abertos. P2 schemas/version."
 
   - id: FAMILY.SIQ
     family: SIQ
