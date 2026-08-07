@@ -41,14 +41,55 @@ def test_unknown_admin_path_returns_404():
     assert response.status_code == 404
 
 
-def test_propagation_query_is_explicit_501_not_fake_success():
+def test_propagation_query_is_implemented_not_501(monkeypatch):
+    """P6-003: endpoint must not remain an unimplemented 501 stub."""
+    from types import SimpleNamespace
+
+    from services.propagation.service import ACTIVITY_LOSS_FACTOR_DEFAULT, PropagationEngines
+
+    def _pl(db_loss=100.0):
+        return SimpleNamespace(
+            db_loss=db_loss,
+            incidence_angles=SimpleNamespace(hor_cbsd=0.0, hor_rx=0.0, ver_rx=0.0),
+        )
+
+    engines = PropagationEngines(
+        calc_itm=lambda *a, **k: _pl(),
+        calc_hybrid=lambda *a, **k: _pl(90.0),
+        calc_p2108=lambda *a, **k: 0.0,
+        activity_loss_factor=ACTIVITY_LOSS_FACTOR_DEFAULT,
+        antenna_standard_gains=lambda *a, **k: 0.0,
+        antenna_fss_gains=lambda *a, **k: 0.0,
+        grid_polygon=lambda *_a, **_k: [(-77.0, 38.0)],
+        region_nlcd_vote=lambda *_a, **_k: "RURAL",
+        terrain_elevation_m=lambda *_a, **_k: 0.0,
+    )
+    monkeypatch.setattr(
+        "services.propagation.load_reference_engines",
+        lambda: engines,
+    )
     response = client.post(
         "/admin/query/propagation_and_antenna_model",
-        json={"height": 10},
+        json={
+            "modelType": "1",
+            "reliabilityLevel": 0.05,
+            "cbsd": {
+                "latitude": 38.9,
+                "longitude": -77.1,
+                "height": 4.0,
+                "heightType": "AGL",
+                "indoorDeployment": False,
+                "antennaAzimuth": 0,
+                "antennaBeamwidth": 360,
+                "antennaGain": 0,
+            },
+            "fss": {"latitude": 38.91, "longitude": -77.11, "height": 5.0},
+        },
     )
-    assert response.status_code == 501
+    assert response.status_code == 200
     body = response.json()
-    assert "not implemented" in body.get("detail", "").lower()
+    assert "pathlossDb" in body
+    assert "txAntennaGainDbi" in body
 
 
 def test_new_official_inject_paths_are_explicit_and_ok():

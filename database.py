@@ -110,6 +110,8 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
             try:
                 Base.metadata.create_all(bind=engine)
                 _ensure_lifecycle_columns(engine)
+                _ensure_fad_published_column(engine)
+                _ensure_peer_sas_fad_generation_column(engine)
                 _assert_required_tables(engine)
                 return
             except OperationalError as exc:
@@ -118,6 +120,8 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
                 # Concurrent create_all can race on SQLite ("table already exists").
                 if "already exists" in message:
                     _ensure_lifecycle_columns(engine)
+                    _ensure_fad_published_column(engine)
+                    _ensure_peer_sas_fad_generation_column(engine)
                     _assert_required_tables(engine)
                     return
                 logger.warning(
@@ -155,6 +159,84 @@ def _ensure_lifecycle_columns(bind) -> None:
         for stmt in statements:
             conn.execute(text(stmt))
     logger.info("Applied lifecycle schema patches: %s", statements)
+
+
+def _ensure_fad_published_column(bind) -> None:
+    """Add FadDump.published + unique partial index; backfill from legacy ready."""
+    from sqlalchemy import text
+
+    inspector = inspect(bind)
+    tables = inspector.get_table_names()
+    if "fad_dumps" not in tables:
+        return
+
+    cols = {c["name"] for c in inspector.get_columns("fad_dumps")}
+    dialect = bind.dialect.name
+    statements: list[str] = []
+
+    if "published" not in cols:
+        if dialect == "postgresql":
+            statements.append(
+                "ALTER TABLE fad_dumps ADD COLUMN published BOOLEAN "
+                "DEFAULT FALSE NOT NULL"
+            )
+        else:
+            # SQLite: ADD COLUMN with DEFAULT; NOT NULL applied via default for new rows.
+            statements.append(
+                "ALTER TABLE fad_dumps ADD COLUMN published BOOLEAN DEFAULT 0 NOT NULL"
+            )
+
+    index_names = {idx["name"] for idx in inspector.get_indexes("fad_dumps")}
+    if "uq_fad_dumps_one_published" not in index_names:
+        if dialect == "postgresql":
+            statements.append(
+                "CREATE UNIQUE INDEX uq_fad_dumps_one_published "
+                "ON fad_dumps (published) WHERE published IS TRUE"
+            )
+        else:
+            statements.append(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_fad_dumps_one_published "
+                "ON fad_dumps (published) WHERE published IS TRUE"
+            )
+
+    if statements:
+        with bind.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+            # Legacy: ready meant current/published. Historical rows with files are
+            # complete snapshots (ready=true); only former ready=true stay published.
+            if "published" not in cols:
+                conn.execute(
+                    text(
+                        "UPDATE fad_dumps SET published = TRUE WHERE ready = TRUE"
+                    )
+                )
+                # Rows that were superseded (ready=false) but still have files remain
+                # as historical complete dumps.
+                if "fad_files" in tables:
+                    conn.execute(
+                        text(
+                            "UPDATE fad_dumps SET ready = TRUE "
+                            "WHERE id IN (SELECT DISTINCT dump_id FROM fad_files)"
+                        )
+                    )
+        logger.info("Applied FAD published schema patches: %s", statements)
+
+
+def _ensure_peer_sas_fad_generation_column(bind) -> None:
+    """Add PeerSas.last_fad_generation for idempotent multi-SAS sync (P5-004)."""
+    from sqlalchemy import text
+
+    inspector = inspect(bind)
+    if "peer_sas" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("peer_sas")}
+    if "last_fad_generation" in cols:
+        return
+    stmt = "ALTER TABLE peer_sas ADD COLUMN last_fad_generation VARCHAR(32)"
+    with bind.begin() as conn:
+        conn.execute(text(stmt))
+    logger.info("Applied peer_sas.last_fad_generation schema patch")
 
 
 def reset_db() -> None:

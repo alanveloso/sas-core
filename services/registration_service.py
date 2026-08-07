@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 from typing import Any
@@ -17,6 +16,11 @@ from models.models import (
     UserIdRecord,
 )
 from services.blacklist_service import is_cbsd_blacklisted
+from services.cpi_signature import (
+    decode_cpi_signed_data as _decode_cpi_signed_data,
+    structural_cpi_error,
+    verify_cpi_signature,
+)
 
 # WINNF response codes
 SUCCESS = 0
@@ -42,23 +46,6 @@ def _cat_a_outdoor_haat_exceeds_limit(installation: dict[str, Any]) -> bool:
     from services.terrain.haat import cat_a_outdoor_haat_invalid
 
     return cat_a_outdoor_haat_invalid(installation)
-
-
-def _b64url_decode(data: str) -> bytes:
-    padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
-
-
-def _decode_cpi_signed_data(cpi_signature: dict[str, Any]) -> dict[str, Any] | None:
-    """Decode JWT payload without cryptographic verification (MVP rule)."""
-    encoded = cpi_signature.get("encodedCpiSignedData")
-    if not encoded:
-        return None
-    try:
-        payload = _b64url_decode(encoded).decode("utf-8")
-        return json.loads(payload)
-    except Exception:
-        return None
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -87,25 +74,26 @@ def _get_conditionals(db: Session, fcc_id: str, serial: str) -> dict[str, Any]:
 
 
 def _merge_registration(
-    request: dict[str, Any], conditionals: dict[str, Any]
+    request: dict[str, Any],
+    conditionals: dict[str, Any],
+    *,
+    verified_cpi_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Merge request with preloaded conditionals and CPI-signed installation params."""
+    """Merge request with preloaded conditionals and verified CPI-signed params."""
     merged = _deep_merge(conditionals, {k: v for k, v in request.items() if v is not None})
 
-    cpi_sig = request.get("cpiSignatureData")
-    if cpi_sig:
-        signed = _decode_cpi_signed_data(cpi_sig)
-        if signed:
-            if "installationParam" in signed:
-                existing = merged.get("installationParam") or {}
-                # Prefer CPI-signed installation params over cleartext/conditionals
-                merged["installationParam"] = _deep_merge(
-                    existing, signed["installationParam"]
-                )
-            if "fccId" in signed and not merged.get("fccId"):
-                merged["fccId"] = signed["fccId"]
-            if "cbsdSerialNumber" in signed and not merged.get("cbsdSerialNumber"):
-                merged["cbsdSerialNumber"] = signed["cbsdSerialNumber"]
+    signed = verified_cpi_payload
+    if signed:
+        if "installationParam" in signed:
+            existing = merged.get("installationParam") or {}
+            # Prefer CPI-signed installation params over cleartext/conditionals
+            merged["installationParam"] = _deep_merge(
+                existing, signed["installationParam"]
+            )
+        if "fccId" in signed and not merged.get("fccId"):
+            merged["fccId"] = signed["fccId"]
+        if "cbsdSerialNumber" in signed and not merged.get("cbsdSerialNumber"):
+            merged["cbsdSerialNumber"] = signed["cbsdSerialNumber"]
 
     return merged
 
@@ -119,27 +107,45 @@ def _missing_required_fields(request: dict[str, Any]) -> bool:
 
 
 def _cpi_missing_params(request: dict[str, Any], db: Session) -> int | None:
-    """Return MISSING_PARAM if CPI signature structure is incomplete, else None."""
+    """Return MISSING_PARAM/INVALID_PARAM if CPI structure is incomplete, else None."""
+    del db  # lookup happens in cryptographic verify
     cpi_sig = request.get("cpiSignatureData")
     if not cpi_sig:
         return None
+    return structural_cpi_error(cpi_sig)
 
-    if "digitalSignature" not in cpi_sig or not cpi_sig.get("digitalSignature"):
-        return MISSING_PARAM
-    if "encodedCpiSignedData" not in cpi_sig or not cpi_sig.get("encodedCpiSignedData"):
-        return MISSING_PARAM
-    if "protectedHeader" not in cpi_sig or not cpi_sig.get("protectedHeader"):
-        return MISSING_PARAM
 
-    signed = _decode_cpi_signed_data(cpi_sig)
-    if signed is None:
-        return INVALID_PARAM
+def _verify_request_cpi(
+    request: dict[str, Any], db: Session
+) -> tuple[int | None, dict[str, Any] | None]:
+    """Cryptographically verify ``cpiSignatureData`` when present.
 
-    prof = signed.get("professionalInstallerData") or {}
-    if "cpiId" not in prof or prof.get("cpiId") in (None, ""):
-        return MISSING_PARAM
+    Returns ``(error_code, verified_payload)``. Payload is only set on success.
+    """
+    cpi_sig = request.get("cpiSignatureData")
+    if not cpi_sig:
+        return None, None
 
-    return None
+    structural = structural_cpi_error(cpi_sig)
+    if structural is not None:
+        return structural, None
+
+    # Peek cpiId only to load the injected public key; payload is not trusted yet.
+    peek = _decode_cpi_signed_data(cpi_sig) or {}
+    prof = peek.get("professionalInstallerData") or {}
+    cpi_id = prof.get("cpiId")
+    cpi_user = db.query(CpiUser).filter_by(cpi_id=cpi_id).first() if cpi_id else None
+    public_pem = cpi_user.cpi_public_key if cpi_user else None
+
+    result = verify_cpi_signature(
+        cpi_sig,
+        public_key_pem=public_pem,
+        request_fcc_id=str(request.get("fccId") or ""),
+        request_serial=str(request.get("cbsdSerialNumber") or ""),
+    )
+    if not result.ok:
+        return result.response_code or INVALID_PARAM, None
+    return None, result.payload
 
 
 def _field_missing(container: dict[str, Any], field: str) -> bool:
@@ -265,16 +271,7 @@ def _validate_params(
         # Also invalid if both present regardless (REG_7 device_11)
         if request.get("installationParam") is not None:
             return INVALID_PARAM
-
-        signed = _decode_cpi_signed_data(cpi_sig)
-        if signed is None:
-            return INVALID_PARAM
-        prof = signed.get("professionalInstallerData") or {}
-        cpi_id = prof.get("cpiId")
-        if cpi_id:
-            cpi_user = db.query(CpiUser).filter_by(cpi_id=cpi_id).first()
-            if not cpi_user:
-                return INVALID_PARAM
+        # Cryptographic CPI checks run in process_registration via _verify_request_cpi.
 
     # Cat B without CPI signature: if installation params provided in clear → invalid
     if category == "B" and not cpi_sig:
@@ -335,13 +332,15 @@ def process_registration(
             responses.append({"response": {"responseCode": BLACKLISTED}})
             continue
 
-        cpi_missing = _cpi_missing_params(request, db)
-        if cpi_missing is not None:
-            responses.append({"response": {"responseCode": cpi_missing}})
+        cpi_error, verified_cpi = _verify_request_cpi(request, db)
+        if cpi_error is not None:
+            responses.append({"response": {"responseCode": cpi_error}})
             continue
 
         conditionals = _get_conditionals(db, fcc_id, serial)
-        merged = _merge_registration(request, conditionals)
+        merged = _merge_registration(
+            request, conditionals, verified_cpi_payload=verified_cpi
+        )
 
         # Category B registering with clear installationParam + no CPI is invalid
         # (checked in _validate_params). Pending checked before invalid where appropriate.

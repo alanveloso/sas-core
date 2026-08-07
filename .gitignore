@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 sas_mvp.db
 *.db-journal
 .env
@@ -11,9 +12,15 @@ htmlcov/
 .pytest_cache/
 artifacts/
 .cache/
-# USGS NED GridFloat tiles (WInnForum Common-Data); keep README only.
+
+# USGS NED GridFloat tiles (WInnForum Common-Data); keep README + VERSION.
 data/geo/ned/**
 !data/geo/ned/README.md
+!data/geo/ned/VERSION
+# NTIA DPA KML (provision locally; keep README + VERSION).
+data/ntia/**
+!data/ntia/README.md
+!data/ntia/VERSION
 
 # Runtime databases
 *.db

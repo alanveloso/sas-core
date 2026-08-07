@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     sas_admin_id: str = "sas_admin_id"
     fad_public_base: str = "https://localhost:9000"
     sas_sas_version: str = "v1.3"
+    # Peer FAD client (P5-002): TLS hostname check (default on). Set false only for
+    # lab peers whose leaf CN/SAN cannot match the injected URL host.
+    sas_fad_client_check_hostname: bool = True
     http_timeout_seconds: float = 30.0
     max_batch_size: int = 100
 
@@ -76,6 +79,13 @@ class Settings(BaseSettings):
         description="SAS_EXECUTION_MODE=production|certification",
     )
 
+    # Admin API: extra SHA-1 fingerprints (AA:BB:..., comma-separated) authorized
+    # in addition to ROLE_SAS. Used when the harness admin leaf lacks ROLE_SAS.
+    sas_admin_cert_sha1: str = Field(
+        default="",
+        description="SAS_ADMIN_CERT_SHA1 comma-separated admin client fingerprints.",
+    )
+
     # External federal / marketplace DB basic auth
     db_sync_username: str = "username"
     db_sync_password: str = "password"
@@ -84,6 +94,22 @@ class Settings(BaseSettings):
     sas_terrain_dir: Optional[Path] = Field(
         default=None,
         description="Override path to NED GridFloat tiles (SAS_TERRAIN_DIR).",
+    )
+    # Protection / RF dataset packaging (P6-001).
+    sas_protection_data_bundle: str = Field(
+        default="cbrs_winnforum_protection",
+        description="Manifest id under protection_data/manifests/.",
+    )
+    sas_protection_data_root: Optional[Path] = Field(
+        default=None,
+        description="Override data root (default: <repo>/data). SAS_PROTECTION_DATA_ROOT.",
+    )
+    sas_protection_data_strict: bool = Field(
+        default=False,
+        description=(
+            "When true, required payload globs (NED .flt, DPA .kml, …) must be present; "
+            "doctor/startup fail otherwise. SAS_PROTECTION_DATA_STRICT."
+        ),
     )
 
     @field_validator("sas_execution_mode", mode="before")
@@ -94,6 +120,17 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip().lower()
         return value
+
+    @field_validator("sas_fad_client_check_hostname", mode="before")
+    @classmethod
+    def _coerce_fad_check_hostname(cls, value: object) -> object:
+        if value is None or value == "":
+            return True
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
 
     @field_validator("certs_dir", mode="before")
     @classmethod
@@ -108,6 +145,24 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return None
         return Path(str(value))
+
+    @field_validator("sas_protection_data_root", mode="before")
+    @classmethod
+    def _coerce_protection_data_root(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        return Path(str(value))
+
+    @field_validator("sas_protection_data_strict", mode="before")
+    @classmethod
+    def _coerce_protection_data_strict(cls, value: object) -> object:
+        if value is None or value == "":
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
 
     @field_validator(
         "ssl_certfile",
@@ -136,6 +191,12 @@ class Settings(BaseSettings):
     def result_backend(self) -> Optional[str]:
         """Optional Celery result backend; None disables result persistence."""
         return self.celery_result_backend
+
+    @property
+    def resolved_protection_data_root(self) -> Path:
+        from protection_data.loader import DEFAULT_DATA_ROOT
+
+        return (self.sas_protection_data_root or DEFAULT_DATA_ROOT).resolve()
 
     @property
     def resolved_ssl_certfile(self) -> Path:

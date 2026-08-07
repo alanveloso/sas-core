@@ -38,9 +38,20 @@ dev = [
 py-modules = ["main", "config", "database", "celery_app", "tasks"]
 
 [tool.setuptools.packages.find]
-include = ["models*", "routes*", "schemas*", "services*", "spectrum_profiles*", "tools*", "compliance*"]
+include = [
+  "models*",
+  "routes*",
+  "schemas*",
+  "services*",
+  "spectrum_profiles*",
+  "protection_data*",
+  "tools*",
+  "compliance*",
+]
 
 [tool.setuptools.package-data]
+spectrum_profiles = ["profiles/*.yaml", "profiles/*.yml", "profiles/*.json"]
+protection_data = ["manifests/*.yaml", "manifests/*.yml"]
 compliance = ["*.yaml"]
 
 [tool.pytest.ini_options]
@@ -65,6 +76,7 @@ source = [
   "schemas",
   "services",
   "spectrum_profiles",
+  "protection_data",
   "tools",
 ]
 omit = ["tests/*", "*/__pycache__/*"]

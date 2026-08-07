@@ -14,6 +14,7 @@ Status = Literal["untested", "failing", "passing", "blocked"]
 # Passing claims require harness/compliance evidence artifacts — not unit tests or source.
 ALLOWED_EVIDENCE_PREFIXES: tuple[str, ...] = (
     "docs/compliance/evidence/",
+    "compliance/evidence/",
     "artifacts/winnforum/",
 )
 

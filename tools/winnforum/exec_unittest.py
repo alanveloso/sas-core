@@ -52,6 +52,15 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(targets, list) or not targets:
         print("error: targets must be a non-empty JSON list", file=sys.stderr)
         return 2
+    # OpenSSL 3.x: patch harness version decoder before test modules load.
+    try:
+        from tools.winnforum.openssl_compat import (
+            patch_harness_openssl_version_decoder,
+        )
+
+        patch_harness_openssl_version_decoder()
+    except Exception as exc:  # noqa: BLE001 — best-effort compat only
+        print(f"warning: openssl compat patch skipped: {exc}", file=sys.stderr)
     return run_targets(targets)
 
 

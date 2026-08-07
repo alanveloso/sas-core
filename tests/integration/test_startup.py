@@ -79,6 +79,7 @@ def test_import_all_project_modules():
         "schemas",
         "services",
         "spectrum_profiles",
+        "protection_data",
     ]
     failures: list[str] = []
 

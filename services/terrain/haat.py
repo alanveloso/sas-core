@@ -1,7 +1,8 @@
 """WInnForum HAAT (Height Above Average Terrain) for Cat A outdoor Registration.
 
 Algorithm mirrors harness ``TerrainDriver.ComputeNormalizedHaat`` +
-``wf_itm.ComputeHaat``:
+``wf_itm.ComputeHaat`` and applies to **any** WGS84 coordinate (no street /
+fixture lookup tables):
 
 - 8 radials at bearings 0°, 45°, …, 315°
 - 50 sample distances from 3 km to 16 km inclusive
@@ -10,6 +11,12 @@ Algorithm mirrors harness ``TerrainDriver.ComputeNormalizedHaat`` +
 - AMSL: ``haat = height - elev_site + norm_haat``
 
 Part 96 / WINNF REG.7: Category A outdoor HAAT must be ≤ 6 m.
+
+Numerical tolerances (documented for regression / reference comparison):
+
+- ``HAAT_SYNTHETIC_ABS_TOL_M`` — analytic terrain (exact arithmetic)
+- ``HAAT_NED_ABS_TOL_M`` — USGS NED float32 GridFloat + bilinear vs recorded refs
+- ``HAAT_REPEATABILITY_ABS_TOL_M`` — same inputs must be bit-identical
 """
 
 from __future__ import annotations
@@ -32,6 +39,11 @@ from services.terrain.vincenty import geodesic_points
 # 47 CFR § 96.43 — Category A outdoor HAAT limit (meters).
 CAT_A_OUTDOOR_HAAT_LIMIT_M = 6.0
 
+# Documented absolute tolerances (meters) for P6-002 sample suites.
+HAAT_SYNTHETIC_ABS_TOL_M = 1e-9
+HAAT_NED_ABS_TOL_M = 1e-3
+HAAT_REPEATABILITY_ABS_TOL_M = 0.0
+
 _RADIAL_BEARINGS_DEG = [i * 45.0 for i in range(8)]
 _DISTANCES_KM = [3.0 + (16.0 - 3.0) * i / 49.0 for i in range(50)]
 
@@ -50,6 +62,25 @@ def resolve_terrain_dir(explicit: Path | str | None = None) -> Path:
     if env:
         return Path(env).expanduser()
     return _DEFAULT_TERRAIN_DIR
+
+
+def resolve_ned_dataset_version(terrain_dir: Path | str) -> str:
+    """Resolve dataset version label for cache keys / evidence.
+
+    Precedence: non-empty ``SAS_TERRAIN_DATASET_VERSION`` → ``VERSION`` marker
+    under ``terrain_dir`` → ``DEFAULT_NED_DATASET_VERSION``.
+    """
+    env = os.environ.get("SAS_TERRAIN_DATASET_VERSION")
+    if env is not None:
+        cleaned = env.strip()
+        if cleaned:
+            return cleaned
+    marker = Path(terrain_dir) / "VERSION"
+    if marker.is_file():
+        lines = marker.read_text(encoding="utf-8").strip().splitlines()
+        if lines and lines[0].strip():
+            return lines[0].strip()
+    return DEFAULT_NED_DATASET_VERSION
 
 
 def _validate_coords(lat: float, lon: float) -> None:
@@ -209,7 +240,7 @@ def build_default_haat_provider(
 ) -> HaatProvider:
     """Construct the production NED-backed HAAT provider."""
     directory = resolve_terrain_dir(terrain_dir)
-    version = os.environ.get("SAS_TERRAIN_DATASET_VERSION", DEFAULT_NED_DATASET_VERSION)
+    version = resolve_ned_dataset_version(directory)
     try:
         terrain = NedTerrainProvider(directory, dataset_version=version)
     except TerrainDataUnavailable as exc:

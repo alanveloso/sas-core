@@ -10,10 +10,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -165,6 +167,8 @@ class PeerSas(Base):
     certificate_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     url: Mapped[str] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Last successfully applied FullActivityDump.generationDateTime (P5-004).
+    last_fad_generation: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class EscSensor(Base):
@@ -196,15 +200,31 @@ class PeerFadRecord(Base):
 
 
 class FadDump(Base):
-    """Local Full Activity Dump generation (UUT as SAS↔SAS server)."""
+    """Local Full Activity Dump generation (UUT as SAS↔SAS server).
+
+    Semantics (P5-001):
+
+    - ``ready``: snapshot generation completed; historical ready dumps may coexist.
+    - ``published``: exactly one current dump served via SAS↔SAS ``GET /dump``.
+    """
 
     __tablename__ = "fad_dumps"
+    __table_args__ = (
+        Index(
+            "uq_fad_dumps_one_published",
+            "published",
+            unique=True,
+            postgresql_where=text("published IS TRUE"),
+            sqlite_where=text("published IS TRUE"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     generation_datetime: Mapped[str] = mapped_column(String(32), index=True)
     description: Mapped[str] = mapped_column(String(256), default="Full activity dump files")
     manifest_json: Mapped[str] = mapped_column(Text, default="{}")
     ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    published: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     files: Mapped[list[FadFile]] = relationship(
         "FadFile", back_populates="dump", cascade="all, delete-orphan"
     )

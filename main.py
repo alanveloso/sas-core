@@ -57,6 +57,19 @@ app.include_router(sas_sas_router)
 @app.on_event("startup")
 def on_startup():
     from spectrum_profiles.context import active_profile_id, get_active_profile
+    from services.cpas_schedule_service import (
+        ensure_scheduler_loop_started,
+        is_schedule_enabled,
+    )
+    from database import SessionLocal
+    from protection_data.loader import assert_protection_data_ready
+
+    settings = get_settings()
+    assert_protection_data_ready(
+        settings.sas_protection_data_bundle,
+        data_root=settings.resolved_protection_data_root,
+        strict=settings.sas_protection_data_strict,
+    )
 
     profile = get_active_profile()
     print(
@@ -64,7 +77,19 @@ def on_startup():
         f"(rule={profile.rule_applied}, "
         f"band={profile.band_plan.low_hz}-{profile.band_plan.high_hz} Hz)"
     )
+    print(
+        f"Protection data: {settings.sas_protection_data_bundle} "
+        f"root={settings.resolved_protection_data_root} "
+        f"strict={settings.sas_protection_data_strict}"
+    )
     init_db()
+    # Resume schedule ticker if Admin previously enabled it (persisted flag).
+    session = SessionLocal()
+    try:
+        if is_schedule_enabled(session):
+            ensure_scheduler_loop_started()
+    finally:
+        session.close()
 
 
 def _rsa_ssl_context_factory(config, default_factory):
@@ -114,6 +139,16 @@ def _run_uvicorn(port: int, certfile: Path, keyfile: Path, ssl_factory) -> None:
 def main():
     settings = get_settings()
     from services.cert_layout import format_certificate_error, validate_certificate_layout
+    from protection_data.loader import DatasetValidationError, assert_protection_data_ready
+
+    try:
+        assert_protection_data_ready(
+            settings.sas_protection_data_bundle,
+            data_root=settings.resolved_protection_data_root,
+            strict=settings.sas_protection_data_strict,
+        )
+    except DatasetValidationError as exc:
+        raise SystemExit(f"Protection data incomplete: {exc}") from exc
 
     cert_check = validate_certificate_layout(settings)
     if not cert_check.ok:

@@ -1,26 +1,64 @@
-"""CPAS / peer FAD sync — UUT acts as SAS↔SAS client during daily activities."""
+"""CPAS / peer FAD sync — UUT acts as SAS↔SAS client during daily activities.
+
+P5-003 transactional pipeline:
+
+1. sync external databases;
+2. obtain/validate peer FADs;
+3. freeze active-grant snapshot;
+4. evaluate protections (peer CBSD / PPA / ESC);
+5. apply grant decisions + publish FAD in one durable critical section;
+6. update schedule status and append audit log.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import ssl
 import threading
+from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
 from sqlalchemy.orm import Session
 
-from config import get_settings
-from models.models import Cbsd, Grant, PeerFadRecord, PeerSas
-from services.fad_service import fad_cbsd_id
+from models.models import AdminInjectedData, Cbsd, Grant, PeerFadRecord
+from services.clock import utc_now
+from services.concurrency import acquire_cpas_pipeline_xact_lock
+from services.fad_client_service import run_peer_fad_sync
+from services.fad_service import create_full_activity_dump, fad_cbsd_id
 from services.meas_report import clear_admin_flags, set_admin_flag
-from services.mtls_auth import ALLOWED_CIPHERS
 
 logger = logging.getLogger(__name__)
 
 FLAG_CPAS_RUNNING = "cpas_running"
+KIND_CPAS_AUDIT = "cpas_pipeline_audit"
 _cpas_dispatch_lock = threading.RLock()
+_cpas_pipeline_lock = threading.RLock()  # SQLite / same-process aid
+
+
+@dataclass(frozen=True)
+class CpasSnapshot:
+    """Frozen view of local grants + peer sync inputs used for decisions."""
+
+    frozen_at: str
+    active_grant_pks: tuple[int, ...]
+    peer_sync_report: dict[str, Any] = field(default_factory=dict)
+    peer_record_count: int = 0
+    # Durable peer FAD rows at freeze time:
+    # (peer_sas_id, record_type, record_id, data_json).
+    # Evaluation must use this set so mid-run peer N→N+1 cannot widen decisions.
+    peer_records: tuple[tuple[int, str, str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class CpasDecision:
+    grant_pk: int
+    grant_id: str
+    cbsd_id: str
+    reason: str
+    # P6-004: IAP / protection action. Boolean peer rules use terminate.
+    action: str = "terminate"
+    authorized_eirp_dbm_mhz: float | None = None
+    explanation: str = ""
 
 
 def is_cpas_running(db: Session) -> bool:
@@ -55,6 +93,8 @@ def trigger_daily_activities(db: Session) -> None:
 
     Duplicate calls while CPAS is already running are no-ops.
     """
+    from config import get_settings
+
     with _cpas_dispatch_lock:
         if is_cpas_running(db):
             return
@@ -75,7 +115,6 @@ def trigger_daily_activities(db: Session) -> None:
                 raise
             return
 
-        # certification: claim under the lock, then run domain logic off-request.
         try:
             worker = threading.Thread(
                 target=_run_certification_cpas,
@@ -107,127 +146,473 @@ def _run_certification_cpas() -> None:
         session.close()
 
 
-def execute_cpas_pipeline(db: Session) -> None:
-    """Synchronous CPAS body shared by Celery workers and certification mode."""
+def _append_cpas_audit(db: Session, event: str, detail: dict[str, Any]) -> None:
+    db.add(
+        AdminInjectedData(
+            kind=KIND_CPAS_AUDIT,
+            data_json=json.dumps(
+                {
+                    "event": event,
+                    "at": utc_now().replace(microsecond=0).isoformat(),
+                    **detail,
+                },
+                default=str,
+            ),
+        )
+    )
+
+
+def freeze_cpas_snapshot(
+    db: Session, peer_sync_report: dict[str, Any] | None = None
+) -> CpasSnapshot:
+    """Capture active grant PKs and peer FAD rows; decisions only use this set."""
+    # SessionLocal uses autoflush=False; pending peer/grant rows must be visible.
+    db.flush()
+    rows = (
+        db.query(Grant.id)
+        .filter_by(terminated=False)
+        .order_by(Grant.id)
+        .all()
+    )
+    peer_rows = (
+        db.query(PeerFadRecord)
+        .order_by(PeerFadRecord.peer_sas_id, PeerFadRecord.record_type, PeerFadRecord.id)
+        .all()
+    )
+    peer_records = tuple(
+        (int(row.peer_sas_id), row.record_type, row.record_id, row.data_json)
+        for row in peer_rows
+    )
+    return CpasSnapshot(
+        frozen_at=utc_now().replace(microsecond=0).isoformat(),
+        active_grant_pks=tuple(int(r[0]) for r in rows),
+        peer_sync_report=dict(peer_sync_report or {}),
+        peer_record_count=len(peer_records),
+        peer_records=peer_records,
+    )
+
+
+def _frozen_peer_records(
+    snapshot: CpasSnapshot, record_type: str
+) -> list[dict[str, Any]]:
+    """Parse peer records of one type from the frozen snapshot (not live DB)."""
+    out: list[dict[str, Any]] = []
+    for _peer_sas_id, rt, _record_id, data_json in snapshot.peer_records:
+        if rt != record_type:
+            continue
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out.append(data)
+    return out
+
+
+def _frozen_peer_cbsd_rows(
+    snapshot: CpasSnapshot,
+) -> list[tuple[int, dict[str, Any]]]:
+    """Frozen peer CBSD records with owning peer_sas_id (not live DB)."""
+    out: list[tuple[int, dict[str, Any]]] = []
+    for peer_sas_id, rt, _record_id, data_json in snapshot.peer_records:
+        if rt != "cbsd":
+            continue
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out.append((int(peer_sas_id), data))
+    return out
+
+
+def evaluate_cpas_protections(
+    db: Session,
+    snapshot: CpasSnapshot,
+    *,
+    iap_points: list[Any] | None = None,
+    iap_coupling: Any | None = None,
+) -> list[CpasDecision]:
+    """Compute grant decisions against the frozen snapshot (no DB writes).
+
+    Boolean peer rules (same CBSD / PPA / ESC) still terminate. Optional IAP
+    points (P6-004) may keep, reduce_power, or terminate remaining grants.
+    """
+    if not snapshot.active_grant_pks:
+        return []
+    peer_cbsd = _frozen_peer_records(snapshot, "cbsd")
+    peer_zones = _frozen_peer_records(snapshot, "zone")
+    peer_esc = _frozen_peer_records(snapshot, "esc_sensor")
+    decisions: list[CpasDecision] = []
+    decided_pks: set[int] = set()
+    grants = (
+        db.query(Grant)
+        .filter(Grant.id.in_(snapshot.active_grant_pks))
+        .order_by(Grant.id)
+        .all()
+    )
+    for grant in grants:
+        if grant.terminated:
+            continue
+        cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+        if cbsd is None:
+            continue
+        reason: str | None = None
+        if peer_has_grant_for_cbsd(db, cbsd, peer_cbsd_records=peer_cbsd):
+            reason = "peer_same_cbsd_grant"
+        elif _grant_conflicts_peer_ppa(db, cbsd, grant, peer_zones):
+            reason = "peer_ppa"
+        elif _grant_conflicts_peer_esc(db, cbsd, grant, peer_esc):
+            reason = "peer_esc"
+        if reason:
+            decisions.append(
+                CpasDecision(
+                    grant_pk=grant.id,
+                    grant_id=grant.grant_id,
+                    cbsd_id=grant.cbsd_id,
+                    reason=reason,
+                    action="terminate",
+                    explanation=reason,
+                )
+            )
+            decided_pks.add(grant.id)
+
+    if iap_points and iap_coupling is not None:
+        decisions.extend(
+            _evaluate_iap_decisions(
+                db,
+                grants,
+                snapshot=snapshot,
+                decided_pks=decided_pks,
+                iap_points=iap_points,
+                iap_coupling=iap_coupling,
+            )
+        )
+    return decisions
+
+
+def _local_grant_to_rf_info(db: Session, grant: Grant) -> Any | None:
+    from services.iap import GrantRfInfo
+
+    cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+    if cbsd is None:
+        return None
+    install: dict[str, Any] = {}
+    if cbsd.registration_json:
+        try:
+            reg = json.loads(cbsd.registration_json)
+            if isinstance(reg, dict):
+                raw_install = reg.get("installationParam") or {}
+                if isinstance(raw_install, dict):
+                    install = raw_install
+        except (TypeError, ValueError, json.JSONDecodeError):
+            install = {}
+    try:
+        lat = float(install.get("latitude"))
+        lon = float(install.get("longitude"))
+    except (TypeError, ValueError):
+        return None
+    eirp = float(grant.max_eirp if grant.max_eirp is not None else 0.0)
+    height = float(install.get("height") or 0.0)
+    height_type = install.get("heightType") or "AGL"
+    return GrantRfInfo(
+        grant_id=grant.grant_id,
+        cbsd_id=grant.cbsd_id,
+        latitude=lat,
+        longitude=lon,
+        height_m=height,
+        height_is_agl=height_type != "AMSL",
+        indoor=bool(install.get("indoorDeployment")),
+        low_hz=int(grant.low_frequency),
+        high_hz=int(grant.high_frequency),
+        max_eirp_dbm_mhz=eirp,
+        is_managing_sas=True,
+        grant_pk=grant.id,
+        source_sas_id=None,
+    )
+
+
+def _evaluate_iap_decisions(
+    db: Session,
+    grants: list[Grant],
+    *,
+    snapshot: CpasSnapshot,
+    decided_pks: set[int],
+    iap_points: list[Any],
+    iap_coupling: Any,
+) -> list[CpasDecision]:
+    from services.iap import run_iap
+    from services.iap.peer_fad import grant_rf_infos_from_frozen_peer_cbsds
+
+    rf_grants: list[Any] = []
+    for grant in grants:
+        if grant.terminated or grant.id in decided_pks:
+            continue
+        info = _local_grant_to_rf_info(db, grant)
+        if info is not None:
+            rf_grants.append(info)
+
+    # Peer FAD grants from the frozen snapshot only (never live PeerFadRecord).
+    peer_rf = grant_rf_infos_from_frozen_peer_cbsds(_frozen_peer_cbsd_rows(snapshot))
+    rf_grants.extend(peer_rf)
+
+    # Deterministic order: local managing grants first (by pk), then peers.
+    rf_grants.sort(
+        key=lambda g: (
+            0 if g.is_managing_sas else 1,
+            g.grant_pk if g.grant_pk is not None else 10**18,
+            g.source_sas_id or "",
+            g.grant_id,
+        )
+    )
+
+    if not any(g.is_managing_sas for g in rf_grants):
+        return []
+    run = run_iap(list(iap_points), rf_grants, coupling=iap_coupling)
+    out: list[CpasDecision] = []
+    for item in run.merged_decisions:
+        # Peer grants never produce local CPAS mutations.
+        if not item.grant_pk:
+            continue
+        if item.action == "keep":
+            continue
+        out.append(
+            CpasDecision(
+                grant_pk=item.grant_pk,
+                grant_id=item.grant_id,
+                cbsd_id=item.cbsd_id,
+                reason="iap",
+                action=item.action,
+                authorized_eirp_dbm_mhz=item.authorized_eirp_dbm_mhz,
+                explanation=item.explanation,
+            )
+        )
+    return out
+
+
+def apply_cpas_decisions(db: Session, decisions: list[CpasDecision]) -> int:
+    """Apply CPAS decisions via lifecycle / EIRP updates (no commit)."""
+    from services.lifecycle import GrantEvent, apply_grant_event, lock_grant_row
+
+    changed = 0
+    for decision in decisions:
+        # Peer / non-local decisions must never mutate the local grant table.
+        if decision.grant_pk is None:
+            logger.warning(
+                "CPAS skip grant_id=%s: missing grant_pk (peer or invalid)",
+                decision.grant_id,
+            )
+            continue
+        grant = lock_grant_row(db, decision.grant_id, decision.cbsd_id)
+        if grant is None or grant.id != decision.grant_pk:
+            query = db.query(Grant).filter_by(id=decision.grant_pk)
+            bind = db.get_bind()
+            if bind is not None and bind.dialect.name != "sqlite":
+                query = query.with_for_update()
+            grant = query.first()
+        if grant is None or grant.terminated:
+            continue
+        # Refuse peer-namespaced grant ids even if a PK somehow matched.
+        if str(decision.grant_id).startswith("peer/"):
+            logger.warning(
+                "CPAS skip grant_pk=%s grant_id=%s: peer grant is immutable locally",
+                decision.grant_pk,
+                decision.grant_id,
+            )
+            continue
+
+        action = decision.action or "terminate"
+        if action == "reduce_power":
+            if decision.authorized_eirp_dbm_mhz is None:
+                continue
+            if grant.max_eirp is not None and float(grant.max_eirp) <= float(
+                decision.authorized_eirp_dbm_mhz
+            ) + 1e-9:
+                continue
+            grant.max_eirp = float(decision.authorized_eirp_dbm_mhz)
+            changed += 1
+            continue
+        if action == "suspend":
+            event = GrantEvent.SUSPEND
+        elif action == "terminate":
+            event = GrantEvent.TERMINATE
+        else:
+            logger.warning(
+                "CPAS skip grant_pk=%s grant_id=%s unknown action=%s",
+                decision.grant_pk,
+                decision.grant_id,
+                action,
+            )
+            continue
+        outcome = apply_grant_event(
+            grant,
+            event,
+            payload={
+                "cbsdId": grant.cbsd_id,
+                "grantId": grant.grant_id,
+                "reason": decision.reason,
+                "explanation": decision.explanation,
+            },
+        )
+        if not outcome.ok:
+            logger.warning(
+                "CPAS skip grant_pk=%s grant_id=%s action=%s lifecycle=%s",
+                decision.grant_pk,
+                decision.grant_id,
+                action,
+                outcome.detail or outcome.response_code,
+            )
+            continue
+        changed += 1
+    if changed:
+        db.flush()
+    return changed
+
+
+def apply_peer_conflict_to_local_grants(db: Session) -> None:
+    """Terminate local grants that conflict with peer FAD (same CBSD, PPA, or ESC).
+
+    Convenience wrapper used by older call sites/tests. Prefer the staged
+    pipeline in ``execute_cpas_pipeline`` for daily activities.
+    """
+    snapshot = freeze_cpas_snapshot(db)
+    decisions = evaluate_cpas_protections(db, snapshot)
+    if apply_cpas_decisions(db, decisions):
+        db.commit()
+
+
+def _dialect_name(db: Session) -> str:
+    bind = db.get_bind()
+    if bind is None:
+        return ""
+    return bind.dialect.name
+
+
+def _run_pipeline_critical_section(
+    db: Session, snapshot: CpasSnapshot
+) -> tuple[int, int, list[CpasDecision]]:
+    """Re-evaluate under lock, apply decisions, publish FAD — one durable outcome."""
+    acquire_cpas_pipeline_xact_lock(db)
+    # Recompute under coordination so TOCTOU after freeze cannot widen the set;
+    # still constrained to snapshot.active_grant_pks.
+    decisions = evaluate_cpas_protections(db, snapshot)
+    terminated = apply_cpas_decisions(db, decisions)
+    dump = create_full_activity_dump(db)
+    return terminated, int(dump.id), decisions
+
+
+def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
+    """Run the transactional CPAS pipeline; return a structured stage report.
+
+    Peer/database sync may commit durable inputs. Grant terminations and the new
+    local FAD are applied in one critical section so a failed FAD publish rolls
+    back the grant decisions. Schedule success is marked only after full success.
+    """
+    from services.cpas_schedule_service import mark_scheduled_success_if_applicable
     from services.database_sync_service import sync_injected_database_urls
 
-    sync_injected_database_urls(db)
-    run_peer_fad_sync(db)
-    apply_peer_conflict_to_local_grants(db)
+    result: dict[str, Any] = {
+        "ok": False,
+        "stages": [],
+        "dump_id": None,
+        "terminated_grants": 0,
+        "decisions": [],
+    }
 
+    def _stage(name: str, **extra: Any) -> None:
+        result["stages"].append({"name": name, "ok": True, **extra})
 
-def _client_ssl_context() -> ssl.SSLContext:
-    """mTLS client context compatible with SasTestHarnessServer / WINNF ciphers."""
-    settings = get_settings()
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    ctx.check_hostname = False  # Peer URLs use localhost / harness hostnames.
-    ctx.verify_mode = ssl.CERT_REQUIRED
-    ctx.load_verify_locations(cafile=str(settings.resolved_ssl_ca_certs))
-    ctx.load_cert_chain(
-        certfile=str(settings.resolved_client_certfile),
-        keyfile=str(settings.resolved_client_keyfile),
-    )
-    ctx.set_ciphers(":".join(ALLOWED_CIPHERS))
-    return ctx
+    try:
+        sync_injected_database_urls(db)
+        _stage("sync_databases")
 
+        peer_report = run_peer_fad_sync(db)
+        _stage(
+            "sync_peer_fads",
+            peers=peer_report.get("peers"),
+            ok_peers=peer_report.get("ok"),
+            failed_peers=peer_report.get("failed"),
+        )
 
-def _httpx_client() -> httpx.Client:
-    settings = get_settings()
-    return httpx.Client(
-        verify=_client_ssl_context(),
-        timeout=settings.http_timeout_seconds,
-    )
+        snapshot = freeze_cpas_snapshot(db, peer_report)
+        _stage(
+            "freeze_snapshot",
+            frozen_at=snapshot.frozen_at,
+            active_grants=len(snapshot.active_grant_pks),
+            peer_records=snapshot.peer_record_count,
+        )
 
+        # Preview outside the lock (observability); authoritative set is recomputed inside.
+        preview = evaluate_cpas_protections(db, snapshot)
+        _stage("evaluate_protections", decision_count=len(preview))
 
-def run_peer_fad_sync(db: Session) -> None:
-    """GET dump + cbsd activity files from every injected peer and persist records."""
-    peers = db.query(PeerSas).all()
-    if not peers:
-        return
-
-    with _httpx_client() as client:
-        for peer in peers:
-            try:
-                _sync_one_peer(db, client, peer)
-            except Exception:
-                logger.exception(
-                    "Failed to sync peer SAS id=%s url=%s", peer.id, peer.url
+        if _dialect_name(db) == "sqlite":
+            with _cpas_pipeline_lock:
+                terminated, dump_id, decisions = _run_pipeline_critical_section(
+                    db, snapshot
                 )
-    db.commit()
+        else:
+            terminated, dump_id, decisions = _run_pipeline_critical_section(
+                db, snapshot
+            )
 
+        result["decisions"] = [
+            {
+                "grant_id": d.grant_id,
+                "cbsd_id": d.cbsd_id,
+                "reason": d.reason,
+            }
+            for d in decisions
+        ]
+        result["terminated_grants"] = terminated
+        result["dump_id"] = dump_id
+        _stage(
+            "apply_decisions_and_generate_fad",
+            dump_id=dump_id,
+            terminated=terminated,
+            decision_count=len(decisions),
+        )
 
-def _sync_one_peer(db: Session, client: httpx.Client, peer: PeerSas) -> None:
-    base = (peer.url or "").rstrip("/")
-    if not base:
-        return
-
-    dump_url = f"{base}/dump"
-    resp = client.get(dump_url)
-    resp.raise_for_status()
-    manifesto = resp.json()
-    files = manifesto.get("files") or []
-
-    for file_meta in files:
-        if not isinstance(file_meta, dict):
-            continue
-        record_type = file_meta.get("recordType")
-        # Focus on CBSD records for GRA_5 / GRA_6; still store zone/esc for later.
-        if record_type == "coordination":
-            continue
-        file_url = file_meta.get("url")
-        if not file_url:
-            continue
-        file_resp = client.get(file_url)
-        file_resp.raise_for_status()
-        envelope = file_resp.json()
-        records = envelope.get("recordData") or []
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            record_id = str(record.get("id") or "")
-            if not record_id:
-                continue
-            _upsert_peer_record(
+        mark_scheduled_success_if_applicable(db)
+        _append_cpas_audit(
+            db,
+            "cpas_completed",
+            {
+                "dumpId": dump_id,
+                "terminatedGrants": terminated,
+                "stages": [s["name"] for s in result["stages"]],
+                "decisions": result["decisions"],
+            },
+        )
+        db.commit()
+        result["ok"] = True
+        _stage("finalize_status_audit")
+        logger.info(
+            "CPAS pipeline completed dump_id=%s terminated=%s decisions=%s",
+            dump_id,
+            terminated,
+            len(decisions),
+        )
+        return result
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("CPAS pipeline rollback failed")
+        try:
+            _append_cpas_audit(
                 db,
-                peer_sas_id=peer.id,
-                record_type=str(record_type or "unknown"),
-                record_id=record_id,
-                record=record,
+                "cpas_failed",
+                {
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "stages": result.get("stages") or [],
+                },
             )
-
-
-def _upsert_peer_record(
-    db: Session,
-    *,
-    peer_sas_id: int,
-    record_type: str,
-    record_id: str,
-    record: dict[str, Any],
-) -> None:
-    existing = (
-        db.query(PeerFadRecord)
-        .filter_by(
-            peer_sas_id=peer_sas_id,
-            record_type=record_type,
-            record_id=record_id,
-        )
-        .first()
-    )
-    payload = json.dumps(record)
-    if existing:
-        existing.data_json = payload
-    else:
-        db.add(
-            PeerFadRecord(
-                peer_sas_id=peer_sas_id,
-                record_type=record_type,
-                record_id=record_id,
-                data_json=payload,
-            )
-        )
+            db.commit()
+        except Exception:
+            logger.exception("CPAS failure audit could not be persisted")
+        logger.exception("CPAS pipeline failed")
+        raise
 
 
 def _peer_cbsd_records(db: Session) -> list[dict[str, Any]]:
@@ -257,10 +642,20 @@ def _active_peer_grants(record: dict[str, Any]) -> list[dict[str, Any]]:
     return active
 
 
-def peer_has_grant_for_cbsd(db: Session, cbsd: Cbsd) -> bool:
+def peer_has_grant_for_cbsd(
+    db: Session,
+    cbsd: Cbsd,
+    *,
+    peer_cbsd_records: list[dict[str, Any]] | None = None,
+) -> bool:
     """True when any peer FAD CBSD record matches this local CBSD and has an active grant."""
     target_id = fad_cbsd_id(cbsd.fcc_id, cbsd.cbsd_serial_number)
-    for record in _peer_cbsd_records(db):
+    records = (
+        peer_cbsd_records
+        if peer_cbsd_records is not None
+        else _peer_cbsd_records(db)
+    )
+    for record in records:
         if record.get("id") != target_id:
             continue
         if _active_peer_grants(record):
@@ -335,7 +730,12 @@ def _ppa_protected_ranges(db: Session, ppa: dict[str, Any]) -> list[tuple[int, i
     return ranges
 
 
-def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
+def _grant_conflicts_peer_ppa(
+    db: Session,
+    cbsd: Cbsd,
+    grant: Grant,
+    peer_zones: list[dict[str, Any]] | None = None,
+) -> bool:
     """True when CBSD is in/near a peer PPA and the grant overlaps the PPA PAL band."""
     from services.geometry import within_geojson_buffer_m
 
@@ -343,7 +743,8 @@ def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     if lat is None or lon is None:
         return False
     buffer_m = _peer_ppa_buffer_m()
-    for record in _peer_records_of_type(db, "zone"):
+    zones = peer_zones if peer_zones is not None else _peer_records_of_type(db, "zone")
+    for record in zones:
         if record.get("usage") != "PPA" and "ppaInfo" not in record:
             continue
         if record.get("terminated") is True:
@@ -356,7 +757,12 @@ def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     return False
 
 
-def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
+def _grant_conflicts_peer_esc(
+    db: Session,
+    cbsd: Cbsd,
+    grant: Grant,
+    peer_esc_records: list[dict[str, Any]] | None = None,
+) -> bool:
     """True when CBSD is within ESC protection distance of a peer ESC sensor."""
     from services.geometry import haversine_m
 
@@ -368,7 +774,12 @@ def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     lat, lon = _cbsd_lat_lon(cbsd)
     if lat is None or lon is None:
         return False
-    for record in _peer_records_of_type(db, "esc_sensor"):
+    sensors = (
+        peer_esc_records
+        if peer_esc_records is not None
+        else _peer_records_of_type(db, "esc_sensor")
+    )
+    for record in sensors:
         inst = record.get("installationParam") or {}
         esc_lat, esc_lon = inst.get("latitude"), inst.get("longitude")
         if esc_lat is None or esc_lon is None:
@@ -376,30 +787,3 @@ def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
         if haversine_m(lat, lon, float(esc_lat), float(esc_lon)) <= esc_radius_m:
             return True
     return False
-
-
-def apply_peer_conflict_to_local_grants(db: Session) -> None:
-    """Terminate local grants that conflict with peer FAD (same CBSD, PPA, or ESC).
-
-    - Same-CBSD active peer grant → GRA_5 / GRA_6.
-    - Inside peer PPA + frequency overlap with linked PAL → FAD_2 (G4).
-    - Near peer ESC sensor + CBRS overlap → FAD_2 (G2).
-    """
-    changed = False
-    for cbsd in db.query(Cbsd).all():
-        grants = (
-            db.query(Grant)
-            .filter_by(cbsd_id=cbsd.cbsd_id, terminated=False)
-            .all()
-        )
-        if not grants:
-            continue
-        same_cbsd = peer_has_grant_for_cbsd(db, cbsd)
-        for grant in grants:
-            if same_cbsd or _grant_conflicts_peer_ppa(db, cbsd, grant) or _grant_conflicts_peer_esc(
-                db, cbsd, grant
-            ):
-                grant.terminated = True
-                changed = True
-    if changed:
-        db.commit()

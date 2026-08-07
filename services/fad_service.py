@@ -1,12 +1,30 @@
-"""Full Activity Dump generation for SAS↔SAS (v1.3) server role."""
+"""Full Activity Dump generation for SAS↔SAS (v1.3) server role (P5-001).
+
+Produces a consistent snapshot:
+
+- manifest with url/checksum/size/version/recordType;
+- activity files for cbsd, zone, esc_sensor, coordination;
+- shared generation timestamp across all files;
+- SHA-1 checksum and UTF-8 byte size that match file bodies;
+- optional pagination when a record type exceeds the configured page size;
+- publication coordinated in PostgreSQL (``pg_advisory_xact_lock``) so only one
+  dump is ``published``/current; historical ``ready`` snapshots may coexist.
+
+No harness fixture device IDs or coordinates are hard-coded.
+"""
 
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
-from datetime import datetime
+import logging
+import os
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +37,18 @@ from models.models import (
     FadFile,
     Grant,
 )
+from services.clock import utc_now
+from services.concurrency import acquire_fad_publish_xact_lock
+
+logger = logging.getLogger(__name__)
+
+# Schema FullActivityDump.files maxItems = 101 (4 types + paginated pages).
+MANIFEST_MAX_FILES = 101
+DEFAULT_MAX_RECORDS_PER_FILE = 500
+RECORD_TYPES = ("cbsd", "zone", "esc_sensor", "coordination")
+
+# SQLite / same-process aid only. PostgreSQL multi-worker safety is DB advisory.
+_fad_publish_lock = threading.RLock()
 
 
 def _sas_admin_id() -> str:
@@ -47,6 +77,17 @@ _REGISTRATION_FIELDS = (
     "installationParam",
     "groupingParam",
 )
+
+
+def max_records_per_file() -> int:
+    raw = os.environ.get("SAS_FAD_MAX_RECORDS_PER_FILE", "").strip()
+    if not raw:
+        return DEFAULT_MAX_RECORDS_PER_FILE
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_RECORDS_PER_FILE
+    return max(1, min(value, 10_000))
 
 
 def cbsd_reference_id(fcc_id: str, serial_number: str) -> str:
@@ -85,11 +126,11 @@ def rewrite_zone_id(zone_id: str | None, *, fallback_suffix: str = "0") -> str:
 
 
 def _fmt_utc(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
     return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _sha1_of(content: str) -> str:
-    return hashlib.sha1(content.encode("utf-8")).hexdigest()
 
 
 def _build_registration(reg: dict[str, Any]) -> dict[str, Any]:
@@ -102,12 +143,9 @@ def _build_registration(reg: dict[str, Any]) -> dict[str, Any]:
     if isinstance(inst, dict):
         inst = dict(inst)
         azimuth = inst.get("antennaAzimuth")
-        beamwidth = inst.get("antennaBeamwidth")
         # Omni default when azimuth is absent (FAD_1 / WINNF-TS-0061).
         if azimuth is None:
             inst["antennaBeamwidth"] = 360
-        elif beamwidth is None:
-            pass
         out["installationParam"] = inst
     return out
 
@@ -143,7 +181,13 @@ def _build_grant_record(grant: Grant) -> dict[str, Any]:
 
 def _build_cbsd_records(db: Session) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    cbsds = db.query(Cbsd).order_by(Cbsd.id).all()
+    # Only currently registered CBSDs belong in the activity dump.
+    cbsds = (
+        db.query(Cbsd)
+        .filter(Cbsd.lifecycle_state == "REGISTERED")
+        .order_by(Cbsd.id)
+        .all()
+    )
     for cbsd in cbsds:
         try:
             reg = json.loads(cbsd.registration_json or "{}")
@@ -200,6 +244,8 @@ def _build_zone_records(db: Session) -> list[dict[str, Any]]:
             continue
         if record.get("usage") not in (None, "PPA") and "ppaInfo" not in record:
             continue
+        if record.get("terminated") is True:
+            continue
         record["id"] = rewrite_zone_id(record.get("id"), fallback_suffix=str(row.id))
         ppa_info = record.get("ppaInfo")
         if isinstance(ppa_info, dict):
@@ -227,6 +273,20 @@ def _build_esc_records(db: Session) -> list[dict[str, Any]]:
     return records
 
 
+def _build_coordination_records(_db: Session) -> list[dict[str, Any]]:
+    """Coordination dump body (empty until multi-SAS coordination events exist)."""
+    return []
+
+
+def _chunk_records(
+    records: list[dict[str, Any]], *, page_size: int
+) -> list[list[dict[str, Any]]]:
+    """Split records into pages; always return at least one (possibly empty) page."""
+    if not records:
+        return [[]]
+    return [records[i : i + page_size] for i in range(0, len(records), page_size)]
+
+
 def _make_dump_file(
     *,
     record_type: str,
@@ -243,89 +303,198 @@ def _make_dump_file(
     content = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)
     version = _sas_sas_version()
     url_path = f"/{version}/{record_type}/{filename}"
+    encoded = content.encode("utf-8")
     entry = {
         "url": f"{_fad_public_base()}{url_path}",
-        "checksum": _sha1_of(content),
-        "size": len(content.encode("utf-8")),
+        "checksum": hashlib.sha1(encoded).hexdigest(),
+        "size": len(encoded),
         "version": version,
         "recordType": record_type,
     }
     return entry, url_path, content
 
 
-def create_full_activity_dump(db: Session) -> FadDump:
-    """Generate and persist a ready FullActivityDump + files."""
-    now = datetime.utcnow().replace(microsecond=0)
+def _assert_entry_matches_content(entry: dict[str, Any], content: str) -> None:
+    encoded = content.encode("utf-8")
+    digest = hashlib.sha1(encoded).hexdigest()
+    if entry.get("checksum") != digest:
+        raise RuntimeError("FAD checksum mismatch against file body")
+    if int(entry.get("size") or -1) != len(encoded):
+        raise RuntimeError("FAD size mismatch against file body")
+
+
+@dataclass(frozen=True)
+class _FadSnapshotPayload:
+    """Validated in-memory snapshot ready for a short DB publication section."""
+
+    timestamp: str
+    description: str
+    manifest_json: str
+    file_rows: tuple[tuple[str, str, str, dict[str, Any]], ...]
+
+
+def _dialect_name(db: Session) -> str:
+    bind = db.get_bind()
+    if bind is None:
+        return ""
+    return bind.dialect.name
+
+
+def _build_snapshot_payload(db: Session) -> _FadSnapshotPayload:
+    """Serialize dump bodies outside any publication lock (heavy work)."""
+    now = utc_now()
     timestamp = _fmt_utc(now)
+    page_size = max_records_per_file()
 
-    cbsd_data = _build_cbsd_records(db)
-    zone_data = _build_zone_records(db)
-    esc_data = _build_esc_records(db)
-
-    file_specs = [
-        ("cbsd", "activity_dump_file_cbsd0.json", cbsd_data),
-        ("zone", "activity_dump_file_zone0.json", zone_data),
-        ("esc_sensor", "activity_dump_file_esc_sensor0.json", esc_data),
-        ("coordination", "activity_dump_file_coordination0.json", []),
-    ]
+    builders = {
+        "cbsd": _build_cbsd_records,
+        "zone": _build_zone_records,
+        "esc_sensor": _build_esc_records,
+        "coordination": _build_coordination_records,
+    }
 
     files_meta: list[dict[str, Any]] = []
     file_rows: list[tuple[str, str, str, dict[str, Any]]] = []
-    for record_type, filename, data in file_specs:
-        entry, url_path, content = _make_dump_file(
-            record_type=record_type,
-            filename=filename,
-            record_data=data,
-            timestamp=timestamp,
-        )
-        files_meta.append(entry)
-        file_rows.append((record_type, url_path, content, entry))
 
+    for record_type in RECORD_TYPES:
+        pages = _chunk_records(builders[record_type](db), page_size=page_size)
+        for page_index, page in enumerate(pages):
+            filename = f"activity_dump_file_{record_type}{page_index}.json"
+            entry, url_path, content = _make_dump_file(
+                record_type=record_type,
+                filename=filename,
+                record_data=page,
+                timestamp=timestamp,
+            )
+            _assert_entry_matches_content(entry, content)
+            files_meta.append(entry)
+            file_rows.append((record_type, url_path, content, entry))
+
+    if len(files_meta) > MANIFEST_MAX_FILES:
+        raise RuntimeError(
+            f"FAD would emit {len(files_meta)} files (max {MANIFEST_MAX_FILES}); "
+            "increase SAS_FAD_MAX_RECORDS_PER_FILE"
+        )
+
+    for _rtype, _path, content, _entry in file_rows:
+        body = json.loads(content)
+        if body.get("startTime") != timestamp or body.get("endTime") != timestamp:
+            raise RuntimeError("FAD snapshot timestamp inconsistency")
+
+    description = "Full activity dump files"
     manifest = {
         "files": files_meta,
         "generationDateTime": timestamp,
-        "description": "Full activity dump files",
+        "description": description,
     }
-
-    dump = FadDump(
-        generation_datetime=timestamp,
-        description=manifest["description"],
-        manifest_json=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
-        ready=True,
+    manifest_json = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False)
+    return _FadSnapshotPayload(
+        timestamp=timestamp,
+        description=description,
+        manifest_json=manifest_json,
+        file_rows=tuple(file_rows),
     )
-    db.add(dump)
-    db.flush()
 
-    for record_type, url_path, content, entry in file_rows:
-        db.add(
-            FadFile(
-                dump_id=dump.id,
-                record_type=record_type,
-                url_path=url_path,
-                checksum=entry["checksum"],
-                size=entry["size"],
-                content_json=content,
-            )
+
+def _publish_snapshot(db: Session, payload: _FadSnapshotPayload) -> FadDump:
+    """Short critical section: advisory lock → persist complete dump → publish."""
+    try:
+        acquire_fad_publish_xact_lock(db)
+
+        # Persist as ready (complete) but not yet current, then flip published.
+        dump = FadDump(
+            generation_datetime=payload.timestamp,
+            description=payload.description,
+            manifest_json=payload.manifest_json,
+            ready=True,
+            published=False,
         )
-    db.commit()
-    db.refresh(dump)
+        db.add(dump)
+        db.flush()
+
+        for record_type, url_path, content, entry in payload.file_rows:
+            db.add(
+                FadFile(
+                    dump_id=dump.id,
+                    record_type=record_type,
+                    url_path=url_path,
+                    checksum=entry["checksum"],
+                    size=entry["size"],
+                    content_json=content,
+                )
+            )
+        db.flush()
+
+        # Final integrity before making this dump observable as current.
+        report = verify_ready_dump_integrity(db, dump)
+        if not report.get("ok"):
+            raise RuntimeError(f"FAD publish integrity failed: {report}")
+
+        db.query(FadDump).filter_by(published=True).update({"published": False})
+        dump.published = True
+        db.commit()
+        db.refresh(dump)
+    except Exception:
+        db.rollback()
+        logger.exception("FAD publication failed; rolled back")
+        raise
+
+    logger.info(
+        "FAD published generation=%s dump_id=%s files=%s",
+        payload.timestamp,
+        dump.id,
+        len(payload.file_rows),
+    )
     return dump
 
 
-def get_latest_ready_dump(db: Session) -> FadDump | None:
+def create_full_activity_dump(db: Session) -> FadDump:
+    """Generate a complete snapshot then publish it as the current FAD.
+
+    Heavy serialization runs without holding DB advisory locks. Publication is
+    coordinated with ``pg_advisory_xact_lock`` on PostgreSQL. SQLite keeps a
+    process-local RLock around publish only (test aid; not multi-worker proof).
+    """
+    payload = _build_snapshot_payload(db)
+    if _dialect_name(db) == "sqlite":
+        with _fad_publish_lock:
+            return _publish_snapshot(db, payload)
+    return _publish_snapshot(db, payload)
+
+
+def get_published_dump(db: Session) -> FadDump | None:
+    """Return the single current/published Full Activity Dump, if any."""
     return (
         db.query(FadDump)
-        .filter_by(ready=True)
+        .filter_by(published=True)
         .order_by(FadDump.id.desc())
         .first()
     )
 
 
+def get_latest_ready_dump(db: Session) -> FadDump | None:
+    """Alias for the current published dump (SAS↔SAS peers / admin).
+
+    Historical ``ready=True`` dumps may exist; only ``published=True`` is current.
+    """
+    return get_published_dump(db)
+
+
 def get_dump_file_by_path(db: Session, url_path: str) -> FadFile | None:
-    dump = get_latest_ready_dump(db)
+    """Resolve a dump file belonging to the published snapshot only.
+
+    Legacy filename fallback applies only to a bare basename (no directories),
+    scoped to ``dump_id`` of the published FAD — never searches other snapshots
+    and never treats arbitrary filesystem paths as resolvable URLs.
+    """
+    dump = get_published_dump(db)
     if dump is None:
         return None
-    normalized = url_path if url_path.startswith("/") else f"/{url_path}"
+    raw = (url_path or "").strip()
+    if not raw or "\\" in raw or ".." in raw.split("/"):
+        return None
+
+    normalized = raw if raw.startswith("/") else f"/{raw}"
     row = (
         db.query(FadFile)
         .filter_by(dump_id=dump.id, url_path=normalized)
@@ -333,9 +502,73 @@ def get_dump_file_by_path(db: Session, url_path: str) -> FadFile | None:
     )
     if row:
         return row
-    filename = normalized.rsplit("/", 1)[-1]
-    return (
+
+    # Legacy bare-filename lookup (unique within the published dump only).
+    segments = [s for s in raw.split("/") if s]
+    if len(segments) != 1:
+        return None
+    filename = segments[0]
+    if filename in (".", "..") or "/" in filename or "\\" in filename:
+        return None
+    matches = (
         db.query(FadFile)
         .filter(FadFile.dump_id == dump.id, FadFile.url_path.endswith("/" + filename))
-        .first()
+        .all()
     )
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def verify_ready_dump_integrity(db: Session, dump: FadDump | None = None) -> dict[str, Any]:
+    """Return integrity report for a dump (defaults to published/current)."""
+    target = dump or get_published_dump(db)
+    if target is None:
+        return {"ok": False, "reason": "no_ready_dump"}
+    try:
+        manifest = json.loads(target.manifest_json or "{}")
+    except json.JSONDecodeError:
+        return {"ok": False, "reason": "bad_manifest_json"}
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        return {"ok": False, "reason": "missing_files"}
+    for key in ("generationDateTime", "description"):
+        if key not in manifest:
+            return {"ok": False, "reason": f"missing_{key}"}
+    gen = manifest["generationDateTime"]
+    for entry in files:
+        for req in ("url", "checksum", "size", "version", "recordType"):
+            if req not in entry:
+                return {"ok": False, "reason": f"missing_entry_{req}"}
+        path = urlparse(entry["url"]).path or ""
+        if not path.startswith("/"):
+            path = "/" + path
+        row = (
+            db.query(FadFile)
+            .filter_by(dump_id=target.id, url_path=path)
+            .first()
+        )
+        if row is None:
+            return {"ok": False, "reason": "file_row_missing", "path": path}
+        try:
+            _assert_entry_matches_content(
+                {"checksum": entry["checksum"], "size": entry["size"]},
+                row.content_json,
+            )
+        except RuntimeError as exc:
+            return {"ok": False, "reason": str(exc), "path": path}
+        body = json.loads(row.content_json)
+        if body.get("startTime") != gen or body.get("endTime") != gen:
+            return {"ok": False, "reason": "timestamp_mismatch", "path": path}
+    present_types = {e["recordType"] for e in files}
+    missing = [t for t in RECORD_TYPES if t not in present_types]
+    if missing:
+        return {"ok": False, "reason": "missing_record_types", "missing": missing}
+    return {
+        "ok": True,
+        "generationDateTime": gen,
+        "fileCount": len(files),
+        "dumpId": target.id,
+        "published": bool(target.published),
+        "ready": bool(target.ready),
+    }

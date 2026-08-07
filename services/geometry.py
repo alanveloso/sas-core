@@ -211,3 +211,137 @@ def within_geojson_buffer_m(
         if distance_to_ring_m(lat, lon, ring) <= buffer_m:
             return True
     return False
+
+
+_EPS = 1e-12
+
+
+def _ring_is_valid(ring: Sequence[Sequence[float]]) -> bool:
+    """Closed ring with at least 3 distinct vertices (4 coords with closure)."""
+    if len(ring) < 4:
+        return False
+    try:
+        pts = [(float(p[0]), float(p[1])) for p in ring]
+    except (TypeError, ValueError, IndexError):
+        return False
+    if pts[0] != pts[-1]:
+        return False
+    # At least 3 unique vertices excluding the closing duplicate.
+    unique = {(round(x, 12), round(y, 12)) for x, y in pts[:-1]}
+    return len(unique) >= 3
+
+
+def _point_on_segment(
+    px: float, py: float, ax: float, ay: float, bx: float, by: float
+) -> bool:
+    cross = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+    if abs(cross) > 1e-9:
+        return False
+    dot = (px - ax) * (bx - ax) + (py - ay) * (by - ay)
+    if dot < -_EPS:
+        return False
+    len_sq = (bx - ax) * (bx - ax) + (by - ay) * (by - ay)
+    return dot <= len_sq + _EPS
+
+
+def _point_on_ring_boundary(lon: float, lat: float, ring: Sequence[Sequence[float]]) -> bool:
+    for i in range(len(ring) - 1):
+        ax, ay = float(ring[i][0]), float(ring[i][1])
+        bx, by = float(ring[i + 1][0]), float(ring[i + 1][1])
+        if _point_on_segment(lon, lat, ax, ay, bx, by):
+            return True
+    return False
+
+
+def _point_strictly_inside_ring(
+    lon: float, lat: float, ring: Sequence[Sequence[float]]
+) -> bool:
+    if _point_on_ring_boundary(lon, lat, ring):
+        return False
+    return _point_in_ring(lon, lat, ring)
+
+
+def _orient(ax: float, ay: float, bx: float, by: float, cx: float, cy: float) -> float:
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+def _segments_properly_intersect(
+    a1: tuple[float, float],
+    a2: tuple[float, float],
+    b1: tuple[float, float],
+    b2: tuple[float, float],
+) -> bool:
+    """True when segments cross with an interior point (not endpoint-only touch)."""
+    ax, ay = a1
+    bx, by = a2
+    cx, cy = b1
+    dx, dy = b2
+    o1 = _orient(ax, ay, bx, by, cx, cy)
+    o2 = _orient(ax, ay, bx, by, dx, dy)
+    o3 = _orient(cx, cy, dx, dy, ax, ay)
+    o4 = _orient(cx, cy, dx, dy, bx, by)
+    # Proper crossing: orientations differ on both segments.
+    if (o1 > _EPS and o2 < -_EPS or o1 < -_EPS and o2 > _EPS) and (
+        o3 > _EPS and o4 < -_EPS or o3 < -_EPS and o4 > _EPS
+    ):
+        return True
+    return False
+
+
+def _rings_area_overlap(
+    ring_a: Sequence[Sequence[float]], ring_b: Sequence[Sequence[float]]
+) -> bool:
+    """True if polygon interiors intersect (containment or proper edge cross).
+
+    Boundary-only contact (shared vertex / shared edge without interior overlap)
+    returns False.
+    """
+    if not _ring_is_valid(ring_a) or not _ring_is_valid(ring_b):
+        return False
+
+    # Proper edge crossings (X-shaped intersection without shared vertices).
+    for i in range(len(ring_a) - 1):
+        a1 = (float(ring_a[i][0]), float(ring_a[i][1]))
+        a2 = (float(ring_a[i + 1][0]), float(ring_a[i + 1][1]))
+        for j in range(len(ring_b) - 1):
+            b1 = (float(ring_b[j][0]), float(ring_b[j][1]))
+            b2 = (float(ring_b[j + 1][0]), float(ring_b[j + 1][1]))
+            if _segments_properly_intersect(a1, a2, b1, b2):
+                return True
+
+    # Vertex of one polygon strictly inside the other.
+    for lon, lat, *_rest in ring_a[:-1]:
+        if _point_strictly_inside_ring(float(lon), float(lat), ring_b):
+            return True
+    for lon, lat, *_rest in ring_b[:-1]:
+        if _point_strictly_inside_ring(float(lon), float(lat), ring_a):
+            return True
+    return False
+
+
+def geojson_areas_overlap(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
+    """Return True when GeoJSON polygon areas have intersecting interiors.
+
+    Accepts the same shapes as :func:`iter_geojson_rings` (Polygon, MultiPolygon,
+    Feature, FeatureCollection). Outer rings only (holes ignored), matching the
+    rest of ``services.geometry``.
+
+    Semantics for Admin PPA conflict checks:
+    - separated polygons → False
+    - one contained in the other → True
+    - vertex of one strictly inside the other → True
+    - edges properly cross → True
+    - boundary-only touch (shared vertex/edge, no interior overlap) → False
+    - invalid / empty geometry → False (caller validates contours separately)
+    """
+    if not a or not b:
+        return False
+    rings_a = [r for r in iter_geojson_rings(a) if _ring_is_valid(r)]
+    rings_b = [r for r in iter_geojson_rings(b) if _ring_is_valid(r)]
+    if not rings_a or not rings_b:
+        return False
+    for ra in rings_a:
+        for rb in rings_b:
+            if _rings_area_overlap(ra, rb):
+                return True
+    return False

@@ -8,16 +8,22 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime, timezone
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy.exc import IntegrityError
 
 from models.models import Cbsd, CpiUser
+from services.cpi_signature import b64url_decode as _b64url_decode
+from services.cpi_signature import (
+    decode_cpi_signed_data as _decode_cpi_signed_data,
+)
+from services.cpi_signature import sign_cpi_payload
 from services.meas_report import FLAG_MEAS_REG, MEAS_WITHOUT_GRANT, set_admin_flag
 from services.quiet_zone_service import NRQZ_EAST, NRQZ_NORTH, NRQZ_SOUTH, NRQZ_WEST
 from services.registration_service import (
-    _b64url_decode,
     _cpi_missing_params,
-    _decode_cpi_signed_data,
     _make_cbsd_id,
     process_registration,
 )
@@ -44,12 +50,54 @@ def _b64url_encode(payload: dict) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _cert_time() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rsa_keypair() -> tuple[str, str]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ).decode("utf-8")
+    public_pem = (
+        key.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("utf-8")
+    )
+    return private_pem, public_pem
+
+
+def _prof(cpi_id: str, **extra) -> dict:
+    data = {
+        "cpiId": cpi_id,
+        "cpiName": "Installer",
+        "installCertificationTime": _cert_time(),
+    }
+    data.update(extra)
+    return data
+
+
 def _cpi_sig(payload: dict, *, digital_signature: str = "sig", protected: str = "hdr") -> dict:
+    """Structural-only fake (not cryptographically valid)."""
     return {
         "protectedHeader": protected,
         "encodedCpiSignedData": _b64url_encode(payload),
         "digitalSignature": digital_signature,
     }
+
+
+def _real_cpi_sig(
+    payload: dict,
+    private_pem: str,
+    *,
+    algorithm: str = "RS256",
+) -> dict:
+    return sign_cpi_payload(payload, private_pem, algorithm=algorithm)
 
 
 def _full_payload(fcc_id: str, serial: str, user_id: str, **overrides) -> dict:
@@ -90,7 +138,7 @@ def test_decode_cpi_signed_data_valid_returns_payload():
 
 
 def test_cpi_missing_digital_signature_returns_missing_param(db_session):
-    sig = _cpi_sig({"professionalInstallerData": {"cpiId": "cpi-1"}})
+    sig = _cpi_sig({"professionalInstallerData": _prof("cpi-1")})
     sig["digitalSignature"] = ""
     assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) == MISSING_PARAM
 
@@ -101,7 +149,7 @@ def test_cpi_missing_encoded_data_returns_missing_param(db_session):
 
 
 def test_cpi_missing_protected_header_returns_missing_param(db_session):
-    sig = _cpi_sig({"professionalInstallerData": {"cpiId": "cpi-1"}})
+    sig = _cpi_sig({"professionalInstallerData": _prof("cpi-1")})
     sig["protectedHeader"] = ""
     assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) == MISSING_PARAM
 
@@ -116,13 +164,36 @@ def test_cpi_undecodable_signed_data_returns_invalid_param(db_session):
 
 
 def test_cpi_missing_cpi_id_returns_missing_param(db_session):
-    sig = _cpi_sig({"professionalInstallerData": {}})
+    sig = _cpi_sig({"professionalInstallerData": {"installCertificationTime": _cert_time()}})
     assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) == MISSING_PARAM
 
 
-def test_cpi_complete_returns_none(db_session):
+def test_cpi_missing_install_cert_time_returns_missing_param(db_session):
     sig = _cpi_sig({"professionalInstallerData": {"cpiId": "cpi-ok"}})
+    assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) == MISSING_PARAM
+
+
+def test_cpi_complete_structure_returns_none(db_session):
+    sig = _cpi_sig(
+        {
+            "fccId": "FCC-X",
+            "cbsdSerialNumber": "SN-X",
+            "installationParam": {"height": 1.0},
+            "professionalInstallerData": _prof("cpi-ok"),
+        }
+    )
     assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) is None
+
+
+def test_cpi_missing_signed_fcc_id_returns_missing_param(db_session):
+    sig = _cpi_sig(
+        {
+            "cbsdSerialNumber": "SN-X",
+            "installationParam": {"height": 1.0},
+            "professionalInstallerData": _prof("cpi-ok"),
+        }
+    )
+    assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) == MISSING_PARAM
 
 
 # --- process_registration: CPI signature end-to-end ---------------------------
@@ -144,14 +215,18 @@ def test_registration_incomplete_cpi_signature_returns_102(db_session):
 
 
 def test_registration_valid_cpi_signature_merges_installation_and_succeeds(db_session):
+    private_pem, public_pem = _rsa_keypair()
     fcc = make_fcc_id(db_session)
     user = make_user_id(db_session)
-    cpi_user = CpiUser(cpi_id="cpi-valid-1", cpi_name="Installer", cpi_public_key="")
-    db_session.add(cpi_user)
+    db_session.add(
+        CpiUser(cpi_id="cpi-valid-1", cpi_name="Installer", cpi_public_key=public_pem)
+    )
     db_session.commit()
 
     signed = {
-        "professionalInstallerData": {"cpiId": "cpi-valid-1"},
+        "fccId": fcc.fcc_id,
+        "cbsdSerialNumber": "sn-cpi-2",
+        "professionalInstallerData": _prof("cpi-valid-1"),
         "installationParam": {
             **cat_a_install(indoor=False, height=5.0),
             "antennaAzimuth": 0,
@@ -165,7 +240,7 @@ def test_registration_valid_cpi_signature_merges_installation_and_succeeds(db_se
         "userId": user.user_id,
         "cbsdCategory": "B",
         "airInterface": {"radioTechnology": "E_UTRA"},
-        "cpiSignatureData": _cpi_sig(signed),
+        "cpiSignatureData": _real_cpi_sig(signed, private_pem),
     }
     resp = process_registration(db_session, [payload])
     assert resp[0]["response"]["responseCode"] == SUCCESS
@@ -179,10 +254,13 @@ def test_registration_valid_cpi_signature_merges_installation_and_succeeds(db_se
 
 
 def test_registration_cpi_signature_with_unknown_cpi_id_returns_103(db_session):
+    private_pem, _public_pem = _rsa_keypair()
     fcc = make_fcc_id(db_session)
     user = make_user_id(db_session)
     signed = {
-        "professionalInstallerData": {"cpiId": "cpi-does-not-exist"},
+        "fccId": fcc.fcc_id,
+        "cbsdSerialNumber": "sn-cpi-3",
+        "professionalInstallerData": _prof("cpi-does-not-exist"),
         "installationParam": cat_a_install(),
     }
     payload = {
@@ -191,19 +269,24 @@ def test_registration_cpi_signature_with_unknown_cpi_id_returns_103(db_session):
         "userId": user.user_id,
         "cbsdCategory": "B",
         "airInterface": {"radioTechnology": "E_UTRA"},
-        "cpiSignatureData": _cpi_sig(signed),
+        "cpiSignatureData": _real_cpi_sig(signed, private_pem),
     }
     resp = process_registration(db_session, [payload])
     assert resp[0]["response"]["responseCode"] == INVALID_PARAM
 
 
 def test_registration_cat_b_cpi_signature_plus_cleartext_install_returns_103(db_session):
+    private_pem, public_pem = _rsa_keypair()
     fcc = make_fcc_id(db_session)
     user = make_user_id(db_session)
-    cpi_user = CpiUser(cpi_id="cpi-clear-b", cpi_name="", cpi_public_key="")
-    db_session.add(cpi_user)
+    db_session.add(CpiUser(cpi_id="cpi-clear-b", cpi_name="", cpi_public_key=public_pem))
     db_session.commit()
-    signed = {"professionalInstallerData": {"cpiId": "cpi-clear-b"}}
+    signed = {
+        "fccId": fcc.fcc_id,
+        "cbsdSerialNumber": "sn-cpi-4",
+        "professionalInstallerData": _prof("cpi-clear-b"),
+        "installationParam": cat_a_install(indoor=False),
+    }
     payload = {
         "fccId": fcc.fcc_id,
         "cbsdSerialNumber": "sn-cpi-4",
@@ -211,7 +294,7 @@ def test_registration_cat_b_cpi_signature_plus_cleartext_install_returns_103(db_
         "cbsdCategory": "B",
         "airInterface": {"radioTechnology": "E_UTRA"},
         "installationParam": cat_a_install(indoor=False),
-        "cpiSignatureData": _cpi_sig(signed),
+        "cpiSignatureData": _real_cpi_sig(signed, private_pem),
     }
     resp = process_registration(db_session, [payload])
     assert resp[0]["response"]["responseCode"] == INVALID_PARAM
@@ -219,12 +302,17 @@ def test_registration_cat_b_cpi_signature_plus_cleartext_install_returns_103(db_
 
 def test_registration_cat_a_cpi_signature_plus_cleartext_install_returns_103(db_session):
     """Any category with both CPI-signed data and cleartext installationParam is invalid."""
+    private_pem, public_pem = _rsa_keypair()
     fcc = make_fcc_id(db_session)
     user = make_user_id(db_session)
-    cpi_user = CpiUser(cpi_id="cpi-clear-a", cpi_name="", cpi_public_key="")
-    db_session.add(cpi_user)
+    db_session.add(CpiUser(cpi_id="cpi-clear-a", cpi_name="", cpi_public_key=public_pem))
     db_session.commit()
-    signed = {"professionalInstallerData": {"cpiId": "cpi-clear-a"}}
+    signed = {
+        "fccId": fcc.fcc_id,
+        "cbsdSerialNumber": "sn-cpi-5",
+        "professionalInstallerData": _prof("cpi-clear-a"),
+        "installationParam": cat_a_install(),
+    }
     payload = {
         "fccId": fcc.fcc_id,
         "cbsdSerialNumber": "sn-cpi-5",
@@ -232,7 +320,7 @@ def test_registration_cat_a_cpi_signature_plus_cleartext_install_returns_103(db_
         "cbsdCategory": "A",
         "airInterface": {"radioTechnology": "E_UTRA"},
         "installationParam": cat_a_install(),
-        "cpiSignatureData": _cpi_sig(signed),
+        "cpiSignatureData": _real_cpi_sig(signed, private_pem),
     }
     resp = process_registration(db_session, [payload])
     assert resp[0]["response"]["responseCode"] == INVALID_PARAM
@@ -448,12 +536,15 @@ def test_pending_cat_a_missing_indoor_deployment_flag(db_session):
 
 def test_pending_cat_b_missing_antenna_fields(db_session):
     """Cat B via CPI-signed installationParam missing antennaBeamwidth → PENDING."""
+    private_pem, public_pem = _rsa_keypair()
     fcc = make_fcc_id(db_session)
     user = make_user_id(db_session)
-    db_session.add(CpiUser(cpi_id="cpi-nopend-3", cpi_name="", cpi_public_key=""))
+    db_session.add(CpiUser(cpi_id="cpi-nopend-3", cpi_name="", cpi_public_key=public_pem))
     db_session.commit()
     signed = {
-        "professionalInstallerData": {"cpiId": "cpi-nopend-3"},
+        "fccId": fcc.fcc_id,
+        "cbsdSerialNumber": "sn-nopend-3",
+        "professionalInstallerData": _prof("cpi-nopend-3"),
         "installationParam": {
             **cat_a_install(indoor=False),
             "antennaAzimuth": 0,
@@ -466,7 +557,7 @@ def test_pending_cat_b_missing_antenna_fields(db_session):
         "userId": user.user_id,
         "cbsdCategory": "B",
         "airInterface": {"radioTechnology": "E_UTRA"},
-        "cpiSignatureData": _cpi_sig(signed),
+        "cpiSignatureData": _real_cpi_sig(signed, private_pem),
     }
     resp = process_registration(db_session, [payload])
     assert resp[0]["response"]["responseCode"] == PENDING

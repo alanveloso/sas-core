@@ -43,6 +43,9 @@ def test_ci_workflow_uploads_winnforum_artifacts_without_claiming_pass():
 def test_ci_workflow_runs_postgres_and_mtls_smoke():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "SAS_TEST_DATABASE_URL" in text
+    assert "test_fad_publish_postgres.py" in text
+    assert "test_cpas_multi_sas_postgres.py" in text
+    assert "test_concurrency_postgres.py" in text
     assert "tools.generate_dev_certs" in text
     assert "tools.smoke_mtls" in text
     assert "ruff check" in text

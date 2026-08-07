@@ -8,14 +8,18 @@ from typing import Any, Literal
 
 Status = Literal["passed", "failed", "error", "skipped", "unexpected"]
 
-_LINE_RE = re.compile(
-    r"^(?P<name>test_\S+)\s+\((?P<cls>[^)]+)\)\s+\.\.\.\s+(?P<status>\S+)\s*$"
+# Result may be on the same line, or deferred when openssl/cert tooling prints noise.
+_LINE_START_RE = re.compile(
+    r"^(?P<name>test_\S+)\s+\((?P<cls>[^)]+)\)(?:\s+\.\.\.\s*(?P<status>\S+))?\s*$"
 )
+_BARE_STATUS_RE = re.compile(r"^\s*\.\.\.\s*(?P<status>\S+)\s*$")
+_TRAILING_STATUS_RE = re.compile(r"\.\.\.\s*(?P<status>\S+)\s*$")
 _RAN_RE = re.compile(r"^Ran\s+(?P<n>\d+)\s+tests?\s+in\s+(?P<sec>[0-9.]+)s")
 _FAIL_SUMMARY_RE = re.compile(
     r"^FAILED\s+\((?P<body>[^)]*)\)\s*$"
 )
 _OK_SUMMARY_RE = re.compile(r"^OK\b")
+_KNOWN_STATUS = frozenset({"ok", "passed", "pass", "fail", "failed", "failure", "error", "errors", "skip", "skipped"})
 
 
 @dataclass
@@ -61,32 +65,98 @@ def _map_status(token: str) -> Status:
     return "unexpected"
 
 
+def _is_terminal_status_token(token: str) -> bool:
+    return token.lower().rstrip(".") in _KNOWN_STATUS
+
+
 def parse_unittest_output(text: str) -> HarnessRunResult:
+    """Parse ``unittest -v`` output, including deferred ``ok`` after OpenSSL noise."""
     result = HarnessRunResult()
-    for line in text.splitlines():
-        m = _LINE_RE.match(line.strip())
-        if m:
-            result.cases.append(
-                CaseResult(
-                    name=m.group("name"),
-                    class_name=m.group("cls"),
-                    status=_map_status(m.group("status")),
-                )
-            )
+    pending: CaseResult | None = None
+
+    def _close_pending(status: Status) -> None:
+        nonlocal pending
+        if pending is None:
+            return
+        pending.status = status
+        result.cases.append(pending)
+        pending = None
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
             continue
-        ran = _RAN_RE.match(line.strip())
+
+        bare = line.lower()
+        if bare in {"ok", "fail", "failed", "error", "errors", "skip", "skipped"}:
+            _close_pending(_map_status(bare))
+            continue
+
+        deferred = _BARE_STATUS_RE.match(line)
+        if deferred and pending is not None and _is_terminal_status_token(
+            deferred.group("status")
+        ):
+            _close_pending(_map_status(deferred.group("status")))
+            continue
+
+        # Docstring / noise lines that end with ``... ok`` while a case is pending.
+        trailing = _TRAILING_STATUS_RE.search(line)
+        if (
+            pending is not None
+            and trailing is not None
+            and _is_terminal_status_token(trailing.group("status"))
+            and not line.startswith("test_")
+        ):
+            _close_pending(_map_status(trailing.group("status")))
+            continue
+
+        m = _LINE_START_RE.match(line)
+        if m:
+            # A new test starts — close any prior pending as unexpected.
+            if pending is not None:
+                result.cases.append(pending)
+                pending = None
+            status_token = m.group("status")
+            case = CaseResult(
+                name=m.group("name"),
+                class_name=m.group("cls"),
+                status="unexpected",
+            )
+            if status_token and _is_terminal_status_token(status_token):
+                case.status = _map_status(status_token)
+                result.cases.append(case)
+            else:
+                # No status, or OpenSSL ``... +++`` noise on the same line.
+                pending = case
+            continue
+
+        ran = _RAN_RE.match(line)
         if ran:
+            if pending is not None:
+                result.cases.append(pending)
+                pending = None
             result.tests_run = int(ran.group("n"))
             result.duration_seconds = float(ran.group("sec"))
             continue
-        if _OK_SUMMARY_RE.match(line.strip()):
-            result.summary_line = line.strip()
+        if _OK_SUMMARY_RE.match(line):
+            if pending is not None:
+                result.cases.append(pending)
+                pending = None
+            result.summary_line = line
             result.raw_ok = True
             continue
-        fail = _FAIL_SUMMARY_RE.match(line.strip())
+        fail = _FAIL_SUMMARY_RE.match(line)
         if fail:
-            result.summary_line = line.strip()
+            if pending is not None:
+                result.cases.append(pending)
+                pending = None
+            result.summary_line = line
             result.raw_ok = False
+            continue
+
+    if pending is not None:
+        result.cases.append(pending)
+
     if result.raw_ok is None and result.cases:
         result.raw_ok = all(c.status == "passed" for c in result.cases)
     return result

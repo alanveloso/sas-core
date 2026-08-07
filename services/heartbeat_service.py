@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import AdminInjectedData, Grant
+from models.models import Grant
 from services.blacklist_service import is_cbsd_blacklisted
 from services.grant_service import HEARTBEAT_INTERVAL_SEC
 from services.meas_report import (
-    FLAG_DPA_ACTIVE,
     FLAG_MEAS_HBT,
     MEAS_WITH_GRANT,
     admin_flag_set,
@@ -91,19 +89,20 @@ def _grant_overlaps_wisp(db: Session, grant: Grant) -> bool:
 
 
 def _grant_overlaps_active_dpa(db: Session, grant: Grant) -> bool:
-    rows = db.query(AdminInjectedData).filter_by(kind=FLAG_DPA_ACTIVE).all()
-    for row in rows:
-        try:
-            data = json.loads(row.data_json or "{}")
-        except json.JSONDecodeError:
-            continue
-        fr = data.get("frequencyRange") or {}
-        low = fr.get("lowFrequency")
-        high = fr.get("highFrequency")
-        if low is None or high is None:
-            continue
-        if _overlaps(grant.low_frequency, grant.high_frequency, int(low), int(high)):
-            return True
+    from services.dpa_service import (
+        grant_overlaps_active_dpa,
+        grant_overlaps_esc_monitored_catalogue,
+    )
+    from services.esc_admin_service import is_esc_disconnected
+
+    low, high = grant.low_frequency, grant.high_frequency
+    if grant_overlaps_active_dpa(db, low, high):
+        return True
+    # Lost ESC-DE: protect all ESC-monitored catalogue channels (IPR disconnect).
+    if is_esc_disconnected(db) and grant_overlaps_esc_monitored_catalogue(
+        db, low, high
+    ):
+        return True
     return False
 
 

@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from database import get_db, reset_db
 from models.models import (
-    AdminInjectedData,
     ConditionalRegistration,
     CpiUser,
     EscSensor,
@@ -35,11 +34,14 @@ from services.cpas_service import (
 from services.fad_service import (
     create_full_activity_dump,
     rewrite_esc_sensor_id,
-    rewrite_zone_id,
 )
+from services.mtls_auth import require_admin_certificate
 
-router = APIRouter(prefix="/admin", tags=["admin"])
-
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin_certificate)],
+)
 
 def _empty_ok() -> Response:
     return Response(status_code=200, content=b"", media_type="application/json")
@@ -54,16 +56,6 @@ async def _read_json_object(request: Request) -> dict[str, Any]:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
-
-
-def _store_injection(db: Session, kind: str, payload: Any) -> None:
-    db.add(
-        AdminInjectedData(
-            kind=kind,
-            data_json=json.dumps(payload if payload is not None else {}),
-        )
-    )
-    db.commit()
 
 
 @router.post("/reset")
@@ -146,39 +138,35 @@ def blacklist_fcc_id(body: BlacklistFccIdRequest, db: Session = Depends(get_db))
 
 @router.post("/trigger/meas_report_in_registration_response")
 def trigger_meas_report_in_registration(db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_MEAS_REG, set_admin_flag
+    from services.meas_report import enable_measurement_report_registration
 
-    set_admin_flag(db, FLAG_MEAS_REG)
+    enable_measurement_report_registration(db)
     return _empty_ok()
 
 
 @router.post("/trigger/meas_report_in_heartbeat_response")
 def trigger_meas_report_in_heartbeat(db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_MEAS_HBT, set_admin_flag
+    from services.meas_report import enable_measurement_report_heartbeat
 
-    set_admin_flag(db, FLAG_MEAS_HBT)
+    enable_measurement_report_heartbeat(db)
     return _empty_ok()
 
 
 @router.post("/injectdata/fss")
 async def inject_fss(request: Request, db: Session = Depends(get_db)):
-    body: Any = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    _store_injection(db, "fss", body)
+    from services.data_injection_service import upsert_fss_record
+
+    body = await _read_json_object(request)
+    upsert_fss_record(db, body)
     return _empty_ok()
 
 
 @router.post("/injectdata/wisp")
 async def inject_wisp(request: Request, db: Session = Depends(get_db)):
-    body: Any = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    _store_injection(db, "wisp", body)
+    from services.data_injection_service import upsert_wisp_record
+
+    body = await _read_json_object(request)
+    upsert_wisp_record(db, body)
     return _empty_ok()
 
 
@@ -197,21 +185,10 @@ async def inject_pal_database_record(request: Request, db: Session = Depends(get
 
 @router.post("/injectdata/zone")
 async def inject_zone(request: Request, db: Session = Depends(get_db)):
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    record = body.get("record") or {}
-    if isinstance(record, dict):
-        zone_id = rewrite_zone_id(record.get("id"))
-        record = dict(record)
-        record["id"] = zone_id
-        body = dict(body)
-        body["record"] = record
-    else:
-        zone_id = rewrite_zone_id(None)
-    _store_injection(db, "zone", body)
+    from services.data_injection_service import persist_zone_data
+
+    body = await _read_json_object(request)
+    zone_id = persist_zone_data(db, body)
     return JSONResponse(zone_id)
 
 
@@ -303,119 +280,96 @@ def get_daily_activities_status(db: Session = Depends(get_db)):
 
 
 @router.post("/trigger/load_dpas")
-def trigger_load_dpas():
+def trigger_load_dpas(db: Session = Depends(get_db)):
+    """Load ESC-monitored DPA catalogue from KML and activate all channels."""
+    from services.dpa_service import load_dpas
+
+    load_dpas(db)
     return _empty_ok()
 
 
 @router.post("/trigger/dpa_activation")
 async def trigger_dpa_activation(request: Request, db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_DPA_ACTIVE, set_admin_flag
+    """Activate one catalogue DPA on one validated channel."""
+    from services.dpa_service import activate_dpa
 
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    set_admin_flag(db, FLAG_DPA_ACTIVE, body if isinstance(body, dict) else {})
+    body = await _read_json_object(request)
+    activate_dpa(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/bulk_dpa_activation")
 async def trigger_bulk_dpa_activation(request: Request, db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_DPA_ACTIVE, clear_admin_flags
+    """Bulk activate/deactivate all ESC-monitored DPAs on all catalogue channels."""
+    from services.dpa_service import bulk_dpa_activation
 
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    # Deactivate clears stored DPA activations (HBT.12 / GRA prep).
-    if isinstance(body, dict) and body.get("activate") is False:
-        clear_admin_flags(db, FLAG_DPA_ACTIVE)
+    body = await _read_json_object(request)
+    raw = body.get("activate") if isinstance(body, dict) else None
+    activate = raw if isinstance(raw, bool) else None
+    bulk_dpa_activation(db, activate=activate)
     return _empty_ok()
 
 
 @router.post("/get_ppa_status")
 def get_ppa_status(db: Session = Depends(get_db)):
     """WDB/PCR: poll until PPA creation finishes."""
-    row = db.query(AdminInjectedData).filter_by(kind="ppa_creation_status").first()
-    if row:
-        try:
-            status = json.loads(row.data_json or "{}")
-            return JSONResponse(
-                {
-                    "completed": bool(status.get("completed", True)),
-                    "withError": bool(status.get("withError", False)),
-                }
-            )
-        except json.JSONDecodeError:
-            pass
-    return JSONResponse({"completed": True, "withError": False})
+    from services.ppa_service import get_ppa_creation_status
+
+    return JSONResponse(get_ppa_creation_status(db))
 
 
 @router.post("/trigger/create_ppa")
 async def create_ppa(request: Request, db: Session = Depends(get_db)):
-    """WDB/PCR: create PPA zone; fail when requested PAL IDs are unknown."""
-    from services.meas_report import set_admin_flag
+    """Create PPA zone from PAL + cluster (+ optional providedContour)."""
+    from services.ppa_service import create_ppa as create_ppa_zone
 
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    pal_ids = body.get("palIds") or []
-    from services.pal_service import known_pal_ids
-
-    known_pal_ids_set = known_pal_ids(db)
-
-    missing = [pid for pid in pal_ids if pid not in known_pal_ids_set]
-    if not pal_ids or missing:
-        set_admin_flag(
-            db, "ppa_creation_status", {"completed": True, "withError": True}
-        )
-        # Harness may accept HTTP error OR status.withError; return 200 + status flag.
-        return JSONResponse("")
-
-    set_admin_flag(
-        db, "ppa_creation_status", {"completed": True, "withError": False}
-    )
-    return JSONResponse(f"zone/ppa/mvp/{pal_ids[0]}/0")
+    body = await _read_json_object(request)
+    ppa_id = create_ppa_zone(db, body)
+    return JSONResponse(ppa_id)
 
 
 @router.post("/injectdata/database_url")
 async def inject_database_url(request: Request, db: Session = Depends(get_db)):
     """FDB/WDB/IPR: accept external DB URL injection (FSS, GWBL, PAL, CPI, …)."""
-    body: Any = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    _store_injection(db, "database_url", body)
+    from services.data_injection_service import persist_database_url
+
+    body = await _read_json_object(request)
+    persist_database_url(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/enable_scheduled_daily_activities")
 def trigger_enable_scheduled_daily_activities(db: Session = Depends(get_db)):
-    """FDB_8: enable scheduled CPAS; MVP stores a flag and returns HTTP 200."""
-    from services.meas_report import set_admin_flag
+    """FDB_8: arm CPAS schedule (US/Pacific 02:00–04:00 by default)."""
+    from fastapi import HTTPException
 
-    set_admin_flag(db, "scheduled_daily_activities", {"enabled": True})
+    from services.cpas_schedule_service import enable_scheduled_daily_activities
+
+    try:
+        enable_scheduled_daily_activities(db)
+    except ValueError as exc:
+        # Fail closed on bad SAS_CPAS_TIMEZONE — never empty-200 as if armed.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _empty_ok()
 
 
 @router.post("/injectdata/esc_zone")
 async def inject_esc_zone(request: Request, db: Session = Depends(get_db)):
     """Persist ESC zone injection payload (harness InjectEscZone)."""
+    from services.data_injection_service import persist_esc_zone
+
     body = await _read_json_object(request)
-    _store_injection(db, "esc_zone", body)
+    persist_esc_zone(db, body)
     return _empty_ok()
 
 
 @router.post("/injectdata/cluster_list")
 async def inject_cluster_list(request: Request, db: Session = Depends(get_db)):
     """Persist PPA cluster list injection (harness InjectClusterList)."""
+    from services.data_injection_service import persist_cluster_list
+
     body = await _read_json_object(request)
-    _store_injection(db, "cluster_list", body)
+    persist_cluster_list(db, body)
     return _empty_ok()
 
 
@@ -431,56 +385,70 @@ def blacklist_fcc_id_and_serial_number(
 @router.post("/injectdata/sas_admin")
 async def inject_sas_admin(request: Request, db: Session = Depends(get_db)):
     """Persist SasAdministrator record injection."""
+    from services.data_injection_service import persist_sas_admin
+
     body = await _read_json_object(request)
-    _store_injection(db, "sas_admin", body)
+    persist_sas_admin(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/esc_detection")
 async def trigger_esc_detection(request: Request, db: Session = Depends(get_db)):
-    from services.meas_report import set_admin_flag
+    from services.esc_admin_service import apply_esc_detection
 
     body = await _read_json_object(request)
-    set_admin_flag(db, "esc_detection", body)
+    apply_esc_detection(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/esc_reset")
 def trigger_esc_reset(db: Session = Depends(get_db)):
-    from services.meas_report import clear_admin_flags
+    from services.esc_admin_service import reset_esc_zone
 
-    clear_admin_flags(db, "esc_detection")
+    reset_esc_zone(db)
     return _empty_ok()
 
 
 @router.post("/trigger/dpa_deactivation")
 async def trigger_dpa_deactivation(request: Request, db: Session = Depends(get_db)):
-    """Explicit DPA deactivation path used by harness TriggerDpaDeactivation."""
-    from services.meas_report import FLAG_DPA_ACTIVE, clear_admin_flags
+    """Deactivate one DPA on one channel (selective; harness TriggerDpaDeactivation)."""
+    from services.dpa_service import deactivate_dpa
 
-    del request  # body unused; deactivation is unconditional for this trigger
-    clear_admin_flags(db, FLAG_DPA_ACTIVE)
+    body = await _read_json_object(request)
+    deactivate_dpa(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/disconnect_esc")
 def trigger_disconnect_esc(db: Session = Depends(get_db)):
-    from services.meas_report import set_admin_flag
+    from services.esc_admin_service import disconnect_esc
 
-    set_admin_flag(db, "esc_disconnected", {"disconnected": True})
+    disconnect_esc(db)
     return _empty_ok()
 
 
 @router.post("/query/propagation_and_antenna_model")
 async def query_propagation_and_antenna_model(request: Request):
-    """PAT admin query — not implemented; must not return a fake success body."""
-    del request
-    return JSONResponse(
-        {
-            "detail": (
-                "Admin query/propagation_and_antenna_model is not implemented "
-                "(PAT family pending)."
-            )
-        },
-        status_code=501,
+    """PAT Admin query — path loss + antenna gains (modelType 1/2/3)."""
+    from services.propagation import (
+        PropagationRequestError,
+        PropagationUnavailableError,
+        compute_propagation_and_antenna_model,
+        load_reference_engines,
     )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"detail": "request must be a JSON object"}, status_code=400)
+
+    try:
+        engines = load_reference_engines()
+        result = compute_propagation_and_antenna_model(body, engines=engines)
+    except PropagationRequestError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+    except PropagationUnavailableError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=503)
+    return JSONResponse(result, status_code=200)

@@ -14,6 +14,11 @@ from cryptography import x509
 from fastapi import Request
 
 from models.models import Cbsd
+from services.certificate_policy import (
+    load_runtime_trust_context,
+    validate_cbsd_certificate,
+    validate_domain_proxy_certificate,
+)
 from services.error_handlers import CERT_ERROR
 from services.mtls_auth import (
     OID_ROLE_CBSD,
@@ -66,6 +71,20 @@ def classify_cbsd_client_role(cert: x509.Certificate) -> CbsdClientRole:
     return CbsdClientRole.UNKNOWN
 
 
+def _role_certificate_ok(cert: x509.Certificate, role: CbsdClientRole) -> bool:
+    """Apply P3-002 leaf policy for the classified CBSD-API role."""
+    trust_roots, crls = load_runtime_trust_context()
+    if role is CbsdClientRole.CBSD:
+        return validate_cbsd_certificate(
+            cert, trust_roots=trust_roots, crls=crls
+        ).ok
+    if role is CbsdClientRole.DOMAIN_PROXY:
+        return validate_domain_proxy_certificate(
+            cert, trust_roots=trust_roots, crls=crls
+        ).ok
+    return False
+
+
 def authorize_cbsd_operation(request: Request) -> CbsdAuthContext:
     """Extract peer certificate, classify role, and decide CBSD-API access.
 
@@ -73,7 +92,8 @@ def authorize_cbsd_operation(request: Request) -> CbsdAuthContext:
     fingerprint so local unit/contract tests keep working. If a TLS transport
     is present but no usable client certificate is available, access is denied
     with ``responseCode`` 104. A presented certificate must be CBSD or Domain
-    Proxy; SAS, Installer and unknown roles are also denied with 104.
+    Proxy and must pass the role-specific policy validator; SAS, Installer and
+    unknown roles are denied with 104.
     """
     cert = load_client_certificate(request)
     if cert is None:
@@ -101,7 +121,7 @@ def authorize_cbsd_operation(request: Request) -> CbsdAuthContext:
 
     role = classify_cbsd_client_role(cert)
     cert_hash = sha1_fingerprint_colon(cert)
-    if role.value not in _CBSD_API_ROLES:
+    if role.value not in _CBSD_API_ROLES or not _role_certificate_ok(cert, role):
         return CbsdAuthContext(
             certificate_hash=cert_hash,
             role=role,
