@@ -73,7 +73,7 @@ cases:
       - tests/unit/test_cbsd_schemas.py
       - tests/contract/test_cbsd_schema_validation.py
     evidence: null
-    notes: "CSV Parcial ~55%; P2-003…P2-006 lifecycle/renew/locks. Harness cases still failing."
+    notes: "CSV Parcial ~55%; P2-003…P2-006 lifecycle/renew/locks. P7-002 Rel1Ext TxExpire DPA-neighborhood (HBT.13) PASS_LOCAL — docs/compliance/evidence/P7-002_hbt_rel1ext.md. Official Rel1Ext HBT harness still open."
 
   - id: WINNF.FT.S.HBT.3
     family: HBT
@@ -165,7 +165,7 @@ cases:
       - services/border_protection.py
     tests: []
     evidence: null
-    notes: "CSV Parcial ~40%; external reference-model dependency."
+    notes: "CSV Parcial ~40%; Rel1Ext BPR.1 delta listed in compliance/rel1ext_delta.yaml (blocked pending procedure bind)."
 
   - id: FAMILY.EPR
     family: EPR
@@ -286,7 +286,7 @@ cases:
       - tests/unit/test_protection_data.py
       - tests/unit/test_propagation_service.py
     evidence: compliance/evidence/P6-003_propagation_api.md
-    notes: "P6-003 Admin API implemented (FSS/PPA/DPA wiring). Official PAT PASS BLOCKED_BY_ENV (compiled ITM, shapely, NLCD payload, harness campaign) / P7-003. Not claimed PASS."
+    notes: "P6-003 Admin API implemented (FSS/PPA/DPA wiring). Rel1Ext PAT.2 mapped in compliance/rel1ext_delta.yaml (P7-001). Official PAT PASS BLOCKED_BY_ENV / P7-003. Not claimed PASS."
 
   - id: FAMILY.IPR
     family: IPR
@@ -301,7 +301,7 @@ cases:
       - tests/unit/test_iap_service.py
       - tests/unit/test_cpas_pipeline.py
     evidence: compliance/evidence/P6-004_iap_aggregate.md
-    notes: "P6-004 IAP/aggregate local+peer FAD (frozen snapshot) + optional CPAS hook PASS_LOCAL. Official IPR.1–8 BLOCKED_BY_ENV/P7 (RF coupling+protection points on default CPAS; harness campaign). Not claimed PASS."
+    notes: "P6-004 IAP/aggregate local+peer FAD (frozen snapshot) + optional CPAS hook PASS_LOCAL. Rel1Ext IPR.1–8 mapped in compliance/rel1ext_delta.yaml (P7-001). Official IPR BLOCKED_BY_ENV/P7-004. Not claimed PASS."
 
   - id: FAMILY.PPR
     family: PPR
@@ -328,7 +328,7 @@ cases:
     implementation: []
     tests: []
     evidence: null
-    notes: "CSV Ausente ~5%."
+    notes: "CSV Ausente ~5%. Rel1Ext MCP.1 mapped in compliance/rel1ext_delta.yaml (P7-001); implement P7-005."
 
   # P5 gate final — FAD case-level evidence (family rollup stays non-passing).
   - id: WINNF.FT.S.FAD.1

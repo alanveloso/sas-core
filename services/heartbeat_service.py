@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from models.models import Grant
 from services.blacklist_service import is_cbsd_blacklisted
+from services.dpa_neighborhood import compute_transmit_expire_time
 from services.grant_service import HEARTBEAT_INTERVAL_SEC
 from services.meas_report import (
     FLAG_MEAS_HBT,
@@ -32,9 +33,6 @@ TERMINATED_GRANT = 500
 SUSPENDED_GRANT = 501
 UNSYNC_OP_PARAM = 502
 
-# Prefer a short window so HBT.5 finishes quickly; must be ≤ 240 s (WINNF).
-TRANSMIT_EXPIRE_SEC = 60
-
 
 def _fmt(dt: datetime) -> str:
     return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -44,12 +42,21 @@ def _past_tx() -> datetime:
     return datetime.utcnow().replace(microsecond=0) - timedelta(seconds=1)
 
 
-def _future_tx(grant_expire: datetime) -> datetime:
-    tx = datetime.utcnow().replace(microsecond=0) + timedelta(seconds=TRANSMIT_EXPIRE_SEC)
-    # transmitExpireTime must be ≤ grantExpireTime.
-    if tx > grant_expire.replace(microsecond=0):
-        tx = grant_expire.replace(microsecond=0)
-    return tx
+def _future_tx(
+    db: Session,
+    cbsd,
+    grant: Grant,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    return compute_transmit_expire_time(
+        db,
+        cbsd,
+        grant.grant_expire_time,
+        low_hz=int(grant.low_frequency),
+        high_hz=int(grant.high_frequency),
+        now=now,
+    )
 
 
 def _base(
@@ -313,7 +320,7 @@ def process_heartbeat(
                         )
                         continue
 
-                tx = _future_tx(grant.grant_expire_time)
+                tx = _future_tx(db, cbsd, grant)
                 grant.transmit_expire_time = tx
                 apply_grant_event(
                     grant,

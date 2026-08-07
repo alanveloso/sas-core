@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 
 from models.models import Cbsd, FccIdRecord, Grant
 from services.blacklist_service import is_cbsd_blacklisted
+from services.dpa_neighborhood import (
+    compute_transmit_expire_time,
+    fmt_transmit_expire,
+)
 from services.geometry import point_in_geojson
 from services.spectrum_inquiry_service import (
     CBRS_HIGH_HZ,
@@ -359,6 +363,13 @@ def process_grant(
 
                 grant_id = f"grant/{uuid.uuid4().hex}"
                 expire = _grant_expire_time(pal_exp)
+                tx_expire = compute_transmit_expire_time(
+                    db,
+                    cbsd,
+                    expire,
+                    low_hz=int(low),
+                    high_hz=int(high),
+                )
 
                 stamp = grant_sync_stamp(db)
                 grant_payload = dict(req) if isinstance(req, dict) else {}
@@ -382,6 +393,7 @@ def process_grant(
                         high_frequency=high,
                         max_eirp=max_eirp,
                         grant_expire_time=expire,
+                        transmit_expire_time=tx_expire,
                         heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
                         lifecycle_state=GrantState.GRANTED.value,
                         grant_json=json.dumps(grant_payload),
@@ -393,6 +405,7 @@ def process_grant(
                         "cbsdId": cbsd_id,
                         "grantId": grant_id,
                         "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "transmitExpireTime": fmt_transmit_expire(tx_expire),
                         "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
                         "channelType": channel_type,
                         "response": {"responseCode": SUCCESS},
