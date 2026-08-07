@@ -71,9 +71,9 @@ methods:
   request_schema: (unspecified)
   response_schema: empty_200
   state_changed: persist injection (injectdata/cluster_list)
-  uut_status: thin
+  uut_status: implemented
   consumers: []
-  notes: persisted AdminInjectedData only; Impl-only method (not on SasAdminInterface ABC)
+  notes: mutates domain tables/services; Impl-only method (not on SasAdminInterface ABC)
 - method: InjectCpiUser
   endpoint: /admin/injectdata/cpi_user
   http_method: POST
@@ -94,12 +94,12 @@ methods:
   request_schema: Contains database url to be injected.
   response_schema: empty_200
   state_changed: persist injection (injectdata/database_url)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - FDB
   - IPR
   - WDB
-  notes: persisted AdminInjectedData only
+  notes: mutates domain tables/services
 - method: InjectEscSensorDataRecord
   endpoint: /admin/injectdata/esc_sensor
   http_method: POST
@@ -121,9 +121,9 @@ methods:
   request_schema: (unspecified)
   response_schema: JSON body
   state_changed: persist injection (injectdata/esc_zone)
-  uut_status: thin
+  uut_status: implemented
   consumers: []
-  notes: persisted AdminInjectedData only; Impl-only method (not on SasAdminInterface ABC)
+  notes: mutates domain tables/services; Impl-only method (not on SasAdminInterface ABC)
 - method: InjectExclusionZone
   endpoint: /admin/injectdata/exclusion_zone
   http_method: POST
@@ -173,13 +173,13 @@ methods:
     object (specified in SAS-SAS TS).
   response_schema: empty_200
   state_changed: persist injection (injectdata/fss)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - FPR
   - HBT
   - MCP
   - SIQ
-  notes: persisted AdminInjectedData only
+  notes: mutates domain tables/services
 - method: InjectPalDatabaseRecord
   endpoint: /admin/injectdata/pal_database_record
   http_method: POST
@@ -223,9 +223,9 @@ methods:
     object (Specified in SAS-SAS TS WINNF-16-S-0096)
   response_schema: empty_200
   state_changed: persist injection (injectdata/sas_admin)
-  uut_status: thin
+  uut_status: implemented
   consumers: []
-  notes: persisted AdminInjectedData only
+  notes: mutates domain tables/services
 - method: InjectUserId
   endpoint: /admin/injectdata/user_id
   http_method: POST
@@ -261,14 +261,14 @@ methods:
     Note: Required Field in IncumbentProtectionData are id, type, deploymentParam->operationParam->operationFrequencyRan'
   response_schema: empty_200
   state_changed: persist injection (injectdata/wisp)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - FPR
   - GPR
   - HBT
   - MCP
   - SIQ
-  notes: persisted AdminInjectedData only
+  notes: mutates domain tables/services
 - method: InjectZoneData
   endpoint: /admin/injectdata/zone
   http_method: POST
@@ -278,14 +278,14 @@ methods:
     the SAS-SAS TS (WINNF-16-S-0096).
   response_schema: zone id JSON
   state_changed: persist injection (injectdata/zone)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - FAD
   - GRA
   - MCP
   - PCR
   - SIQ
-  notes: persisted AdminInjectedData only
+  notes: mutates domain tables/services
 - method: PreloadRegistrationData
   endpoint: /admin/injectdata/conditional_registration
   http_method: POST
@@ -358,9 +358,9 @@ methods:
   request_schema: (unspecified)
   response_schema: empty_200
   state_changed: trigger/esc_reset
-  uut_status: thin
+  uut_status: implemented
   consumers: []
-  notes: flag / minimal side-effect; Impl-only method (not on SasAdminInterface ABC)
+  notes: mutates domain tables/services; Impl-only method (not on SasAdminInterface ABC)
 - method: TriggerBulkDpaActivation
   endpoint: /admin/trigger/bulk_dpa_activation
   http_method: POST
@@ -459,10 +459,10 @@ methods:
   request_schema: (none)
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/disconnect_esc)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - IPR
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerEscZone
   endpoint: /admin/trigger/esc_detection
   http_method: POST
@@ -470,9 +470,9 @@ methods:
   request_schema: (unspecified)
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/esc_detection)
-  uut_status: thin
+  uut_status: implemented
   consumers: []
-  notes: flag / minimal side-effect; Impl-only method (not on SasAdminInterface ABC)
+  notes: mutates domain tables/services; Impl-only method (not on SasAdminInterface ABC)
 - method: TriggerFullActivityDump
   endpoint: /admin/trigger/create_full_activity_dump
   http_method: POST
@@ -508,10 +508,10 @@ methods:
   request_schema: (none)
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/meas_report_in_heartbeat_response)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - MES
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerMeasurementReportRegistration
   endpoint: /admin/trigger/meas_report_in_registration_response
   http_method: POST
@@ -519,10 +519,10 @@ methods:
   request_schema: (none)
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/meas_report_in_registration_response)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - MES
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerPpaCreation
   endpoint: /admin/trigger/create_ppa
   http_method: POST

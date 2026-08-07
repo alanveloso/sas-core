@@ -44,6 +44,28 @@ def clear_admin_flags(db: Session, kind: str) -> None:
     db.commit()
 
 
+def enable_measurement_report_registration(db: Session) -> None:
+    """Arm measReportConfig on subsequent Registration / SIQ / Grant (MES)."""
+    from services.clock import utc_now
+
+    set_admin_flag(
+        db,
+        FLAG_MEAS_REG,
+        {"enabled": True, "enabledAt": utc_now().replace(microsecond=0).isoformat()},
+    )
+
+
+def enable_measurement_report_heartbeat(db: Session) -> None:
+    """Arm measReportConfig on subsequent Heartbeat responses (MES)."""
+    from services.clock import utc_now
+
+    set_admin_flag(
+        db,
+        FLAG_MEAS_HBT,
+        {"enabled": True, "enabledAt": utc_now().replace(microsecond=0).isoformat()},
+    )
+
+
 def cbsd_meas_capabilities(registration_json: str | None) -> list[str]:
     import json
 

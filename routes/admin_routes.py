@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from database import get_db, reset_db
 from models.models import (
-    AdminInjectedData,
     ConditionalRegistration,
     CpiUser,
     EscSensor,
@@ -35,7 +34,6 @@ from services.cpas_service import (
 from services.fad_service import (
     create_full_activity_dump,
     rewrite_esc_sensor_id,
-    rewrite_zone_id,
 )
 from services.mtls_auth import require_admin_certificate
 
@@ -58,16 +56,6 @@ async def _read_json_object(request: Request) -> dict[str, Any]:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
-
-
-def _store_injection(db: Session, kind: str, payload: Any) -> None:
-    db.add(
-        AdminInjectedData(
-            kind=kind,
-            data_json=json.dumps(payload if payload is not None else {}),
-        )
-    )
-    db.commit()
 
 
 @router.post("/reset")
@@ -150,39 +138,35 @@ def blacklist_fcc_id(body: BlacklistFccIdRequest, db: Session = Depends(get_db))
 
 @router.post("/trigger/meas_report_in_registration_response")
 def trigger_meas_report_in_registration(db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_MEAS_REG, set_admin_flag
+    from services.meas_report import enable_measurement_report_registration
 
-    set_admin_flag(db, FLAG_MEAS_REG)
+    enable_measurement_report_registration(db)
     return _empty_ok()
 
 
 @router.post("/trigger/meas_report_in_heartbeat_response")
 def trigger_meas_report_in_heartbeat(db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_MEAS_HBT, set_admin_flag
+    from services.meas_report import enable_measurement_report_heartbeat
 
-    set_admin_flag(db, FLAG_MEAS_HBT)
+    enable_measurement_report_heartbeat(db)
     return _empty_ok()
 
 
 @router.post("/injectdata/fss")
 async def inject_fss(request: Request, db: Session = Depends(get_db)):
-    body: Any = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    _store_injection(db, "fss", body)
+    from services.data_injection_service import upsert_fss_record
+
+    body = await _read_json_object(request)
+    upsert_fss_record(db, body)
     return _empty_ok()
 
 
 @router.post("/injectdata/wisp")
 async def inject_wisp(request: Request, db: Session = Depends(get_db)):
-    body: Any = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    _store_injection(db, "wisp", body)
+    from services.data_injection_service import upsert_wisp_record
+
+    body = await _read_json_object(request)
+    upsert_wisp_record(db, body)
     return _empty_ok()
 
 
@@ -201,21 +185,10 @@ async def inject_pal_database_record(request: Request, db: Session = Depends(get
 
 @router.post("/injectdata/zone")
 async def inject_zone(request: Request, db: Session = Depends(get_db)):
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    record = body.get("record") or {}
-    if isinstance(record, dict):
-        zone_id = rewrite_zone_id(record.get("id"))
-        record = dict(record)
-        record["id"] = zone_id
-        body = dict(body)
-        body["record"] = record
-    else:
-        zone_id = rewrite_zone_id(None)
-    _store_injection(db, "zone", body)
+    from services.data_injection_service import persist_zone_data
+
+    body = await _read_json_object(request)
+    zone_id = persist_zone_data(db, body)
     return JSONResponse(zone_id)
 
 
@@ -358,12 +331,10 @@ async def create_ppa(request: Request, db: Session = Depends(get_db)):
 @router.post("/injectdata/database_url")
 async def inject_database_url(request: Request, db: Session = Depends(get_db)):
     """FDB/WDB/IPR: accept external DB URL injection (FSS, GWBL, PAL, CPI, …)."""
-    body: Any = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    _store_injection(db, "database_url", body)
+    from services.data_injection_service import persist_database_url
+
+    body = await _read_json_object(request)
+    persist_database_url(db, body)
     return _empty_ok()
 
 
@@ -385,16 +356,20 @@ def trigger_enable_scheduled_daily_activities(db: Session = Depends(get_db)):
 @router.post("/injectdata/esc_zone")
 async def inject_esc_zone(request: Request, db: Session = Depends(get_db)):
     """Persist ESC zone injection payload (harness InjectEscZone)."""
+    from services.data_injection_service import persist_esc_zone
+
     body = await _read_json_object(request)
-    _store_injection(db, "esc_zone", body)
+    persist_esc_zone(db, body)
     return _empty_ok()
 
 
 @router.post("/injectdata/cluster_list")
 async def inject_cluster_list(request: Request, db: Session = Depends(get_db)):
     """Persist PPA cluster list injection (harness InjectClusterList)."""
+    from services.data_injection_service import persist_cluster_list
+
     body = await _read_json_object(request)
-    _store_injection(db, "cluster_list", body)
+    persist_cluster_list(db, body)
     return _empty_ok()
 
 
@@ -410,25 +385,27 @@ def blacklist_fcc_id_and_serial_number(
 @router.post("/injectdata/sas_admin")
 async def inject_sas_admin(request: Request, db: Session = Depends(get_db)):
     """Persist SasAdministrator record injection."""
+    from services.data_injection_service import persist_sas_admin
+
     body = await _read_json_object(request)
-    _store_injection(db, "sas_admin", body)
+    persist_sas_admin(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/esc_detection")
 async def trigger_esc_detection(request: Request, db: Session = Depends(get_db)):
-    from services.meas_report import set_admin_flag
+    from services.esc_admin_service import apply_esc_detection
 
     body = await _read_json_object(request)
-    set_admin_flag(db, "esc_detection", body)
+    apply_esc_detection(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/esc_reset")
 def trigger_esc_reset(db: Session = Depends(get_db)):
-    from services.meas_report import clear_admin_flags
+    from services.esc_admin_service import reset_esc_zone
 
-    clear_admin_flags(db, "esc_detection")
+    reset_esc_zone(db)
     return _empty_ok()
 
 
@@ -444,9 +421,9 @@ async def trigger_dpa_deactivation(request: Request, db: Session = Depends(get_d
 
 @router.post("/trigger/disconnect_esc")
 def trigger_disconnect_esc(db: Session = Depends(get_db)):
-    from services.meas_report import set_admin_flag
+    from services.esc_admin_service import disconnect_esc
 
-    set_admin_flag(db, "esc_disconnected", {"disconnected": True})
+    disconnect_esc(db)
     return _empty_ok()
 
 

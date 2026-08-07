@@ -89,11 +89,21 @@ def _grant_overlaps_wisp(db: Session, grant: Grant) -> bool:
 
 
 def _grant_overlaps_active_dpa(db: Session, grant: Grant) -> bool:
-    from services.dpa_service import grant_overlaps_active_dpa
-
-    return grant_overlaps_active_dpa(
-        db, grant.low_frequency, grant.high_frequency
+    from services.dpa_service import (
+        grant_overlaps_active_dpa,
+        grant_overlaps_esc_monitored_catalogue,
     )
+    from services.esc_admin_service import is_esc_disconnected
+
+    low, high = grant.low_frequency, grant.high_frequency
+    if grant_overlaps_active_dpa(db, low, high):
+        return True
+    # Lost ESC-DE: protect all ESC-monitored catalogue channels (IPR disconnect).
+    if is_esc_disconnected(db) and grant_overlaps_esc_monitored_catalogue(
+        db, low, high
+    ):
+        return True
+    return False
 
 
 def process_heartbeat(

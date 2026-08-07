@@ -88,12 +88,26 @@ def sync_injected_database_urls(db: Session) -> None:
                 bump_sync_meta(db, "dpa")
             elif db_type == "FSS":
                 body = _http_get(url, auth=True)
+                from services.data_injection_service import verify_optional_checksum
+
+                if not verify_optional_checksum(body, meta.get("checksum")):
+                    logger.error(
+                        "Checksum mismatch for database_url type=FSS url=%s", url
+                    )
+                    continue
                 payload = json.loads(body.decode("utf-8"))
                 from services.federal_db_service import replace_fss_from_federal_payload
 
                 replace_fss_from_federal_payload(db, payload)
             elif db_type == "GWBL":
                 body = _http_get(url, auth=False)
+                from services.data_injection_service import verify_optional_checksum
+
+                if not verify_optional_checksum(body, meta.get("checksum")):
+                    logger.error(
+                        "Checksum mismatch for database_url type=GWBL url=%s", url
+                    )
+                    continue
                 from services.federal_db_service import replace_gwbl_from_zip
 
                 replace_gwbl_from_zip(db, body)

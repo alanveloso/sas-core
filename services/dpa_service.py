@@ -608,6 +608,28 @@ def grant_overlaps_active_dpa(db: Session, low_hz: int, high_hz: int) -> bool:
     return False
 
 
+def grant_overlaps_esc_monitored_catalogue(
+    db: Session, low_hz: int, high_hz: int
+) -> bool:
+    """True when grant overlaps any ESC-monitored catalogue DPA channel set."""
+    for item in list_catalogue(db):
+        if not isinstance(item, dict):
+            continue
+        if not bool(item.get("escMonitored", True)):
+            continue
+        for ch in item.get("channels") or []:
+            if not isinstance(ch, dict):
+                continue
+            try:
+                a_low = int(ch["lowFrequency"])
+                a_high = int(ch["highFrequency"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if low_hz < a_high and high_hz > a_low:
+                return True
+    return False
+
+
 def reset_dpa_state(db: Session) -> None:
     """Clear catalogue, activations and audit (also covered by full reset_db)."""
     for kind in (KIND_CATALOGUE, FLAG_DPA_ACTIVE, KIND_AUDIT):
