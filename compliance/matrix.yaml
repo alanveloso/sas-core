@@ -196,10 +196,13 @@ cases:
     implementation:
       - services/federal_db_service.py
       - services/cpas_service.py
+      - services/cpas_schedule_service.py
     tests:
       - tests/unit/test_cpas_execution_mode.py
-    evidence: null
-    notes: "CSV Parcial ~35%; CPAS certification mode is orchestration only."
+      - tests/unit/test_cpas_schedule.py
+      - tests/unit/test_cpas_pipeline.py
+    evidence: compliance/evidence/P5-003_cpas_transactional.md
+    notes: "CSV Parcial; P5-003 transactional CPAS pipeline. Official PASS pending harness."
 
   - id: FAMILY.SCS
     family: SCS

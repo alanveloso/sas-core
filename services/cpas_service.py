@@ -1,23 +1,56 @@
-"""CPAS / peer FAD sync — UUT acts as SAS↔SAS client during daily activities."""
+"""CPAS / peer FAD sync — UUT acts as SAS↔SAS client during daily activities.
+
+P5-003 transactional pipeline:
+
+1. sync external databases;
+2. obtain/validate peer FADs;
+3. freeze active-grant snapshot;
+4. evaluate protections (peer CBSD / PPA / ESC);
+5. apply grant decisions + publish FAD in one durable critical section;
+6. update schedule status and append audit log.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import threading
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import Cbsd, Grant, PeerFadRecord
+from models.models import AdminInjectedData, Cbsd, Grant, PeerFadRecord
+from services.clock import utc_now
+from services.concurrency import acquire_cpas_pipeline_xact_lock
 from services.fad_client_service import run_peer_fad_sync
-from services.fad_service import fad_cbsd_id
+from services.fad_service import create_full_activity_dump, fad_cbsd_id
 from services.meas_report import clear_admin_flags, set_admin_flag
 
 logger = logging.getLogger(__name__)
 
 FLAG_CPAS_RUNNING = "cpas_running"
+KIND_CPAS_AUDIT = "cpas_pipeline_audit"
 _cpas_dispatch_lock = threading.RLock()
+_cpas_pipeline_lock = threading.RLock()  # SQLite / same-process aid
+
+
+@dataclass(frozen=True)
+class CpasSnapshot:
+    """Frozen view of local grants + peer sync inputs used for decisions."""
+
+    frozen_at: str
+    active_grant_pks: tuple[int, ...]
+    peer_sync_report: dict[str, Any] = field(default_factory=dict)
+    peer_record_count: int = 0
+
+
+@dataclass(frozen=True)
+class CpasDecision:
+    grant_pk: int
+    grant_id: str
+    cbsd_id: str
+    reason: str
 
 
 def is_cpas_running(db: Session) -> bool:
@@ -74,7 +107,6 @@ def trigger_daily_activities(db: Session) -> None:
                 raise
             return
 
-        # certification: claim under the lock, then run domain logic off-request.
         try:
             worker = threading.Thread(
                 target=_run_certification_cpas,
@@ -106,15 +138,255 @@ def _run_certification_cpas() -> None:
         session.close()
 
 
-def execute_cpas_pipeline(db: Session) -> None:
-    """Synchronous CPAS body shared by Celery workers and certification mode."""
+def _append_cpas_audit(db: Session, event: str, detail: dict[str, Any]) -> None:
+    db.add(
+        AdminInjectedData(
+            kind=KIND_CPAS_AUDIT,
+            data_json=json.dumps(
+                {
+                    "event": event,
+                    "at": utc_now().replace(microsecond=0).isoformat(),
+                    **detail,
+                },
+                default=str,
+            ),
+        )
+    )
+
+
+def freeze_cpas_snapshot(
+    db: Session, peer_sync_report: dict[str, Any] | None = None
+) -> CpasSnapshot:
+    """Capture active grant PKs after peer sync; decisions only target this set."""
+    rows = (
+        db.query(Grant.id)
+        .filter_by(terminated=False)
+        .order_by(Grant.id)
+        .all()
+    )
+    return CpasSnapshot(
+        frozen_at=utc_now().replace(microsecond=0).isoformat(),
+        active_grant_pks=tuple(int(r[0]) for r in rows),
+        peer_sync_report=dict(peer_sync_report or {}),
+        peer_record_count=int(db.query(PeerFadRecord).count()),
+    )
+
+
+def evaluate_cpas_protections(db: Session, snapshot: CpasSnapshot) -> list[CpasDecision]:
+    """Compute grant terminations against the frozen snapshot (no DB writes)."""
+    if not snapshot.active_grant_pks:
+        return []
+    decisions: list[CpasDecision] = []
+    grants = (
+        db.query(Grant)
+        .filter(Grant.id.in_(snapshot.active_grant_pks))
+        .order_by(Grant.id)
+        .all()
+    )
+    for grant in grants:
+        if grant.terminated:
+            continue
+        cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+        if cbsd is None:
+            continue
+        reason: str | None = None
+        if peer_has_grant_for_cbsd(db, cbsd):
+            reason = "peer_same_cbsd_grant"
+        elif _grant_conflicts_peer_ppa(db, cbsd, grant):
+            reason = "peer_ppa"
+        elif _grant_conflicts_peer_esc(db, cbsd, grant):
+            reason = "peer_esc"
+        if reason:
+            decisions.append(
+                CpasDecision(
+                    grant_pk=grant.id,
+                    grant_id=grant.grant_id,
+                    cbsd_id=grant.cbsd_id,
+                    reason=reason,
+                )
+            )
+    return decisions
+
+
+def apply_cpas_decisions(db: Session, decisions: list[CpasDecision]) -> int:
+    """Terminate decided grants via lifecycle transitions (no commit)."""
+    from services.lifecycle import GrantEvent, apply_grant_event, lock_grant_row
+
+    changed = 0
+    for decision in decisions:
+        grant = lock_grant_row(db, decision.grant_id, decision.cbsd_id)
+        if grant is None or grant.id != decision.grant_pk:
+            # Fallback by PK when grant_id lookup misses (should be rare).
+            query = db.query(Grant).filter_by(id=decision.grant_pk)
+            bind = db.get_bind()
+            if bind is not None and bind.dialect.name != "sqlite":
+                query = query.with_for_update()
+            grant = query.first()
+        if grant is None or grant.terminated:
+            continue
+        outcome = apply_grant_event(
+            grant,
+            GrantEvent.TERMINATE,
+            payload={"cbsdId": grant.cbsd_id, "grantId": grant.grant_id},
+        )
+        if not outcome.ok:
+            logger.warning(
+                "CPAS skip grant_pk=%s grant_id=%s lifecycle=%s",
+                decision.grant_pk,
+                decision.grant_id,
+                outcome.detail or outcome.response_code,
+            )
+            continue
+        changed += 1
+    if changed:
+        db.flush()
+    return changed
+
+
+def apply_peer_conflict_to_local_grants(db: Session) -> None:
+    """Terminate local grants that conflict with peer FAD (same CBSD, PPA, or ESC).
+
+    Convenience wrapper used by older call sites/tests. Prefer the staged
+    pipeline in ``execute_cpas_pipeline`` for daily activities.
+    """
+    snapshot = freeze_cpas_snapshot(db)
+    decisions = evaluate_cpas_protections(db, snapshot)
+    if apply_cpas_decisions(db, decisions):
+        db.commit()
+
+
+def _dialect_name(db: Session) -> str:
+    bind = db.get_bind()
+    if bind is None:
+        return ""
+    return bind.dialect.name
+
+
+def _run_pipeline_critical_section(
+    db: Session, snapshot: CpasSnapshot
+) -> tuple[int, int, list[CpasDecision]]:
+    """Re-evaluate under lock, apply decisions, publish FAD — one durable outcome."""
+    acquire_cpas_pipeline_xact_lock(db)
+    # Recompute under coordination so TOCTOU after freeze cannot widen the set;
+    # still constrained to snapshot.active_grant_pks.
+    decisions = evaluate_cpas_protections(db, snapshot)
+    terminated = apply_cpas_decisions(db, decisions)
+    dump = create_full_activity_dump(db)
+    return terminated, int(dump.id), decisions
+
+
+def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
+    """Run the transactional CPAS pipeline; return a structured stage report.
+
+    Peer/database sync may commit durable inputs. Grant terminations and the new
+    local FAD are applied in one critical section so a failed FAD publish rolls
+    back the grant decisions. Schedule success is marked only after full success.
+    """
     from services.cpas_schedule_service import mark_scheduled_success_if_applicable
     from services.database_sync_service import sync_injected_database_urls
 
-    sync_injected_database_urls(db)
-    run_peer_fad_sync(db)
-    apply_peer_conflict_to_local_grants(db)
-    mark_scheduled_success_if_applicable(db)
+    result: dict[str, Any] = {
+        "ok": False,
+        "stages": [],
+        "dump_id": None,
+        "terminated_grants": 0,
+        "decisions": [],
+    }
+
+    def _stage(name: str, **extra: Any) -> None:
+        result["stages"].append({"name": name, "ok": True, **extra})
+
+    try:
+        sync_injected_database_urls(db)
+        _stage("sync_databases")
+
+        peer_report = run_peer_fad_sync(db)
+        _stage(
+            "sync_peer_fads",
+            peers=peer_report.get("peers"),
+            ok_peers=peer_report.get("ok"),
+            failed_peers=peer_report.get("failed"),
+        )
+
+        snapshot = freeze_cpas_snapshot(db, peer_report)
+        _stage(
+            "freeze_snapshot",
+            frozen_at=snapshot.frozen_at,
+            active_grants=len(snapshot.active_grant_pks),
+            peer_records=snapshot.peer_record_count,
+        )
+
+        # Preview outside the lock (observability); authoritative set is recomputed inside.
+        preview = evaluate_cpas_protections(db, snapshot)
+        _stage("evaluate_protections", decision_count=len(preview))
+
+        if _dialect_name(db) == "sqlite":
+            with _cpas_pipeline_lock:
+                terminated, dump_id, decisions = _run_pipeline_critical_section(
+                    db, snapshot
+                )
+        else:
+            terminated, dump_id, decisions = _run_pipeline_critical_section(
+                db, snapshot
+            )
+
+        result["decisions"] = [
+            {
+                "grant_id": d.grant_id,
+                "cbsd_id": d.cbsd_id,
+                "reason": d.reason,
+            }
+            for d in decisions
+        ]
+        result["terminated_grants"] = terminated
+        result["dump_id"] = dump_id
+        _stage(
+            "apply_decisions_and_generate_fad",
+            dump_id=dump_id,
+            terminated=terminated,
+            decision_count=len(decisions),
+        )
+
+        mark_scheduled_success_if_applicable(db)
+        _append_cpas_audit(
+            db,
+            "cpas_completed",
+            {
+                "dumpId": dump_id,
+                "terminatedGrants": terminated,
+                "stages": [s["name"] for s in result["stages"]],
+                "decisions": result["decisions"],
+            },
+        )
+        db.commit()
+        result["ok"] = True
+        _stage("finalize_status_audit")
+        logger.info(
+            "CPAS pipeline completed dump_id=%s terminated=%s decisions=%s",
+            dump_id,
+            terminated,
+            len(decisions),
+        )
+        return result
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("CPAS pipeline rollback failed")
+        try:
+            _append_cpas_audit(
+                db,
+                "cpas_failed",
+                {
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "stages": result.get("stages") or [],
+                },
+            )
+            db.commit()
+        except Exception:
+            logger.exception("CPAS failure audit could not be persisted")
+        logger.exception("CPAS pipeline failed")
+        raise
 
 
 def _peer_cbsd_records(db: Session) -> list[dict[str, Any]]:
@@ -263,30 +535,3 @@ def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
         if haversine_m(lat, lon, float(esc_lat), float(esc_lon)) <= esc_radius_m:
             return True
     return False
-
-
-def apply_peer_conflict_to_local_grants(db: Session) -> None:
-    """Terminate local grants that conflict with peer FAD (same CBSD, PPA, or ESC).
-
-    - Same-CBSD active peer grant → GRA_5 / GRA_6.
-    - Inside peer PPA + frequency overlap with linked PAL → FAD_2 (G4).
-    - Near peer ESC sensor + CBRS overlap → FAD_2 (G2).
-    """
-    changed = False
-    for cbsd in db.query(Cbsd).all():
-        grants = (
-            db.query(Grant)
-            .filter_by(cbsd_id=cbsd.cbsd_id, terminated=False)
-            .all()
-        )
-        if not grants:
-            continue
-        same_cbsd = peer_has_grant_for_cbsd(db, cbsd)
-        for grant in grants:
-            if same_cbsd or _grant_conflicts_peer_ppa(db, cbsd, grant) or _grant_conflicts_peer_esc(
-                db, cbsd, grant
-            ):
-                grant.terminated = True
-                changed = True
-    if changed:
-        db.commit()

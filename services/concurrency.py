@@ -27,11 +27,13 @@ from models.models import Cbsd, Grant
 _registry_guard = threading.Lock()
 _locks: dict[str, threading.RLock] = {}
 
-# Distinct namespaces so CBSD, grant and FAD advisory keys never collide.
+# Distinct namespaces so CBSD, grant, FAD and CPAS advisory keys never collide.
 _ADVISORY_NS_CBSD = b"cbsd\0"
 _ADVISORY_NS_GRANT = b"grant\0"
 _ADVISORY_NS_FAD = b"fad\0"
+_ADVISORY_NS_CPAS = b"cpas\0"
 _FAD_PUBLISH_LOCK_NAME = "publish"
+_CPAS_PIPELINE_LOCK_NAME = "pipeline"
 
 
 def _lock_for(key: str) -> threading.RLock:
@@ -124,6 +126,14 @@ def acquire_fad_publish_xact_lock(db: Session) -> None:
     if not _supports_advisory_lock(db):
         return
     key = _advisory_key(_ADVISORY_NS_FAD, _FAD_PUBLISH_LOCK_NAME)
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+
+
+def acquire_cpas_pipeline_xact_lock(db: Session) -> None:
+    """Serialize CPAS apply+FAD critical section across PostgreSQL workers."""
+    if not _supports_advisory_lock(db):
+        return
+    key = _advisory_key(_ADVISORY_NS_CPAS, _CPAS_PIPELINE_LOCK_NAME)
     db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
 
 
