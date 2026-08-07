@@ -183,6 +183,47 @@ def test_verify_rejects_fcc_serial_mismatch():
     assert result.response_code == INVALID_PARAM
 
 
+def test_verify_rejects_signed_payload_missing_fcc_binding():
+    private_pem, public_pem = _rsa_keypair()
+    payload = _signed_install_payload(fcc_id="FCC-1", serial="SN-1", cpi_id="cpi-1")
+    del payload["fccId"]
+    sig = sign_cpi_payload(payload, private_pem, algorithm="RS256")
+    result = verify_cpi_signature(
+        sig,
+        public_key_pem=public_pem,
+        request_fcc_id="FCC-1",
+        request_serial="SN-1",
+    )
+    assert not result.ok
+    assert result.response_code == MISSING_PARAM
+
+
+def test_verify_rejects_signed_payload_missing_installation_param():
+    private_pem, public_pem = _rsa_keypair()
+    payload = _signed_install_payload(fcc_id="FCC-1", serial="SN-1", cpi_id="cpi-1")
+    del payload["installationParam"]
+    sig = sign_cpi_payload(payload, private_pem, algorithm="RS256")
+    result = verify_cpi_signature(
+        sig,
+        public_key_pem=public_pem,
+        request_fcc_id="FCC-1",
+        request_serial="SN-1",
+    )
+    assert not result.ok
+    assert result.response_code == MISSING_PARAM
+
+
+def test_structural_rejects_non_string_jwt_segments():
+    payload = _signed_install_payload(fcc_id="FCC-1", serial="SN-1", cpi_id="cpi-1")
+    encoded = b64url_encode(json.dumps(payload).encode("utf-8"))
+    sig = {
+        "protectedHeader": {"alg": "RS256"},
+        "encodedCpiSignedData": encoded,
+        "digitalSignature": "sig",
+    }
+    assert structural_cpi_error(sig) == INVALID_PARAM
+
+
 def test_verify_rejects_future_install_certification_time():
     private_pem, public_pem = _rsa_keypair()
     future = datetime.now(timezone.utc) + timedelta(hours=2)

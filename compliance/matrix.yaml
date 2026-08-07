@@ -25,7 +25,7 @@ cases:
       - tests/contract/test_cbsd_schema_validation.py
       - tests/contract/test_cbsd_version_dispatch.py
     evidence: docs/compliance/evidence/P3-001_cpi_signature.md
-    notes: "CSV Parcial ~45%; CPI crypto (P3-001) local; PKI/SCS ainda abertos. P2 schemas/version."
+    notes: "CSV Parcial; CPI crypto local (P3-001 unit evidence, not harness PASS); PKI/SCS abertos."
 
   - id: FAMILY.SIQ
     family: SIQ

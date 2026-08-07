@@ -174,8 +174,26 @@ def test_cpi_missing_install_cert_time_returns_missing_param(db_session):
 
 
 def test_cpi_complete_structure_returns_none(db_session):
-    sig = _cpi_sig({"professionalInstallerData": _prof("cpi-ok")})
+    sig = _cpi_sig(
+        {
+            "fccId": "FCC-X",
+            "cbsdSerialNumber": "SN-X",
+            "installationParam": {"height": 1.0},
+            "professionalInstallerData": _prof("cpi-ok"),
+        }
+    )
     assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) is None
+
+
+def test_cpi_missing_signed_fcc_id_returns_missing_param(db_session):
+    sig = _cpi_sig(
+        {
+            "cbsdSerialNumber": "SN-X",
+            "installationParam": {"height": 1.0},
+            "professionalInstallerData": _prof("cpi-ok"),
+        }
+    )
+    assert _cpi_missing_params({"cpiSignatureData": sig}, db_session) == MISSING_PARAM
 
 
 # --- process_registration: CPI signature end-to-end ---------------------------

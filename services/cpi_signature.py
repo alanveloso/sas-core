@@ -83,9 +83,18 @@ def structural_cpi_error(cpi_signature: Mapping[str, Any] | None) -> int | None:
         value = cpi_signature.get(field)
         if field not in cpi_signature or value in (None, ""):
             return MISSING_PARAM
+        if not isinstance(value, str):
+            return INVALID_PARAM
 
     signed = decode_cpi_signed_data(cpi_signature)
     if signed is None:
+        return INVALID_PARAM
+
+    # WINNF CpiSignedData required members (harness always populates these).
+    for required in ("fccId", "cbsdSerialNumber", "installationParam"):
+        if required not in signed or signed.get(required) in (None, ""):
+            return MISSING_PARAM
+    if not isinstance(signed.get("installationParam"), dict):
         return INVALID_PARAM
 
     prof = signed.get("professionalInstallerData") or {}
@@ -116,16 +125,16 @@ def _load_public_key(pem: str):
 
 def _verify_rs256(public_key, signing_input: bytes, signature: bytes) -> None:
     if not isinstance(public_key, rsa.RSAPublicKey):
-        raise InvalidSignature("key type mismatch")
+        raise InvalidSignature()
     public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
 
 
 def _verify_es256(public_key, signing_input: bytes, signature: bytes) -> None:
     if not isinstance(public_key, ec.EllipticCurvePublicKey):
-        raise InvalidSignature("key type mismatch")
+        raise InvalidSignature()
     # JWT ES256 uses IEEE P1363 (r||s); cryptography expects DER.
     if len(signature) != 64:
-        raise InvalidSignature("bad es256 length")
+        raise InvalidSignature()
     r = int.from_bytes(signature[:32], "big")
     s = int.from_bytes(signature[32:], "big")
     der = encode_dss_signature(r, s)
@@ -205,9 +214,14 @@ def verify_cpi_signature(
 
     signed_fcc = payload.get("fccId")
     signed_serial = payload.get("cbsdSerialNumber")
-    if signed_fcc is not None and str(signed_fcc) != str(request_fcc_id):
+    if signed_fcc in (None, "") or signed_serial in (None, ""):
+        return CpiVerifyResult(ok=False, response_code=MISSING_PARAM)
+    if str(signed_fcc) != str(request_fcc_id):
         return CpiVerifyResult(ok=False, response_code=INVALID_PARAM)
-    if signed_serial is not None and str(signed_serial) != str(request_serial):
+    if str(signed_serial) != str(request_serial):
+        return CpiVerifyResult(ok=False, response_code=INVALID_PARAM)
+    install = payload.get("installationParam")
+    if not isinstance(install, dict):
         return CpiVerifyResult(ok=False, response_code=INVALID_PARAM)
 
     if not public_key_pem or not str(public_key_pem).strip():
