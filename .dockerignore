@@ -1,11 +1,38 @@
+# Keep the Docker build context small and free of local secrets / caches.
 .git
+.github
+.venv
 __pycache__
 **/__pycache__
 *.pyc
 **/*.pyc
-.venv
-sas_mvp.db
-*.db
 .pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+.cache
+artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+sas_mvp.db
 .env
+.env.*
+!.env.example
 certs
+docs
+.cursor
+*.md
+!README.md
+!LICENSE
+# Large optional RF payloads (image still gets VERSION/README via data/** filters below).
+data/geo/ned/**
+!data/geo/ned/README.md
+!data/geo/ned/VERSION
+data/ntia/**
+!data/ntia/README.md
+!data/ntia/VERSION
+# Tests are not required at runtime inside the production image.
+tests

@@ -600,4 +600,4 @@ def test_postgres_freeze_captures_peer_records(pg_session):
     del grant
     snap = freeze_cpas_snapshot(pg_session)
     assert snap.peer_record_count >= 1
-    assert any(rt == "cbsd" for rt, _rid, _data in snap.peer_records)
+    assert any(rt == "cbsd" for _pid, rt, _rid, _data in snap.peer_records)

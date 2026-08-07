@@ -43,9 +43,10 @@ class CpasSnapshot:
     active_grant_pks: tuple[int, ...]
     peer_sync_report: dict[str, Any] = field(default_factory=dict)
     peer_record_count: int = 0
-    # Durable peer FAD rows at freeze time: (record_type, record_id, data_json).
+    # Durable peer FAD rows at freeze time:
+    # (peer_sas_id, record_type, record_id, data_json).
     # Evaluation must use this set so mid-run peer N→N+1 cannot widen decisions.
-    peer_records: tuple[tuple[str, str, str], ...] = ()
+    peer_records: tuple[tuple[int, str, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,10 @@ class CpasDecision:
     grant_id: str
     cbsd_id: str
     reason: str
+    # P6-004: IAP / protection action. Boolean peer rules use terminate.
+    action: str = "terminate"
+    authorized_eirp_dbm_mhz: float | None = None
+    explanation: str = ""
 
 
 def is_cpas_running(db: Session) -> bool:
@@ -175,7 +180,8 @@ def freeze_cpas_snapshot(
         .all()
     )
     peer_records = tuple(
-        (row.record_type, row.record_id, row.data_json) for row in peer_rows
+        (int(row.peer_sas_id), row.record_type, row.record_id, row.data_json)
+        for row in peer_rows
     )
     return CpasSnapshot(
         frozen_at=utc_now().replace(microsecond=0).isoformat(),
@@ -191,7 +197,7 @@ def _frozen_peer_records(
 ) -> list[dict[str, Any]]:
     """Parse peer records of one type from the frozen snapshot (not live DB)."""
     out: list[dict[str, Any]] = []
-    for rt, _record_id, data_json in snapshot.peer_records:
+    for _peer_sas_id, rt, _record_id, data_json in snapshot.peer_records:
         if rt != record_type:
             continue
         try:
@@ -203,14 +209,42 @@ def _frozen_peer_records(
     return out
 
 
-def evaluate_cpas_protections(db: Session, snapshot: CpasSnapshot) -> list[CpasDecision]:
-    """Compute grant terminations against the frozen snapshot (no DB writes)."""
+def _frozen_peer_cbsd_rows(
+    snapshot: CpasSnapshot,
+) -> list[tuple[int, dict[str, Any]]]:
+    """Frozen peer CBSD records with owning peer_sas_id (not live DB)."""
+    out: list[tuple[int, dict[str, Any]]] = []
+    for peer_sas_id, rt, _record_id, data_json in snapshot.peer_records:
+        if rt != "cbsd":
+            continue
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out.append((int(peer_sas_id), data))
+    return out
+
+
+def evaluate_cpas_protections(
+    db: Session,
+    snapshot: CpasSnapshot,
+    *,
+    iap_points: list[Any] | None = None,
+    iap_coupling: Any | None = None,
+) -> list[CpasDecision]:
+    """Compute grant decisions against the frozen snapshot (no DB writes).
+
+    Boolean peer rules (same CBSD / PPA / ESC) still terminate. Optional IAP
+    points (P6-004) may keep, reduce_power, or terminate remaining grants.
+    """
     if not snapshot.active_grant_pks:
         return []
     peer_cbsd = _frozen_peer_records(snapshot, "cbsd")
     peer_zones = _frozen_peer_records(snapshot, "zone")
     peer_esc = _frozen_peer_records(snapshot, "esc_sensor")
     decisions: list[CpasDecision] = []
+    decided_pks: set[int] = set()
     grants = (
         db.query(Grant)
         .filter(Grant.id.in_(snapshot.active_grant_pks))
@@ -237,20 +271,140 @@ def evaluate_cpas_protections(db: Session, snapshot: CpasSnapshot) -> list[CpasD
                     grant_id=grant.grant_id,
                     cbsd_id=grant.cbsd_id,
                     reason=reason,
+                    action="terminate",
+                    explanation=reason,
                 )
             )
+            decided_pks.add(grant.id)
+
+    if iap_points and iap_coupling is not None:
+        decisions.extend(
+            _evaluate_iap_decisions(
+                db,
+                grants,
+                snapshot=snapshot,
+                decided_pks=decided_pks,
+                iap_points=iap_points,
+                iap_coupling=iap_coupling,
+            )
+        )
     return decisions
 
 
+def _local_grant_to_rf_info(db: Session, grant: Grant) -> Any | None:
+    from services.iap import GrantRfInfo
+
+    cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+    if cbsd is None:
+        return None
+    install: dict[str, Any] = {}
+    if cbsd.registration_json:
+        try:
+            reg = json.loads(cbsd.registration_json)
+            if isinstance(reg, dict):
+                raw_install = reg.get("installationParam") or {}
+                if isinstance(raw_install, dict):
+                    install = raw_install
+        except (TypeError, ValueError, json.JSONDecodeError):
+            install = {}
+    try:
+        lat = float(install.get("latitude"))
+        lon = float(install.get("longitude"))
+    except (TypeError, ValueError):
+        return None
+    eirp = float(grant.max_eirp if grant.max_eirp is not None else 0.0)
+    height = float(install.get("height") or 0.0)
+    height_type = install.get("heightType") or "AGL"
+    return GrantRfInfo(
+        grant_id=grant.grant_id,
+        cbsd_id=grant.cbsd_id,
+        latitude=lat,
+        longitude=lon,
+        height_m=height,
+        height_is_agl=height_type != "AMSL",
+        indoor=bool(install.get("indoorDeployment")),
+        low_hz=int(grant.low_frequency),
+        high_hz=int(grant.high_frequency),
+        max_eirp_dbm_mhz=eirp,
+        is_managing_sas=True,
+        grant_pk=grant.id,
+        source_sas_id=None,
+    )
+
+
+def _evaluate_iap_decisions(
+    db: Session,
+    grants: list[Grant],
+    *,
+    snapshot: CpasSnapshot,
+    decided_pks: set[int],
+    iap_points: list[Any],
+    iap_coupling: Any,
+) -> list[CpasDecision]:
+    from services.iap import run_iap
+    from services.iap.peer_fad import grant_rf_infos_from_frozen_peer_cbsds
+
+    rf_grants: list[Any] = []
+    for grant in grants:
+        if grant.terminated or grant.id in decided_pks:
+            continue
+        info = _local_grant_to_rf_info(db, grant)
+        if info is not None:
+            rf_grants.append(info)
+
+    # Peer FAD grants from the frozen snapshot only (never live PeerFadRecord).
+    peer_rf = grant_rf_infos_from_frozen_peer_cbsds(_frozen_peer_cbsd_rows(snapshot))
+    rf_grants.extend(peer_rf)
+
+    # Deterministic order: local managing grants first (by pk), then peers.
+    rf_grants.sort(
+        key=lambda g: (
+            0 if g.is_managing_sas else 1,
+            g.grant_pk if g.grant_pk is not None else 10**18,
+            g.source_sas_id or "",
+            g.grant_id,
+        )
+    )
+
+    if not any(g.is_managing_sas for g in rf_grants):
+        return []
+    run = run_iap(list(iap_points), rf_grants, coupling=iap_coupling)
+    out: list[CpasDecision] = []
+    for item in run.merged_decisions:
+        # Peer grants never produce local CPAS mutations.
+        if not item.grant_pk:
+            continue
+        if item.action == "keep":
+            continue
+        out.append(
+            CpasDecision(
+                grant_pk=item.grant_pk,
+                grant_id=item.grant_id,
+                cbsd_id=item.cbsd_id,
+                reason="iap",
+                action=item.action,
+                authorized_eirp_dbm_mhz=item.authorized_eirp_dbm_mhz,
+                explanation=item.explanation,
+            )
+        )
+    return out
+
+
 def apply_cpas_decisions(db: Session, decisions: list[CpasDecision]) -> int:
-    """Terminate decided grants via lifecycle transitions (no commit)."""
+    """Apply CPAS decisions via lifecycle / EIRP updates (no commit)."""
     from services.lifecycle import GrantEvent, apply_grant_event, lock_grant_row
 
     changed = 0
     for decision in decisions:
+        # Peer / non-local decisions must never mutate the local grant table.
+        if decision.grant_pk is None:
+            logger.warning(
+                "CPAS skip grant_id=%s: missing grant_pk (peer or invalid)",
+                decision.grant_id,
+            )
+            continue
         grant = lock_grant_row(db, decision.grant_id, decision.cbsd_id)
         if grant is None or grant.id != decision.grant_pk:
-            # Fallback by PK when grant_id lookup misses (should be rare).
             query = db.query(Grant).filter_by(id=decision.grant_pk)
             bind = db.get_bind()
             if bind is not None and bind.dialect.name != "sqlite":
@@ -258,16 +412,54 @@ def apply_cpas_decisions(db: Session, decisions: list[CpasDecision]) -> int:
             grant = query.first()
         if grant is None or grant.terminated:
             continue
+        # Refuse peer-namespaced grant ids even if a PK somehow matched.
+        if str(decision.grant_id).startswith("peer/"):
+            logger.warning(
+                "CPAS skip grant_pk=%s grant_id=%s: peer grant is immutable locally",
+                decision.grant_pk,
+                decision.grant_id,
+            )
+            continue
+
+        action = decision.action or "terminate"
+        if action == "reduce_power":
+            if decision.authorized_eirp_dbm_mhz is None:
+                continue
+            if grant.max_eirp is not None and float(grant.max_eirp) <= float(
+                decision.authorized_eirp_dbm_mhz
+            ) + 1e-9:
+                continue
+            grant.max_eirp = float(decision.authorized_eirp_dbm_mhz)
+            changed += 1
+            continue
+        if action == "suspend":
+            event = GrantEvent.SUSPEND
+        elif action == "terminate":
+            event = GrantEvent.TERMINATE
+        else:
+            logger.warning(
+                "CPAS skip grant_pk=%s grant_id=%s unknown action=%s",
+                decision.grant_pk,
+                decision.grant_id,
+                action,
+            )
+            continue
         outcome = apply_grant_event(
             grant,
-            GrantEvent.TERMINATE,
-            payload={"cbsdId": grant.cbsd_id, "grantId": grant.grant_id},
+            event,
+            payload={
+                "cbsdId": grant.cbsd_id,
+                "grantId": grant.grant_id,
+                "reason": decision.reason,
+                "explanation": decision.explanation,
+            },
         )
         if not outcome.ok:
             logger.warning(
-                "CPAS skip grant_pk=%s grant_id=%s lifecycle=%s",
+                "CPAS skip grant_pk=%s grant_id=%s action=%s lifecycle=%s",
                 decision.grant_pk,
                 decision.grant_id,
+                action,
                 outcome.detail or outcome.response_code,
             )
             continue

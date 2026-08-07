@@ -1,79 +1,63 @@
 # Spectrum Access System Core (`sas-core`)
 
-Reference implementation of a **Spectrum Access System (SAS)** for the CBRS band (3550–3700 MHz), aligned with WInnForum specifications. `sas-core` is a runnable FastAPI service — designed as a **reusable component** for research, benchmarking, and prototypes that need a WINNF-compliant SAS.
+Runnable **Spectrum Access System (SAS)** for the CBRS band (3550–3700 MHz),
+evolved toward selected [WInnForum](https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness)
+certification suites (**WINNF-TS-0061** / related).
 
-This is not a commercial RF product. It is a robust, validated *baseline* for comparing metrics such as grant latency, state convergence, and SAS-to-SAS federation overhead.
-
-Protocol conformance is verified externally with the [WInnForum CBRS SAS Test Harness](https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness) (**WINNF-TS-0061**).
-
----
-
-## What `sas-core` exposes
-
-| Interface | Prefix / version | Authentication | Purpose |
-|-----------|------------------|----------------|---------|
-| **CBSD ↔ SAS** | `/v1.2` | mTLS (CBSD certificate) | Registration, Spectrum Inquiry, Grant, Heartbeat, Relinquishment, Deregistration |
-| **SAS ↔ SAS** | `/v1.3` | mTLS (authorized peer SAS) | Full Activity Dump (FAD), ESC sensor export |
-| **Admin** | `/admin` | mTLS (harness / operator) | Test data injection, CPAS triggers, database sync |
-
-Dual TLS server (Uvicorn):
-
-- `https://0.0.0.0:9000` — RSA (CBSD, Admin, SAS-SAS RSA)
-- `https://0.0.0.0:9001` — ECDSA (SAS-SAS ECDSA, e.g. SSS suite)
-
-```
-CBSD / peer SAS ──mTLS──► sas-core (FastAPI)
-                              │
-                              ▼
-                          SQLite (SQLAlchemy)
-```
+This repository is a lab / interoperability baseline — not a commercial RF product.
+Claimed WInnForum results require stored evidence under `compliance/evidence/`;
+do not treat README prose as an official PASS.
 
 ---
 
-## Internal architecture
+## Interfaces
 
-| Layer | Contents |
-|-------|----------|
-| `routes/` | CBSD endpoints (`cbsd_routes`), SAS-SAS (`sas_sas_routes`), Admin (`admin_routes`) |
-| `services/` | Business logic: registration, inquiry, grant, heartbeat, FAD, CPAS, zones, PAL, border rules |
-| `models/` | ORM entities: CBSD, Grant, PalRecord, PeerSas, FadDump, etc. |
-| `schemas/` | Pydantic validation for WINNF payloads |
-| `database.py` | SQLite, `init_db()`, `reset_db()` |
+| Interface | Prefix | Auth | Purpose |
+|-----------|--------|------|---------|
+| **CBSD ↔ SAS** | `/v1.2` | mTLS (CBSD) | Registration, SIQ, Grant, Heartbeat, Relinquishment, Deregistration |
+| **SAS ↔ SAS** | `/v1.3` | mTLS (peer SAS) | Full Activity Dump (FAD) |
+| **Admin** | `/admin` | mTLS (harness / operator) | Injects, CPAS, sync, PAT query |
 
-Stack: Python 3, FastAPI, SQLAlchemy, Pydantic, httpx (CPAS client / database sync), Uvicorn with mTLS.
+TLS listeners (Uvicorn):
 
----
-
-## Implemented domains
-
-`sas-core` covers the full CBSD-SAS lifecycle and the federated flows required by the official harness:
-
-| Domain | Scope in core |
-|--------|---------------|
-| **CBSD registration & lifecycle** | Registration, Spectrum Inquiry, Grant, Heartbeat, Relinquishment, Deregistration |
-| **PAL / GAA** | PAL licenses (`pal_records`), PPA zones, GAA channels; rules by PPA cluster and `userId` |
-| **SAS-SAS federation** | Full Activity Dump generation and download; peer record import |
-| **CPAS** | Daily activities: peer-PPA conflicts, ESC, FSS/GWBL/EXZ/DPA sync |
-| **Border & federal rules** | Exclusion Zones, Border Protection (Canada), Quiet Zones, Federal DB, Whitelist DB |
-
-**Validated WINNF suites (14):** REG, SIQ, GRA, HBT, RLQ, DRG, FAD, SSS, EXZ, BPR, EPR, QPR, WDB, FDB.
+- `https://0.0.0.0:9000` — RSA
+- `https://0.0.0.0:9001` — ECDSA (SAS↔SAS ECC / SSS)
 
 ---
 
-## Core limitations
+## Layout
 
-These choices are **intentional** in this repository. They affect RF fidelity only, not protocol conformance as tested by the harness:
+| Path | Role |
+|------|------|
+| `routes/` | CBSD, SAS↔SAS, Admin HTTP |
+| `services/` | Domain logic (lifecycle, FAD, CPAS, IAP, propagation, terrain, …) |
+| `protection_data/` | Versioned RF/protection dataset manifests |
+| `spectrum_profiles/` | Band plan / profile YAML |
+| `data/` | Dataset root (VERSION markers; large payloads often gitignored) |
+| `compliance/` | Matrix + versioned evidence |
+| `tools/` | doctor, certs, WInnForum runner |
 
-- **SQLite persistence** — suitable for benchmarking and prototypes; not a distributed production backend.
-- **Simplified geometry** (`services/geometry.py`) — ray-casting and Haversine instead of high-fidelity ITM propagation models.
-- **Pragmatic IAP** — spatial protections tuned for protocol state and latency, not full physical simulation.
-- **Batch size up to 100** — aligned with the harness `MaximumBatchSize`.
+Stack: Python ≥3.11, FastAPI, SQLAlchemy, Pydantic, Celery, Uvicorn mTLS.
 
 ---
 
-## Installation and running
+## Current compliance posture (honest)
 
-### 1. Clone and set up the environment
+Phases **P0–P6** product tasks are complete on branch work through
+`feat/p6-protection-models` (see `compliance/evidence/P6_GATE_FINAL.md`).
+
+| Area | Local status | Official harness |
+|------|--------------|------------------|
+| Protocol / Admin contract / CPAS / FAD | Strong local + PG tests | Case-level PASS only with evidence |
+| HAAT / NED packaging | PASS_LOCAL | Needs full DEM for campaigns |
+| Propagation Admin API | PASS_LOCAL (injectable engines) | PAT needs compiled ITM, NLCD, deps |
+| IAP engine + frozen peer FAD | PASS_LOCAL (optional CPAS hook) | IPR/FDB RF campaigns still open |
+
+**Not claimed here:** “all WINNF suites validated.” Use `compliance/matrix.yaml`.
+
+---
+
+## Install (fresh)
 
 ```bash
 git clone <sas-core-repository-url>
@@ -81,154 +65,91 @@ cd sas-core
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade 'pip==25.2'
+pip install -r requirements.lock.txt
+pip install -e .
+
+python -m tools.doctor   # expects CERTS_DIR or harness certs
 ```
 
-### 2. mTLS certificates
+Editable install includes `protection_data` and `spectrum_profiles` package data
+(YAML manifests / profiles).
 
-The canonical certificate directory is **`./certs`** at the repository root
-(override with the `CERTS_DIR` environment variable). This is the same path
-used by `config.py` and Docker (`CERTS_HOST_DIR=./certs` → `/certs` in the
-container).
-
-Generate WInnForum harness test material with the official script, then copy
-it into `CERTS_DIR`:
+Dev tools:
 
 ```bash
-git clone https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness.git /tmp/cbrs-harness
-cd /tmp/cbrs-harness/certs
-bash generate_fake_certs.sh
-
-# From the sas-core repository root:
-mkdir -p certs
-cp -a /tmp/cbrs-harness/certs/. ./certs/
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
-Required under `CERTS_DIR`:
+---
 
-- `server.cert`, `server.key` (RSA listener)
-- `server-ecc.cert`, `server-ecc.key` (ECDSA listener / SSS_3–SSS_4)
+## Certificates
+
+Canonical directory: **`./certs`** (`CERTS_DIR` override). Required:
+
+- `server.cert` / `server.key`
+- `server-ecc.cert` / `server-ecc.key`
 - `ca.cert`
-- `crl/` directory with at least one `*.crl.pem` (required for CRL checks)
+- `crl/` with at least one `*.crl.pem`
 
-Diagnose the layout before starting:
+Ephemeral lab certs:
 
 ```bash
-python -m tools.doctor
+python -m tools.generate_dev_certs --out ./certs --force
+CERTS_DIR=./certs python -m tools.doctor
 ```
 
-### 3. Docker Compose (optional stack)
+Or copy from the WInnForum harness `generate_fake_certs.sh` output.
 
-Compose no longer requires a project `.env` file (`env_file` is optional; service
-defaults are built in). For local overrides, copy `.env.example` → `.env`
-(host/`pytest` should keep the sqlite `DATABASE_URL`; api/worker containers
-always receive the in-stack Postgres URL).
+---
+
+## Databases
+
+- Default local: SQLite (`DATABASE_URL=sqlite:///./sas_mvp.db`)
+- Compose / CI: PostgreSQL 15 (`psycopg2`)
+
+PostgreSQL integration tests:
 
 ```bash
-# Validates the stack definition (no .env required):
-docker compose config
+export SAS_TEST_DATABASE_URL='postgresql+psycopg2://sas:sas_test@127.0.0.1:5432/sas'
+pytest -q tests/integration/test_startup.py::test_startup_postgres_integration \
+  tests/integration/test_fad_publish_postgres.py \
+  tests/integration/test_cpas_multi_sas_postgres.py \
+  tests/integration/test_concurrency_postgres.py
+```
 
-# Runtime still needs ./certs provisioned (see above) before `up`:
+---
+
+## Docker Compose
+
+```bash
+docker compose config          # no .env required
+# provision ./certs first
 docker compose up --build
 ```
 
-### 4. Start the service
-
-```bash
-python main.py
-```
-
-The SQLite database (`sas_mvp.db`) is created automatically on startup.
+Image build context excludes `.git`, venvs, DBs, test trees, and bulky NED/DPA
+payloads (VERSION markers remain). See `.dockerignore`.
 
 ---
 
-## Validation with the WInnForum harness
+## WInnForum harness
 
-The harness is **not part of** this repository. Prefer the local runner:
+Harness is **not** vendored. Prefer:
 
 ```bash
-# Prepare artifact layout without claiming PASS (no certs/harness required):
 python -m tools.run_winnforum --dry-run --family REG
-
-# Full run (requires ./certs and a harness checkout or --harness-ref):
-python -m tools.run_winnforum \
-  --harness-ref <commit-or-tag> \
-  --family REG --family SIQ \
-  --client-cert "$WINNFORUM_CLIENT_CERT" \
-  --client-key "$WINNFORUM_CLIENT_KEY" \
-  --ca-certs "$WINNFORUM_CA_CERTS" \
-  --start-uut
 ```
 
-Certificate paths must be supplied explicitly (CLI or `WINNFORUM_CLIENT_CERT` /
-`WINNFORUM_CLIENT_KEY` / `WINNFORUM_CA_CERTS`); the runner does not hardcode harness
-certificate filenames.
-
-Artifacts land under `artifacts/winnforum/<timestamp>/` (`environment.json`, `sas.cfg`,
-`uut.log`, `harness.log`, `results.json`, `junit.xml`, `summary.md`).
-
-Manual alternative:
-
-1. Keep the service running (`python main.py`).
-2. Configure the harness `sas.cfg` to point at `localhost:9000` / `:9001` (versions `v1.2` / `v1.3`).
-3. Run the desired suites:
-
-```bash
-cd <path-to-harness>
-python3 -m unittest testcases.WINNF_FT_S_REG_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_SIQ_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_GRA_testcase -v
-# … additional suites as needed
-```
-
-Minimal `sas.cfg` example:
-
-```ini
-[SasConfig]
-AdminApiBaseUrl: localhost:9000
-CbsdSasRsaBaseUrl: localhost:9000
-CbsdSasEcBaseUrl: localhost:9001
-SasSasRsaBaseUrl: localhost:9000
-SasSasEcBaseUrl: localhost:9001
-CbsdSasVersion: v1.2
-SasSasVersion: v1.3
-AdminId: sas_admin_id
-MaximumBatchSize: 100
-```
-
-**Environment note:** suite FDB_8 requires the `US/Pacific` timezone. Install `tzdata` if needed:
-
-```bash
-pip install tzdata pytz --upgrade
-```
-
----
-
-## Repository layout
-
-```
-sas-core/
-├── main.py              # FastAPI + Uvicorn entrypoint (9000/9001)
-├── database.py          # SQLite / SQLAlchemy
-├── requirements.txt
-├── routes/              # CBSD v1.2, SAS-SAS v1.3, /admin
-├── services/            # Business logic
-├── models/              # ORM
-└── schemas/             # Pydantic
-```
+Full runs need certs + harness checkout; artifacts under `artifacts/winnforum/`
+(gitignored). Official PASS requires versioned evidence — never invent results.
 
 ---
 
 ## License
 
-`sas-core` is licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) for the full text.
+Apache License 2.0 — see [LICENSE](LICENSE).
 
-```text
-Copyright 2026 Alan Veloso
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
-```
-
-**Third-party components:** the WInnForum CBRS SAS Test Harness and its reference models are separate works, subject to the license and attribution of the [Wireless Innovation Forum](https://github.com/Wireless-Innovation-Forum). Using `sas-core` does not grant any rights to WINNF specifications or harness code beyond their respective licenses.
+WInnForum harness / reference models are separate works under Wireless Innovation
+Forum licensing.

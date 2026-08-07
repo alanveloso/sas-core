@@ -53,10 +53,13 @@ cases:
       - services/grant_service.py
       - schemas/grant.py
       - schemas/common.py
+      - services/iap/engine.py
+      - services/iap/aggregate.py
     tests:
       - tests/unit/test_cbsd_schemas.py
-    evidence: null
-    notes: "CSV Parcial ~55%; IAP/aggregate gaps. P2-005 renew; P2-006 locks (no harness PASS)."
+      - tests/unit/test_iap_service.py
+    evidence: compliance/evidence/P6-004_iap_aggregate.md
+    notes: "CSV Parcial ~55%; P6-004 IAP engine local (injectable coupling). Official harness GRA/IAP PASS still open. P2-005 renew; P2-006 locks."
 
   - id: FAMILY.HBT
     family: HBT
@@ -209,7 +212,7 @@ cases:
       - tests/unit/test_cpas_pipeline.py
       - tests/unit/test_multi_sas.py
     evidence: compliance/evidence/P5_GATE_FINAL.md
-    notes: "P5 CPAS/scheduler local+FAD.2 OK. Official FDB.1–6/8 BLOCKED_BY_P6 (EXZ/DPA/FSS/GWBL/IAP RF). Not claimed PASS."
+    notes: "P5 CPAS/scheduler local+FAD.2 OK. P6-004 IAP engine+peer FAD hook PASS_LOCAL. Official FDB.1–6/8 BLOCKED_BY_ENV/P7 (EXZ/DPA/FSS/GWBL RF campaign; default CPAS does not yet inject protection points/coupling). Not claimed PASS."
 
   - id: FAMILY.SCS
     family: SCS
@@ -283,16 +286,22 @@ cases:
       - tests/unit/test_protection_data.py
       - tests/unit/test_propagation_service.py
     evidence: compliance/evidence/P6-003_propagation_api.md
-    notes: "P6-003 Admin API implemented (FSS/PPA/DPA wiring). Official PAT PASS pending compiled ITM + NLCD + harness campaign (P6-005/P7-003)."
+    notes: "P6-003 Admin API implemented (FSS/PPA/DPA wiring). Official PAT PASS BLOCKED_BY_ENV (compiled ITM, shapely, NLCD payload, harness campaign) / P7-003. Not claimed PASS."
 
   - id: FAMILY.IPR
     family: IPR
     case_scope: family
-    status: untested
-    implementation: []
-    tests: []
-    evidence: null
-    notes: "CSV Parcial muito baixo ~15%."
+    status: failing
+    implementation:
+      - services/iap/engine.py
+      - services/iap/aggregate.py
+      - services/iap/models.py
+      - services/cpas_service.py
+    tests:
+      - tests/unit/test_iap_service.py
+      - tests/unit/test_cpas_pipeline.py
+    evidence: compliance/evidence/P6-004_iap_aggregate.md
+    notes: "P6-004 IAP/aggregate local+peer FAD (frozen snapshot) + optional CPAS hook PASS_LOCAL. Official IPR.1–8 BLOCKED_BY_ENV/P7 (RF coupling+protection points on default CPAS; harness campaign). Not claimed PASS."
 
   - id: FAMILY.PPR
     family: PPR

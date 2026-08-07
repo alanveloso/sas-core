@@ -117,8 +117,13 @@ jobs:
         run: |
           python -m pip install --upgrade 'pip==25.2'
           pip install -r requirements.lock.txt -r requirements-dev.txt
-      - name: Pytest PostgreSQL startup
-        run: pytest -q tests/integration/test_startup.py::test_startup_postgres_integration
+      - name: Pytest PostgreSQL integration (startup + FAD + CPAS + concurrency)
+        run: >
+          pytest -q
+          tests/integration/test_startup.py::test_startup_postgres_integration
+          tests/integration/test_fad_publish_postgres.py
+          tests/integration/test_cpas_multi_sas_postgres.py
+          tests/integration/test_concurrency_postgres.py
 
   docker:
     name: docker-build

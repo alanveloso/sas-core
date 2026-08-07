@@ -128,7 +128,7 @@ Determinismo oficial P5 aplicável: FAD ×3 e SSS ×3 → raw_ok=True.
 | `P5-001_fad_server.md` | local server |
 | `P5-002_fad_client.md` | local client |
 | `P5-003_cpas_transactional.md` | local CPAS |
-| `P5-004_multi_sas.md` + `P5-004_REVIEW_WINNFORUM.md` | multi-SAS + PG |
+| `P5-004_multi_sas.md` | multi-SAS + PG |
 | **Este ficheiro** | gate final + oficial |
 
 Family FAD **passing** na matrix com PASS oficial FAD.1/2 (não só unitário).  
