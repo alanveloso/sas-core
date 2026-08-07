@@ -156,6 +156,7 @@ def _ppa_pal_context(
                     "in_ppa": in_ppa,
                     "license_exp": license_exp,
                     "user_id": pal.get("userId"),
+                    "pal_id": pal_id,
                 }
             )
     return contexts
@@ -163,9 +164,9 @@ def _ppa_pal_context(
 
 def _resolve_channel(
     contexts: list[dict[str, Any]], low: int, high: int, *, cbsd_user_id: str
-) -> tuple[int | None, str | None, datetime | None]:
+) -> tuple[int | None, str | None, datetime | None, str | None]:
     """
-    Return (error_code, channel_type, pal_license_exp).
+    Return (error_code, channel_type, pal_license_exp, pal_id).
     error_code None means OK.
     """
     covering_pal: list[dict[str, Any]] = []
@@ -179,12 +180,12 @@ def _resolve_channel(
     # Inside claimed PPA but not in cluster → interference on PAL overlap.
     for ctx in overlapping_pal:
         if ctx["in_ppa"] and not ctx["in_cluster"]:
-            return INTERFERENCE, None, None
+            return INTERFERENCE, None, None, None
 
     # Mix of PAL + GAA: request overlaps PAL for cluster member but not fully inside.
     for ctx in overlapping_pal:
         if ctx["in_cluster"] and not (low >= ctx["low"] and high <= ctx["high"]):
-            return INVALID_PARAM, None, None
+            return INVALID_PARAM, None, None, None
 
     if covering_pal:
         for ctx in covering_pal:
@@ -197,11 +198,11 @@ def _resolve_channel(
                         )
                     except (TypeError, ValueError):
                         exp = None
-                return None, "PAL", exp
+                return None, "PAL", exp, ctx.get("pal_id")
         # Fully inside a PAL channel but not authorized → interference.
-        return INTERFERENCE, None, None
+        return INTERFERENCE, None, None, None
 
-    return None, "GAA", None
+    return None, "GAA", None, None
 
 
 def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
@@ -218,6 +219,7 @@ def process_grant(
     *,
     certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
+    from services.cbsd_auth import cbsd_certificate_mismatch
     from services.meas_report import (
         FLAG_MEAS_REG,
         MEAS_WITHOUT_GRANT,
@@ -225,7 +227,6 @@ def process_grant(
         cbsd_meas_capabilities,
         validate_meas_report,
     )
-    from services.spectrum_inquiry_service import _cert_mismatch
 
     ask_meas = admin_flag_set(db, FLAG_MEAS_REG)
     responses: list[dict[str, Any]] = []
@@ -245,7 +246,7 @@ def process_grant(
             continue
 
         # Wrong client cert for this cbsdId → 103 without cbsdId/grantId (GRA.4).
-        if _cert_mismatch(cbsd, certificate_hash):
+        if cbsd_certificate_mismatch(cbsd, certificate_hash):
             responses.append(_resp(INVALID_PARAM))
             continue
 
@@ -289,7 +290,7 @@ def process_grant(
             continue
 
         contexts = _ppa_pal_context(db, cbsd)
-        ch_err, channel_type, pal_exp = _resolve_channel(
+        ch_err, channel_type, pal_exp, pal_id = _resolve_channel(
             contexts, low, high, cbsd_user_id=cbsd.user_id
         )
         if ch_err is not None:
@@ -323,54 +324,81 @@ def process_grant(
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
-        existing = _active_grants(db, cbsd_id)
-        pending = pending_by_cbsd.get(cbsd_id, [])
-        if _has_freq_conflict(existing, low, high, also_pending=pending):
-            responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
-            continue
-
-        # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
+        # Serialize grant creation per CBSD (process lock + row/advisory locks).
+        from services.concurrency import (
+            acquire_cbsd_xact_lock,
+            exclusive_cbsd,
+            lock_cbsd_row,
+        )
         from services.cpas_service import peer_has_grant_for_cbsd
-
-        if peer_has_grant_for_cbsd(db, cbsd):
-            responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
-            continue
-
-        grant_id = f"grant/{uuid.uuid4().hex}"
-        expire = _grant_expire_time(pal_exp)
         from services.federal_db_service import grant_sync_stamp
+        from services.grant_renewal import AUTH_CONTEXT_KEY, build_auth_context
+        from services.lifecycle import GrantState
 
-        stamp = grant_sync_stamp(db)
-        grant_payload = dict(req) if isinstance(req, dict) else {}
-        grant_payload["fss_gen"] = stamp.get("fss", 0)
-        grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
-        grant_payload["exz_gen"] = stamp.get("exz", 0)
-        grant_payload["dpa_gen"] = stamp.get("dpa", 0)
-        db.add(
-            Grant(
-                grant_id=grant_id,
-                cbsd_pk=cbsd.id,
-                cbsd_id=cbsd_id,
-                channel_type=channel_type,
-                low_frequency=low,
-                high_frequency=high,
-                max_eirp=max_eirp,
-                grant_expire_time=expire,
-                heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
-                grant_json=json.dumps(grant_payload),
-            )
-        )
-        pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))
-        responses.append(
-            {
-                "cbsdId": cbsd_id,
-                "grantId": grant_id,
-                "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
-                "channelType": channel_type,
-                "response": {"responseCode": SUCCESS},
-            }
-        )
+        with exclusive_cbsd(cbsd_id):
+            try:
+                acquire_cbsd_xact_lock(db, cbsd_id)
+                cbsd = lock_cbsd_row(db, cbsd_id)
+                if not cbsd:
+                    responses.append(_resp(INVALID_PARAM))
+                    continue
+                if cbsd_certificate_mismatch(cbsd, certificate_hash):
+                    responses.append(_resp(INVALID_PARAM))
+                    continue
 
-    db.commit()
+                existing = _active_grants(db, cbsd_id)
+                pending = pending_by_cbsd.get(cbsd_id, [])
+                if _has_freq_conflict(existing, low, high, also_pending=pending):
+                    responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+                    continue
+
+                # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
+                if peer_has_grant_for_cbsd(db, cbsd):
+                    responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+                    continue
+
+                grant_id = f"grant/{uuid.uuid4().hex}"
+                expire = _grant_expire_time(pal_exp)
+
+                stamp = grant_sync_stamp(db)
+                grant_payload = dict(req) if isinstance(req, dict) else {}
+                grant_payload["fss_gen"] = stamp.get("fss", 0)
+                grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
+                grant_payload["exz_gen"] = stamp.get("exz", 0)
+                grant_payload["dpa_gen"] = stamp.get("dpa", 0)
+
+                grant_payload[AUTH_CONTEXT_KEY] = build_auth_context(
+                    channel_type=channel_type or "GAA",
+                    pal_license_exp=pal_exp,
+                    pal_id=str(pal_id) if pal_id else None,
+                )
+                db.add(
+                    Grant(
+                        grant_id=grant_id,
+                        cbsd_pk=cbsd.id,
+                        cbsd_id=cbsd_id,
+                        channel_type=channel_type,
+                        low_frequency=low,
+                        high_frequency=high,
+                        max_eirp=max_eirp,
+                        grant_expire_time=expire,
+                        heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
+                        lifecycle_state=GrantState.GRANTED.value,
+                        grant_json=json.dumps(grant_payload),
+                    )
+                )
+                pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))
+                responses.append(
+                    {
+                        "cbsdId": cbsd_id,
+                        "grantId": grant_id,
+                        "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
+                        "channelType": channel_type,
+                        "response": {"responseCode": SUCCESS},
+                    }
+                )
+            finally:
+                db.commit()
+
     return responses

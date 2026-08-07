@@ -6,8 +6,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import Cbsd, Grant
-
 SUCCESS = 0
 MISSING_PARAM = 102
 INVALID_PARAM = 103
@@ -28,8 +26,21 @@ def _resp(
 
 
 def process_relinquishment(
-    db: Session, requests: list[dict[str, Any]]
+    db: Session,
+    requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
+    from services.cbsd_auth import cbsd_certificate_mismatch
+    from services.concurrency import (
+        acquire_cbsd_xact_lock,
+        acquire_grant_xact_lock,
+        exclusive_cbsd_and_grant,
+        lock_cbsd_row,
+        lock_grant_row,
+    )
+    from services.lifecycle import GrantEvent, apply_grant_event
+
     responses: list[dict[str, Any]] = []
 
     for req in requests:
@@ -44,24 +55,38 @@ def process_relinquishment(
             )
             continue
 
-        cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if not cbsd:
-            # Unknown CBSD → 103 without echoing identifiers (RLQ_3).
-            responses.append(_resp(INVALID_PARAM))
-            continue
+        with exclusive_cbsd_and_grant(cbsd_id, grant_id):
+            try:
+                acquire_cbsd_xact_lock(db, cbsd_id)
+                acquire_grant_xact_lock(db, grant_id)
+                cbsd = lock_cbsd_row(db, cbsd_id)
+                if not cbsd:
+                    # Unknown CBSD → 103 without echoing identifiers (RLQ_3).
+                    responses.append(_resp(INVALID_PARAM))
+                    continue
 
-        grant = (
-            db.query(Grant)
-            .filter_by(grant_id=grant_id, cbsd_id=cbsd_id, terminated=False)
-            .first()
-        )
-        if not grant:
-            # Unknown / foreign / already relinquished grant → 103, echo cbsdId only.
-            responses.append(_resp(INVALID_PARAM, cbsd_id=cbsd_id))
-            continue
+                # Re-check under lock (REG may have rebound certificate_hash).
+                if cbsd_certificate_mismatch(cbsd, certificate_hash):
+                    responses.append(_resp(INVALID_PARAM))
+                    continue
 
-        grant.terminated = True
-        responses.append(_resp(SUCCESS, cbsd_id=cbsd_id, grant_id=grant_id))
+                grant = lock_grant_row(db, grant_id, cbsd_id)
+                if not grant or grant.terminated:
+                    # Unknown / foreign / already relinquished grant → 103, echo cbsdId only.
+                    responses.append(_resp(INVALID_PARAM, cbsd_id=cbsd_id))
+                    continue
 
-    db.commit()
+                outcome = apply_grant_event(
+                    grant,
+                    GrantEvent.RELINQUISH,
+                    payload={"cbsdId": cbsd_id, "grantId": grant_id},
+                )
+                if not outcome.ok:
+                    responses.append(_resp(outcome.response_code, cbsd_id=cbsd_id))
+                    continue
+                responses.append(_resp(SUCCESS, cbsd_id=cbsd_id, grant_id=grant_id))
+            finally:
+                # Persist before releasing the process lock so peer sessions see the row.
+                db.commit()
+
     return responses

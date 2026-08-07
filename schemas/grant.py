@@ -2,37 +2,38 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pydantic import BaseModel, ConfigDict, Field
-
+from schemas.common import ChannelType, FrequencyRange, ResponseObject
 from services.error_handlers import MAXIMUM_BATCH_SIZE
 
 
-class FrequencyRange(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    lowFrequency: int | None = None
-    highFrequency: int | None = None
-
-
 class OperationParam(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
-    maxEirp: float | None = None
-    operationFrequencyRange: FrequencyRange | dict[str, Any] | None = None
+    maxEirp: float | None = Field(default=None, ge=-137, le=37)
+    operationFrequencyRange: FrequencyRange | None = None
 
 
 class GrantRequestItem(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     cbsdId: str | None = None
-    operationParam: OperationParam | dict[str, Any] | None = None
-    measuringCapabilities: Any | None = None
+    operationParam: OperationParam | None = None
+    measuringCapabilities: list[str] | None = None
+
+    @field_validator("measuringCapabilities")
+    @classmethod
+    def _non_empty_meas(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(value) == 0:
+            raise ValueError("measuringCapabilities must not be empty when present")
+        return value
 
 
 class GrantBatchRequest(BaseModel):
-    grantRequest: list[dict[str, Any]] = Field(..., max_length=MAXIMUM_BATCH_SIZE)
+    model_config = ConfigDict(extra="forbid")
+
+    grantRequest: list[GrantRequestItem] = Field(..., max_length=MAXIMUM_BATCH_SIZE)
 
 
 class GrantResponseItem(BaseModel):
@@ -42,9 +43,11 @@ class GrantResponseItem(BaseModel):
     grantId: str | None = None
     grantExpireTime: str | None = None
     heartbeatInterval: int | None = None
-    channelType: Literal["PAL", "GAA"] | None = None
-    response: dict[str, Any]
+    channelType: ChannelType | None = None
+    response: ResponseObject
 
 
 class GrantBatchResponse(BaseModel):
-    grantResponse: list[dict[str, Any]]
+    model_config = ConfigDict(extra="forbid")
+
+    grantResponse: list[GrantResponseItem]

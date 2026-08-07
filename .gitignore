@@ -6,3 +6,16 @@ sas_mvp.db
 .env
 .env.local
 certs/
+.coverage
+htmlcov/
+.pytest_cache/
+artifacts/
+.cache/
+# USGS NED GridFloat tiles (WInnForum Common-Data); keep README only.
+data/geo/ned/**
+!data/geo/ned/README.md
+
+# Runtime databases
+*.db
+*.sqlite
+*.sqlite3

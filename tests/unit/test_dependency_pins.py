@@ -6,12 +6,11 @@ import inspect
 import re
 import sys
 import tomllib
-from pathlib import Path
 
 import uvicorn
 from uvicorn.config import Config
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.support.repo import REPO_ROOT as ROOT
 
 
 def test_python_meets_declared_minimum():
@@ -40,6 +39,20 @@ def test_requirements_txt_has_no_floating_lower_bounds():
             continue
         assert ">=" not in line, f"floating requirement: {line}"
         assert "==" in line, f"unpinned requirement: {line}"
+
+
+def test_requirements_dev_pins_match_pyproject_optional_dev():
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    optional = data["project"]["optional-dependencies"]["dev"]
+    for dep in optional:
+        assert "==" in dep, dep
+    dev_txt = {
+        line.strip()
+        for line in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    for dep in optional:
+        assert dep in dev_txt, f"missing from requirements-dev.txt: {dep}"
 
 
 def test_requirements_lock_pins_direct_dependencies():
@@ -116,8 +129,30 @@ def test_uvicorn_run_accepts_ssl_context_factory():
 
 def test_uvicorn_h11_request_response_cycle_still_patchable():
     """mtls_auth.patch_uvicorn_for_client_cert depends on this private API surface."""
-    from uvicorn.protocols.http.h11_impl import RequestResponseCycle
+    import inspect as _inspect
 
-    init = RequestResponseCycle.__init__
-    params = list(inspect.signature(init).parameters)
-    assert "transport" in params
+    from uvicorn.protocols.http import h11_impl
+
+    src = _inspect.getsource(h11_impl.RequestResponseCycle)
+    assert "transport" in src
+    from services.mtls_auth import patch_uvicorn_for_client_cert
+
+    patch_uvicorn_for_client_cert()
+    assert getattr(h11_impl.RequestResponseCycle.__init__, "_sas_mtls_patched", False)
+
+
+def test_uvicorn_httptools_request_response_cycle_still_patchable():
+    """Default uvicorn[standard] HTTP stack must expose transport for mTLS binding."""
+    import inspect as _inspect
+
+    from uvicorn.protocols.http import httptools_impl
+
+    # Source must keep a named ``transport`` arg even if runtime __init__ is patched.
+    src = _inspect.getsource(httptools_impl.RequestResponseCycle)
+    assert "transport" in src
+    from services.mtls_auth import patch_uvicorn_for_client_cert
+
+    patch_uvicorn_for_client_cert()
+    assert getattr(
+        httptools_impl.RequestResponseCycle.__init__, "_sas_mtls_patched", False
+    )

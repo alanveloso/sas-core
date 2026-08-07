@@ -4,35 +4,51 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from schemas.common import (
+    AirInterface,
+    CbsdCategory,
+    CpiSignatureData,
+    GroupingParam,
+    InstallationParam,
+    MeasCapability,
+    ResponseObject,
+)
 from services.error_handlers import MAXIMUM_BATCH_SIZE
 
 
-class ResponseObject(BaseModel):
-    responseCode: int
-    responseMessage: str | None = None
-    responseData: Any | None = None
-
-
 class RegistrationRequestItem(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    """Strict registration item — unknown top-level keys forbidden."""
+
+    model_config = ConfigDict(extra="forbid")
 
     userId: str | None = None
     fccId: str | None = None
     cbsdSerialNumber: str | None = None
-    cbsdCategory: str | None = None
+    cbsdCategory: CbsdCategory | None = None
     callSign: str | None = None
-    measCapability: list[Any] | None = None
-    airInterface: dict[str, Any] | None = None
-    installationParam: dict[str, Any] | None = None
-    cpiSignatureData: dict[str, Any] | None = None
-    groupingParam: list[Any] | None = None
+    measCapability: list[MeasCapability] | None = None
+    airInterface: AirInterface | None = None
+    installationParam: InstallationParam | None = None
+    cpiSignatureData: CpiSignatureData | None = None
+    groupingParam: list[GroupingParam] | None = None
     cbsdInfo: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _category_b_conditionals(self) -> RegistrationRequestItem:
+        if self.cbsdCategory == "B":
+            if self.installationParam is None and self.cpiSignatureData is None:
+                raise ValueError(
+                    "cbsdCategory B requires installationParam or cpiSignatureData"
+                )
+        return self
 
 
 class RegistrationBatchRequest(BaseModel):
-    registrationRequest: list[dict[str, Any]] = Field(
+    model_config = ConfigDict(extra="forbid")
+
+    registrationRequest: list[RegistrationRequestItem] = Field(
         ..., max_length=MAXIMUM_BATCH_SIZE
     )
 
@@ -46,4 +62,6 @@ class RegistrationResponseItem(BaseModel):
 
 
 class RegistrationBatchResponse(BaseModel):
-    registrationResponse: list[dict[str, Any]]
+    model_config = ConfigDict(extra="forbid")
+
+    registrationResponse: list[RegistrationResponseItem]

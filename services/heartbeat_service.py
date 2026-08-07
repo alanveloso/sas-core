@@ -8,9 +8,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from models.models import AdminInjectedData, Cbsd, Grant
+from models.models import AdminInjectedData, Grant
 from services.blacklist_service import is_cbsd_blacklisted
-from services.grant_service import DEFAULT_GRANT_DURATION_SEC, HEARTBEAT_INTERVAL_SEC
+from services.grant_service import HEARTBEAT_INTERVAL_SEC
 from services.meas_report import (
     FLAG_DPA_ACTIVE,
     FLAG_MEAS_HBT,
@@ -108,8 +108,18 @@ def _grant_overlaps_active_dpa(db: Session, grant: Grant) -> bool:
 
 
 def process_heartbeat(
-    db: Session, requests: list[dict[str, Any]]
+    db: Session,
+    requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
+    from services.cbsd_auth import cbsd_certificate_mismatch
+    from services.lifecycle import (
+        GrantEvent,
+        apply_grant_event,
+        heartbeat_operation_allowed,
+    )
+
     ask_meas = admin_flag_set(db, FLAG_MEAS_HBT)
     responses: list[dict[str, Any]] = []
 
@@ -130,139 +140,213 @@ def process_heartbeat(
             )
             continue
 
-        grant = (
-            db.query(Grant)
-            .filter_by(grant_id=grant_id, cbsd_id=cbsd_id)
-            .first()
+        from services.concurrency import (
+            acquire_cbsd_xact_lock,
+            acquire_grant_xact_lock,
+            exclusive_cbsd_and_grant,
+            lock_cbsd_row,
+            lock_grant_row,
         )
-        if not grant:
-            # Invalid grantId → 103 without echoing grantId (HBT.7).
-            responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
-            continue
 
-        cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if cbsd and is_cbsd_blacklisted(
-            db, cbsd.fcc_id, cbsd.cbsd_serial_number
-        ):
-            responses.append(
-                _base(BLACKLISTED, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
+        with exclusive_cbsd_and_grant(cbsd_id, grant_id):
+            try:
+                acquire_cbsd_xact_lock(db, cbsd_id)
+                acquire_grant_xact_lock(db, grant_id)
+                cbsd = lock_cbsd_row(db, cbsd_id)
+                # Wrong client cert → 103 without echoing ids (before grant existence probe).
+                if cbsd and cbsd_certificate_mismatch(cbsd, certificate_hash):
+                    responses.append(_base(INVALID_PARAM))
+                    continue
 
-        # GRA_6: peer FAD reports an active grant for the same CBSD → terminate (500).
-        from services.cpas_service import peer_has_grant_for_cbsd
+                grant = lock_grant_row(db, grant_id, cbsd_id)
+                if not grant:
+                    # Invalid grantId → 103 without echoing grantId (HBT.7).
+                    responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+                    continue
 
-        if cbsd and peer_has_grant_for_cbsd(db, cbsd):
-            grant.terminated = True
-            responses.append(
-                _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
+                if cbsd is None:
+                    # Orphan grant row without a registration cannot be heartbeated.
+                    responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+                    continue
 
-        if grant.terminated:
-            # Relinquished / no longer valid grant → 103 (RLQ_2 requires 103;
-            # RLQ_1 / HBT_5 also accept 500). Do not echo grantId.
-            responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
-            continue
+                if is_cbsd_blacklisted(
+                    db, cbsd.fcc_id, cbsd.cbsd_serial_number
+                ):
+                    responses.append(
+                        _base(BLACKLISTED, cbsd_id=cbsd_id, grant_id=grant_id)
+                    )
+                    continue
 
-        # DPA activation → suspend grant (501), do not terminate (GRA.1).
-        # HBT.12 also accepts 501; transmitExpireTime stays in the past via _base.
-        if _grant_overlaps_active_dpa(db, grant):
-            responses.append(
-                _base(
-                    SUSPENDED_GRANT,
-                    cbsd_id=cbsd_id,
-                    grant_id=grant_id,
-                    grant_expire=grant.grant_expire_time,
-                    heartbeat_interval=grant.heartbeat_interval or HEARTBEAT_INTERVAL_SEC,
+                # GRA_6: peer FAD reports an active grant for the same CBSD → terminate (500).
+                from services.cpas_service import peer_has_grant_for_cbsd
+
+                if peer_has_grant_for_cbsd(db, cbsd):
+                    apply_grant_event(
+                        grant,
+                        GrantEvent.TERMINATE,
+                        payload={"cbsdId": cbsd_id, "grantId": grant_id},
+                    )
+                    responses.append(
+                        _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+                    )
+                    continue
+
+                life = heartbeat_operation_allowed(grant, operation_state=str(op_state))
+                if not life.ok:
+                    if life.response_code == INVALID_PARAM:
+                        # Terminal relinquished/terminated: do not echo grantId.
+                        responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+                    elif life.response_code == SUSPENDED_GRANT:
+                        responses.append(
+                            _base(
+                                SUSPENDED_GRANT,
+                                cbsd_id=cbsd_id,
+                                grant_id=grant_id,
+                                grant_expire=grant.grant_expire_time,
+                                heartbeat_interval=grant.heartbeat_interval
+                                or HEARTBEAT_INTERVAL_SEC,
+                            )
+                        )
+                    else:
+                        responses.append(
+                            _base(
+                                life.response_code,
+                                cbsd_id=cbsd_id,
+                                grant_id=grant_id,
+                            )
+                        )
+                    continue
+
+                # DPA activation → suspend grant (501), do not terminate (GRA.1).
+                # Transient suspension: response only; clear when DPA inactive (no persist).
+                # HBT.12 also accepts 501; transmitExpireTime stays in the past via _base.
+                if _grant_overlaps_active_dpa(db, grant):
+                    responses.append(
+                        _base(
+                            SUSPENDED_GRANT,
+                            cbsd_id=cbsd_id,
+                            grant_id=grant_id,
+                            grant_expire=grant.grant_expire_time,
+                            heartbeat_interval=grant.heartbeat_interval
+                            or HEARTBEAT_INTERVAL_SEC,
+                        )
+                    )
+                    continue
+
+                if grant.grant_expire_time.replace(microsecond=0) <= datetime.utcnow().replace(
+                    microsecond=0
+                ):
+                    apply_grant_event(
+                        grant,
+                        GrantEvent.EXPIRE,
+                        payload={"cbsdId": cbsd_id, "grantId": grant_id},
+                    )
+                    responses.append(
+                        _base(INVALID_PARAM, cbsd_id=cbsd_id, grant_id=grant_id)
+                    )
+                    continue
+
+                if _grant_overlaps_wisp(db, grant):
+                    apply_grant_event(
+                        grant,
+                        GrantEvent.TERMINATE,
+                        payload={"cbsdId": cbsd_id, "grantId": grant_id},
+                    )
+                    responses.append(
+                        _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+                    )
+                    continue
+
+                # Federal DB (EXZ / FSS / GWBL / DPA) — 500 for stale grants, 501 for current.
+                from services.federal_db_service import heartbeat_federal_code
+
+                federal_code = heartbeat_federal_code(db, cbsd, grant)
+                if federal_code == TERMINATED_GRANT:
+                    apply_grant_event(
+                        grant,
+                        GrantEvent.TERMINATE,
+                        payload={"cbsdId": cbsd_id, "grantId": grant_id},
+                    )
+                    responses.append(
+                        _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+                    )
+                    continue
+                if federal_code == SUSPENDED_GRANT:
+                    # Transient federal suspend — do not persist SUSPENDED.
+                    responses.append(
+                        _base(
+                            SUSPENDED_GRANT,
+                            cbsd_id=cbsd_id,
+                            grant_id=grant_id,
+                            grant_expire=grant.grant_expire_time,
+                            heartbeat_interval=grant.heartbeat_interval
+                            or HEARTBEAT_INTERVAL_SEC,
+                        )
+                    )
+                    continue
+
+                capabilities = cbsd_meas_capabilities(
+                    cbsd.registration_json if cbsd else None
                 )
-            )
-            continue
 
-        if grant.grant_expire_time.replace(microsecond=0) <= datetime.utcnow().replace(
-            microsecond=0
-        ):
-            responses.append(
-                _base(INVALID_PARAM, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
+                # After SAS asked for WITH_GRANT reports, validate subsequent heartbeats.
+                if grant.meas_report_requested and MEAS_WITH_GRANT in capabilities:
+                    meas_err = validate_meas_report(
+                        req.get("measReport"), require_full_cbrs=False
+                    )
+                    if meas_err is not None:
+                        responses.append(
+                            _base(meas_err, cbsd_id=cbsd_id, grant_id=grant_id)
+                        )
+                        continue
 
-        # Out-of-sync: AUTHORIZED before first successful GRANTED heartbeat.
-        if op_state == "AUTHORIZED" and not grant.authorized:
-            responses.append(
-                _base(UNSYNC_OP_PARAM, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
+                if req.get("grantRenew") is True:
+                    from services.grant_renewal import apply_renewal
 
-        if _grant_overlaps_wisp(db, grant):
-            grant.terminated = True
-            responses.append(
-                _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
+                    renew = apply_renewal(db, grant)
+                    if not renew.ok:
+                        responses.append(
+                            _base(
+                                renew.response_code,
+                                cbsd_id=cbsd_id,
+                                grant_id=grant_id,
+                            )
+                        )
+                        continue
 
-        # Federal DB (EXZ / FSS / GWBL / DPA) — 500 for stale grants, 501 for current.
-        from services.federal_db_service import heartbeat_federal_code
-
-        federal_code = heartbeat_federal_code(db, cbsd, grant)
-        if federal_code == TERMINATED_GRANT:
-            grant.terminated = True
-            responses.append(
-                _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
-            )
-            continue
-        if federal_code == SUSPENDED_GRANT:
-            responses.append(
-                _base(
-                    SUSPENDED_GRANT,
-                    cbsd_id=cbsd_id,
-                    grant_id=grant_id,
-                    grant_expire=grant.grant_expire_time,
-                    heartbeat_interval=grant.heartbeat_interval or HEARTBEAT_INTERVAL_SEC,
+                tx = _future_tx(grant.grant_expire_time)
+                grant.transmit_expire_time = tx
+                apply_grant_event(
+                    grant,
+                    GrantEvent.AUTHORIZE,
+                    payload={
+                        "cbsdId": cbsd_id,
+                        "grantId": grant_id,
+                        "operationState": op_state,
+                    },
                 )
-            )
-            continue
 
-        capabilities = cbsd_meas_capabilities(cbsd.registration_json if cbsd else None)
+                meas_config: list[str] | None = None
+                if ask_meas and MEAS_WITH_GRANT in capabilities:
+                    meas_config = [MEAS_WITH_GRANT]
+                    grant.meas_report_requested = True
 
-        # After SAS asked for WITH_GRANT reports, validate subsequent heartbeats.
-        if grant.meas_report_requested and MEAS_WITH_GRANT in capabilities:
-            meas_err = validate_meas_report(
-                req.get("measReport"), require_full_cbrs=False
-            )
-            if meas_err is not None:
                 responses.append(
-                    _base(meas_err, cbsd_id=cbsd_id, grant_id=grant_id)
+                    _base(
+                        SUCCESS,
+                        cbsd_id=cbsd_id,
+                        grant_id=grant_id,
+                        tx=tx,
+                        grant_expire=grant.grant_expire_time
+                        if req.get("grantRenew") is True
+                        else None,
+                        heartbeat_interval=grant.heartbeat_interval
+                        or HEARTBEAT_INTERVAL_SEC,
+                        meas_config=meas_config,
+                    )
                 )
-                continue
+            finally:
+                # Persist mutations before releasing locks for peer sessions.
+                db.commit()
 
-        if req.get("grantRenew") is True:
-            grant.grant_expire_time = datetime.utcnow() + timedelta(
-                seconds=DEFAULT_GRANT_DURATION_SEC
-            )
-
-        tx = _future_tx(grant.grant_expire_time)
-        grant.transmit_expire_time = tx
-        grant.authorized = True
-
-        meas_config: list[str] | None = None
-        if ask_meas and MEAS_WITH_GRANT in capabilities:
-            meas_config = [MEAS_WITH_GRANT]
-            grant.meas_report_requested = True
-
-        responses.append(
-            _base(
-                SUCCESS,
-                cbsd_id=cbsd_id,
-                grant_id=grant_id,
-                tx=tx,
-                grant_expire=grant.grant_expire_time
-                if req.get("grantRenew") is True
-                else None,
-                heartbeat_interval=grant.heartbeat_interval or HEARTBEAT_INTERVAL_SEC,
-                meas_config=meas_config,
-            )
-        )
-
-    db.commit()
     return responses

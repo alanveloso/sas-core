@@ -14,7 +14,6 @@ from models.models import (
     ConditionalRegistration,
     CpiUser,
     FccIdRecord,
-    Grant,
     UserIdRecord,
 )
 from services.blacklist_service import is_cbsd_blacklisted
@@ -33,29 +32,16 @@ VALID_MEAS = {
 }
 VALID_USER_ID = re.compile(r"^[A-Za-z0-9_:-]+$")
 
-# Street-level HAAT (m) at known REG.7 CBSD#8 location (FCC HAAT calculator).
-# HAAT ≈ street_haat + AGL height; Cat A outdoor allows HAAT ≤ 6 m.
-_KNOWN_STREET_HAAT_M = {
-    (38.882162, -77.113755): 20.0,
-}
-
-
 def _cat_a_outdoor_haat_exceeds_limit(installation: dict[str, Any]) -> bool:
-    """Return True if estimated HAAT for Cat A outdoor exceeds 6 m."""
-    lat = installation.get("latitude")
-    lon = installation.get("longitude")
-    height = installation.get("height") or 0
-    height_type = installation.get("heightType")
-    if lat is None or lon is None or height_type != "AGL":
-        return False
-    street_haat = None
-    for (ref_lat, ref_lon), haat in _KNOWN_STREET_HAAT_M.items():
-        if abs(float(lat) - ref_lat) < 1e-5 and abs(float(lon) - ref_lon) < 1e-5:
-            street_haat = haat
-            break
-    if street_haat is None:
-        return False
-    return (street_haat + float(height)) > 6.0
+    """Return True if Cat A outdoor HAAT exceeds the 6 m Part 96 limit.
+
+    Uses the injectable ``HaatProvider`` (production: USGS NED 1″ / WInnForum
+    algorithm). Fail-closed when terrain data is missing or unreadable.
+    Fixture-coordinate lookup tables are forbidden (AGENTS.md).
+    """
+    from services.terrain.haat import cat_a_outdoor_haat_invalid
+
+    return cat_a_outdoor_haat_invalid(installation)
 
 
 def _b64url_decode(data: str) -> bytes:
@@ -156,28 +142,33 @@ def _cpi_missing_params(request: dict[str, Any], db: Session) -> int | None:
     return None
 
 
+def _field_missing(container: dict[str, Any], field: str) -> bool:
+    """True when ``field`` is absent or explicitly null (schema dump artefact)."""
+    return field not in container or container.get(field) is None
+
+
 def _has_pending_params(merged: dict[str, Any]) -> bool:
     """True when conditional/required installation params are incomplete."""
     category = merged.get("cbsdCategory")
     installation = merged.get("installationParam") or {}
     air = merged.get("airInterface")
 
-    if not category or not air or "radioTechnology" not in (air or {}):
+    if not category or not air or _field_missing(air or {}, "radioTechnology"):
         return True
     if not installation:
         return True
 
     required_common = ["latitude", "longitude", "height", "heightType"]
     for field in required_common:
-        if field not in installation:
+        if _field_missing(installation, field):
             return True
 
     if category == "A":
-        if "indoorDeployment" not in installation:
+        if _field_missing(installation, "indoorDeployment"):
             return True
     elif category == "B":
         for field in ("antennaAzimuth", "antennaGain", "antennaBeamwidth"):
-            if field not in installation:
+            if _field_missing(installation, field):
                 return True
 
     return False
@@ -213,19 +204,26 @@ def _validate_params(
             if item not in VALID_MEAS:
                 return INVALID_PARAM
 
-    if "latitude" in installation:
+    # Optional fields may be present-but-None once a request has round-tripped
+    # through the Pydantic schema layer (which emits every declared key). Treat
+    # None the same as "not provided" so schema-validated and raw-dict callers
+    # behave identically.
+    if installation.get("latitude") is not None:
         lat = installation["latitude"]
         if not isinstance(lat, (int, float)) or lat < -90 or lat > 90:
             return INVALID_PARAM
-    if "longitude" in installation:
+    if installation.get("longitude") is not None:
         lon = installation["longitude"]
         if not isinstance(lon, (int, float)) or lon < -180 or lon > 180:
             return INVALID_PARAM
-    if "antennaAzimuth" in installation:
+    if installation.get("antennaAzimuth") is not None:
         az = installation["antennaAzimuth"]
         if not isinstance(az, (int, float)) or az < 0 or az >= 360:
             return INVALID_PARAM
-    if "heightType" in installation and installation["heightType"] not in ("AGL", "AMSL"):
+    if installation.get("heightType") is not None and installation["heightType"] not in (
+        "AGL",
+        "AMSL",
+    ):
         return INVALID_PARAM
 
     eirp = installation.get("eirpCapability")
@@ -237,12 +235,22 @@ def _validate_params(
             return INVALID_PARAM
 
     # Cat A outdoor: HAAT must be ≤ 6 m (47 CFR § 96.43 / WINNF REG.7 CBSD#8).
+    # Only evaluate when installation geometry required for HAAT is present;
+    # incomplete params fall through to PENDING via _has_pending_params.
     if category == "A" and installation.get("indoorDeployment") is False:
         height = installation.get("height")
         height_type = installation.get("heightType")
+        lat = installation.get("latitude")
+        lon = installation.get("longitude")
         if height_type == "AGL" and isinstance(height, (int, float)) and height > 6:
             return INVALID_PARAM
-        if _cat_a_outdoor_haat_exceeds_limit(installation):
+        haat_inputs_ready = (
+            isinstance(lat, (int, float))
+            and isinstance(lon, (int, float))
+            and isinstance(height, (int, float))
+            and height_type in ("AGL", "AMSL")
+        )
+        if haat_inputs_ready and _cat_a_outdoor_haat_exceeds_limit(installation):
             return INVALID_PARAM
 
     # Cat B must not claim indoorDeployment True in many WINNF scenarios
@@ -292,9 +300,17 @@ def _make_cbsd_id(fcc_id: str, serial: str) -> str:
 
 
 def _terminate_grants(db: Session, cbsd_id: str) -> None:
-    grants = db.query(Grant).filter_by(cbsd_id=cbsd_id, terminated=False).all()
-    for grant in grants:
-        grant.terminated = True
+    from services.concurrency import lock_grants_for_cbsd
+    from services.lifecycle import GrantEvent, apply_grant_event
+
+    for grant in lock_grants_for_cbsd(db, cbsd_id):
+        if grant.terminated:
+            continue
+        apply_grant_event(
+            grant,
+            GrantEvent.TERMINATE,
+            payload={"cbsdId": cbsd_id, "grantId": grant.grant_id},
+        )
 
 
 def process_registration(
@@ -348,33 +364,96 @@ def process_registration(
             continue
 
         cbsd_id = _make_cbsd_id(fcc_id, serial)
-        existing = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if existing:
-            existing.user_id = request["userId"]
-            existing.cbsd_category = merged.get("cbsdCategory")
-            existing.registration_json = json.dumps(merged)
-            if certificate_hash is not None:
-                existing.certificate_hash = certificate_hash
-            _terminate_grants(db, cbsd_id)
-        else:
-            db.add(
-                Cbsd(
-                    cbsd_id=cbsd_id,
-                    fcc_id=fcc_id,
-                    user_id=request["userId"],
-                    cbsd_serial_number=serial,
-                    cbsd_category=merged.get("cbsdCategory"),
-                    certificate_hash=certificate_hash,
-                    registration_json=json.dumps(merged),
-                )
-            )
+        from sqlalchemy.exc import IntegrityError
 
-        responses.append(
-            {
-                "cbsdId": cbsd_id,
-                "response": {"responseCode": SUCCESS},
-            }
+        from services.concurrency import (
+            acquire_cbsd_xact_lock,
+            exclusive_cbsd,
+            lock_cbsd_row,
         )
+
+        with exclusive_cbsd(cbsd_id):
+            try:
+                acquire_cbsd_xact_lock(db, cbsd_id)
+                existing = lock_cbsd_row(db, cbsd_id)
+                if existing:
+                    from services.cbsd_auth import cbsd_certificate_mismatch
+                    from services.lifecycle import (
+                        CbsdEvent,
+                        CbsdState,
+                        apply_cbsd_state,
+                        evaluate_cbsd_transition,
+                        resolve_cbsd_state,
+                    )
+
+                    # Prevent certificate takeover of an already-bound cbsdId.
+                    if cbsd_certificate_mismatch(existing, certificate_hash):
+                        responses.append({"response": {"responseCode": INVALID_PARAM}})
+                        continue
+                    outcome = evaluate_cbsd_transition(
+                        CbsdEvent.REREGISTER,
+                        current=resolve_cbsd_state(existing),
+                        payload=request,
+                    )
+                    if not outcome.ok:
+                        responses.append(
+                            {"response": {"responseCode": outcome.response_code}}
+                        )
+                        continue
+                    existing.user_id = request["userId"]
+                    existing.cbsd_category = merged.get("cbsdCategory")
+                    existing.registration_json = json.dumps(merged)
+                    if certificate_hash is not None:
+                        existing.certificate_hash = certificate_hash
+                    apply_cbsd_state(existing, CbsdState.REGISTERED)
+                    _terminate_grants(db, cbsd_id)
+                else:
+                    from services.lifecycle import (
+                        CbsdEvent,
+                        CbsdState,
+                        evaluate_cbsd_transition,
+                    )
+
+                    outcome = evaluate_cbsd_transition(
+                        CbsdEvent.REGISTER,
+                        current=CbsdState.UNREGISTERED,
+                        payload=request,
+                    )
+                    if not outcome.ok:
+                        responses.append(
+                            {"response": {"responseCode": outcome.response_code}}
+                        )
+                        continue
+                    db.add(
+                        Cbsd(
+                            cbsd_id=cbsd_id,
+                            fcc_id=fcc_id,
+                            user_id=request["userId"],
+                            cbsd_serial_number=serial,
+                            cbsd_category=merged.get("cbsdCategory"),
+                            certificate_hash=certificate_hash,
+                            lifecycle_state=CbsdState.REGISTERED.value,
+                            registration_json=json.dumps(merged),
+                        )
+                    )
+                    try:
+                        # Surface unique races (multi-worker create) as protocol 103.
+                        db.flush()
+                    except IntegrityError:
+                        db.rollback()
+                        responses.append(
+                            {"response": {"responseCode": INVALID_PARAM}}
+                        )
+                        continue
+
+                responses.append(
+                    {
+                        "cbsdId": cbsd_id,
+                        "response": {"responseCode": SUCCESS},
+                    }
+                )
+            finally:
+                db.commit()
 
     # MES_1: when triggered, ask for WITHOUT_GRANT measurement reports.
     from services.meas_report import (

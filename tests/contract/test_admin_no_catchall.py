@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
@@ -15,12 +15,19 @@ from services.admin_api_inventory import (
 )
 from services.blacklist_service import add_fcc_id_serial_blacklist
 from services.registration_service import BLACKLISTED, process_registration
-from database import SessionLocal, init_db
+import database
+from tests.support.repo import REPO_ROOT as ROOT
 
-ROOT = Path(__file__).resolve().parents[1]
 ADMIN_ROUTES = ROOT / "routes" / "admin_routes.py"
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_process_db_schema():
+    """Module-level TestClient shares process engine; rebind tests may leave it empty."""
+    database.init_db(retries=1, delay_seconds=0)
+    yield
 
 
 def test_admin_stub_catch_all_removed_from_source():
@@ -82,8 +89,9 @@ def test_blacklist_fcc_id_and_serial_requires_schema_fields():
 
 
 def test_blacklisted_fcc_serial_rejects_registration():
-    init_db()
-    db = SessionLocal()
+    # Prefer database.SessionLocal after rebind_engine (module-level imports go stale).
+    database.init_db()
+    db = database.SessionLocal()
     try:
         from models.models import FccIdRecord, UserIdRecord
         from services.registration_service import SUCCESS
@@ -125,8 +133,8 @@ def test_blacklisted_fcc_serial_rejects_registration():
 
 
 def test_is_cbsd_blacklisted_covers_fcc_only_and_pair():
-    init_db()
-    db = SessionLocal()
+    database.init_db()
+    db = database.SessionLocal()
     try:
         from services.blacklist_service import (
             add_fcc_id_blacklist,

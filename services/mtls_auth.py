@@ -20,8 +20,11 @@ from models.models import PeerSas
 
 logger = logging.getLogger(__name__)
 
-# WInnForum certificate policy OIDs (cert/openssl.cnf)
+# WInnForum certificate policy OIDs (WINNF-TS-0022 / cert/openssl.cnf)
 OID_ROLE_SAS = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.1")
+OID_ROLE_INSTALLER = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.2")
+OID_ROLE_CBSD = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.3")
+OID_ROLE_DOMAIN_PROXY = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.4")
 OID_ZONE = ObjectIdentifier("1.3.6.1.4.1.46609.1.2")
 
 # Ciphers allowed on the SAS↔SAS / CBSD interface (mirrors Fake SAS).
@@ -69,7 +72,8 @@ def load_client_certificate(request: Request) -> Optional[x509.Certificate]:
         return None
 
 
-def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
+def certificate_policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
+    """Return certificatePolicies OIDs present on ``cert`` (empty if missing)."""
     try:
         ext = cert.extensions.get_extension_for_oid(ExtensionOID.CERTIFICATE_POLICIES)
     except x509.ExtensionNotFound:
@@ -78,6 +82,11 @@ def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
     for policy in ext.value:
         oids.add(policy.policy_identifier)
     return oids
+
+
+def _policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
+    """Backward-compatible alias for ``certificate_policy_oids``."""
+    return certificate_policy_oids(cert)
 
 
 def _has_client_auth(cert: x509.Certificate) -> bool:
@@ -147,27 +156,56 @@ def require_peer_sas(
     return cert_hash
 
 
-def patch_uvicorn_for_client_cert() -> None:
-    """Expose the asyncio transport on the ASGI scope (uvicorn does not by default)."""
+def _patch_request_response_cycle(module_path: str, *, transport_arg: str) -> bool:
+    """Patch a uvicorn HTTP ``RequestResponseCycle`` so ``scope['transport']`` is set.
+
+    ``uvicorn[standard]`` defaults to httptools; the historical h11-only patch left
+    mTLS fingerprint binding inert under the default HTTP implementation.
+    """
     try:
-        from uvicorn.protocols.http.h11_impl import RequestResponseCycle
+        import importlib
+
+        module = importlib.import_module(module_path)
+        cycle_cls = module.RequestResponseCycle
     except Exception:
-        logger.warning("Could not patch uvicorn h11 for client cert access")
-        return
+        logger.warning("Could not import %s for client cert access", module_path)
+        return False
 
-    if getattr(RequestResponseCycle.__init__, "_sas_mtls_patched", False):
-        return
+    if getattr(cycle_cls.__init__, "_sas_mtls_patched", False):
+        return True
 
-    original_init = RequestResponseCycle.__init__
+    original_init = cycle_cls.__init__
 
-    def patched_init(self, scope, conn, transport, *args, **kwargs):
+    def patched_init(self, *args, **kwargs):
+        scope = args[0] if args else kwargs.get("scope")
+        transport = kwargs.get("transport")
+        if transport is None:
+            # h11: (scope, conn, transport, ...); httptools: (scope, transport, ...)
+            if transport_arg == "h11" and len(args) >= 3:
+                transport = args[2]
+            elif transport_arg == "httptools" and len(args) >= 2:
+                transport = args[1]
         if transport is not None and isinstance(scope, dict):
             scope["transport"] = transport
-        return original_init(self, scope, conn, transport, *args, **kwargs)
+        return original_init(self, *args, **kwargs)
 
     patched_init._sas_mtls_patched = True  # type: ignore[attr-defined]
-    RequestResponseCycle.__init__ = patched_init  # type: ignore[method-assign]
-    logger.info("Patched uvicorn RequestResponseCycle for mTLS client cert access")
+    cycle_cls.__init__ = patched_init  # type: ignore[method-assign]
+    logger.info("Patched %s.RequestResponseCycle for mTLS client cert access", module_path)
+    return True
+
+
+def patch_uvicorn_for_client_cert() -> None:
+    """Expose the asyncio transport on the ASGI scope (uvicorn does not by default)."""
+    patched_any = False
+    patched_any |= _patch_request_response_cycle(
+        "uvicorn.protocols.http.h11_impl", transport_arg="h11"
+    )
+    patched_any |= _patch_request_response_cycle(
+        "uvicorn.protocols.http.httptools_impl", transport_arg="httptools"
+    )
+    if not patched_any:
+        logger.warning("Could not patch uvicorn HTTP implementations for client cert access")
 
 
 def _load_crl_pems(crl_dir: Path, ctx: ssl.SSLContext) -> None:

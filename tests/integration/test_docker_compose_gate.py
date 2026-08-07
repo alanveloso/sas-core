@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.support.repo import REPO_ROOT as ROOT
 
 
 def _require_docker_compose() -> None:

@@ -1,0 +1,277 @@
+# WInnForum SAS UUT compliance matrix (case / family baseline).
+# Rule: status=passing is forbidden unless evidence is a stored harness/compliance artifact
+# under docs/compliance/evidence/ or artifacts/winnforum/.
+# Family rollups use id FAMILY.<code> (never WINNF.FT.S.* without a case number).
+# Do not mark cases passing from local unit tests alone.
+version: 1
+cases:
+  # Family roll-ups from docs/compliance/MATRIZ_SUITES_SAS_WINNFORUM.csv (no PASS claims).
+  - id: FAMILY.REG
+    family: REG
+    case_scope: family
+    status: failing
+    implementation:
+      - services/registration_service.py
+      - services/blacklist_service.py
+      - routes/cbsd_routes.py
+      - schemas/registration.py
+      - schemas/common.py
+      - services/cbsd_batch.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+      - tests/contract/test_cbsd_schema_validation.py
+      - tests/contract/test_cbsd_version_dispatch.py
+    evidence: null
+    notes: "CSV Parcial ~45%; CPI/PKI/HAAT gaps. P2-001 schemas; P2-002 version→100 on all procedures."
+
+  - id: FAMILY.SIQ
+    family: SIQ
+    case_scope: family
+    status: failing
+    implementation:
+      - services/spectrum_inquiry_service.py
+      - schemas/spectrum_inquiry.py
+      - schemas/common.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+    evidence: null
+    notes: "CSV Parcial ~55%; RF validation simplified. P2-001: FrequencyRange + inquiredSpectrum cardinality."
+
+  - id: FAMILY.GRA
+    family: GRA
+    case_scope: family
+    status: failing
+    implementation:
+      - services/grant_service.py
+      - schemas/grant.py
+      - schemas/common.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+    evidence: null
+    notes: "CSV Parcial ~55%; IAP/aggregate gaps. P2-005 renew; P2-006 locks (no harness PASS)."
+
+  - id: FAMILY.HBT
+    family: HBT
+    case_scope: family
+    status: failing
+    implementation:
+      - services/heartbeat_service.py
+      - schemas/heartbeat.py
+      - schemas/common.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+      - tests/contract/test_cbsd_schema_validation.py
+    evidence: null
+    notes: "CSV Parcial ~55%; P2-003…P2-006 lifecycle/renew/locks. Harness cases still failing."
+
+  - id: WINNF.FT.S.HBT.3
+    family: HBT
+    case_scope: case
+    status: failing
+    implementation:
+      - services/cbsd_version.py
+      - routes/cbsd_version_routes.py
+      - services/heartbeat_service.py
+      - schemas/heartbeat.py
+    tests:
+      - tests/contract/test_cbsd_version_dispatch.py
+      - tests/unit/test_cbsd_version.py
+    evidence: null
+    notes: "Unsupported-version path unified in P2-002 (responseCode 100 + past transmitExpireTime). Official harness evidence still pending."
+
+  - id: FAMILY.RLQ
+    family: RLQ
+    case_scope: family
+    status: failing
+    implementation:
+      - services/relinquishment_service.py
+      - schemas/relinquishment.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+    evidence: null
+    notes: "CSV Parcial ~60%. P2-003…P2-006 cert-under-lock/lifecycle/serialized RLQ."
+
+  - id: FAMILY.DRG
+    family: DRG
+    case_scope: family
+    status: failing
+    implementation:
+      - services/deregistration_service.py
+      - schemas/deregistration.py
+    tests:
+      - tests/unit/test_cbsd_schemas.py
+    evidence: null
+    notes: "CSV Parcial ~60%; P2-003/P2-004/P2-006 cert-under-lock/lifecycle/CBSD lock."
+
+  - id: FAMILY.FAD
+    family: FAD
+    case_scope: family
+    status: failing
+    implementation:
+      - services/fad_service.py
+    tests: []
+    evidence: null
+    notes: "CSV Parcial ~45%."
+
+  - id: FAMILY.SSS
+    family: SSS
+    case_scope: family
+    status: failing
+    implementation:
+      - services/mtls_auth.py
+      - main.py
+    tests:
+      - tests/security/test_certs_and_doctor.py
+    evidence: null
+    notes: "CSV Parcial ~50%; PKI/cipher matrix incomplete."
+
+  - id: FAMILY.EXZ
+    family: EXZ
+    case_scope: family
+    status: failing
+    implementation:
+      - services/exclusion_zone_service.py
+    tests: []
+    evidence: null
+    notes: "CSV Parcial ~50%."
+
+  - id: FAMILY.BPR
+    family: BPR
+    case_scope: family
+    status: failing
+    implementation:
+      - services/border_protection.py
+    tests: []
+    evidence: null
+    notes: "CSV Parcial ~40%; external reference-model dependency."
+
+  - id: FAMILY.EPR
+    family: EPR
+    case_scope: family
+    status: failing
+    implementation:
+      - services/heartbeat_service.py
+    tests: []
+    evidence: null
+    notes: "CSV Parcial ~35%; ESC/peer rules simplified."
+
+  - id: FAMILY.QPR
+    family: QPR
+    case_scope: family
+    status: failing
+    implementation:
+      - services/quiet_zone_service.py
+    tests: []
+    evidence: null
+    notes: "CSV Parcial ~40%."
+
+  - id: FAMILY.WDB
+    family: WDB
+    case_scope: family
+    status: failing
+    implementation:
+      - services/database_sync_service.py
+      - services/pal_service.py
+    tests: []
+    evidence: null
+    notes: "CSV Parcial ~35%."
+
+  - id: FAMILY.FDB
+    family: FDB
+    case_scope: family
+    status: failing
+    implementation:
+      - services/federal_db_service.py
+      - services/cpas_service.py
+    tests:
+      - tests/unit/test_cpas_execution_mode.py
+    evidence: null
+    notes: "CSV Parcial ~35%; CPAS certification mode is orchestration only."
+
+  - id: FAMILY.SCS
+    family: SCS
+    case_scope: family
+    status: untested
+    implementation:
+      - services/mtls_auth.py
+    tests:
+      - tests/security/test_certs_and_doctor.py
+    evidence: null
+    notes: "CSV Ausente/parcial ~20%."
+
+  - id: FAMILY.SDS
+    family: SDS
+    case_scope: family
+    status: untested
+    implementation:
+      - services/mtls_auth.py
+    tests: []
+    evidence: null
+    notes: "CSV Ausente/parcial ~15%."
+
+  - id: FAMILY.GPR
+    family: GPR
+    case_scope: family
+    status: untested
+    implementation: []
+    tests: []
+    evidence: null
+    notes: "CSV Ausente ~5%."
+
+  - id: FAMILY.PCR
+    family: PCR
+    case_scope: family
+    status: failing
+    implementation:
+      - routes/admin_routes.py
+      - services/pal_service.py
+    tests: []
+    evidence: null
+    notes: "CSV Stub ~15%; PPA creation incomplete."
+
+  - id: FAMILY.PAT
+    family: PAT
+    case_scope: family
+    status: blocked
+    implementation:
+      - routes/admin_routes.py
+    tests:
+      - tests/contract/test_admin_no_catchall.py
+    evidence: null
+    notes: "Admin query/propagation_and_antenna_model returns HTTP 501; calculation absent."
+
+  - id: FAMILY.IPR
+    family: IPR
+    case_scope: family
+    status: untested
+    implementation: []
+    tests: []
+    evidence: null
+    notes: "CSV Parcial muito baixo ~15%."
+
+  - id: FAMILY.PPR
+    family: PPR
+    case_scope: family
+    status: untested
+    implementation: []
+    tests: []
+    evidence: null
+    notes: "CSV Ausente ~10%."
+
+  - id: FAMILY.FPR
+    family: FPR
+    case_scope: family
+    status: untested
+    implementation: []
+    tests: []
+    evidence: null
+    notes: "CSV Parcial muito baixo ~20%."
+
+  - id: FAMILY.MCP
+    family: MCP
+    case_scope: family
+    status: untested
+    implementation: []
+    tests: []
+    evidence: null
+    notes: "CSV Ausente ~5%."
