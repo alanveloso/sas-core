@@ -38,6 +38,10 @@ ECC_CIPHERS = [
     "ECDHE-ECDSA-AES256-GCM-SHA384",
 ]
 ALLOWED_CIPHERS = RSA_CIPHERS + ECC_CIPHERS
+# SSS_14 and related negatives — must never be enabled on either listener.
+FORBIDDEN_CIPHERS = [
+    "ECDHE-RSA-AES256-GCM-SHA384",
+]
 
 
 def sha1_fingerprint_colon(cert: x509.Certificate) -> str:
@@ -244,10 +248,18 @@ def create_mtls_ssl_context(
     ciphers: list[str] | None = None,
 ) -> ssl.SSLContext:
     """
-    Build a TLS 1.2+ server context with client-certificate verification (mTLS).
+    Build a TLS 1.2-only server context with client-certificate verification (mTLS).
 
     Mirrors Fake SAS: CERT_REQUIRED, WInnForum CA, restricted cipher list.
+    Rejects any cipher listed in ``FORBIDDEN_CIPHERS`` (e.g. SSS_14).
     """
+    selected = list(ciphers) if ciphers is not None else list(RSA_CIPHERS)
+    blocked = [name for name in selected if name in FORBIDDEN_CIPHERS]
+    if blocked:
+        raise ValueError(
+            "forbidden TLS cipher(s) requested for mTLS context: "
+            + ", ".join(blocked)
+        )
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.maximum_version = ssl.TLSVersion.TLSv1_2
@@ -256,5 +268,5 @@ def create_mtls_ssl_context(
     if crl_dir is not None:
         _load_crl_pems(crl_dir, ctx)
     ctx.load_cert_chain(certfile=str(certfile), keyfile=str(keyfile))
-    ctx.set_ciphers(":".join(ciphers or RSA_CIPHERS))
+    ctx.set_ciphers(":".join(selected))
     return ctx

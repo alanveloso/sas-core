@@ -123,12 +123,14 @@ cases:
     implementation:
       - services/mtls_auth.py
       - services/certificate_policy.py
+      - services/tls_matrix.py
       - main.py
     tests:
       - tests/security/test_certs_and_doctor.py
+      - tests/security/test_tls_matrix.py
       - tests/unit/test_certificate_policy.py
-    evidence: docs/compliance/evidence/P3-002_certificate_policies.md
-    notes: "CSV Parcial; P3-002 ROLE_SAS validators local (not harness PASS); TLS matrix P3-003."
+    evidence: docs/compliance/evidence/P3-003_tls_matrix.md
+    notes: "CSV Parcial; P3-002/P3-003 local (not harness PASS); P3-004 oficial pendente."
 
   - id: FAMILY.EXZ
     family: EXZ
@@ -201,12 +203,14 @@ cases:
       - services/mtls_auth.py
       - services/certificate_policy.py
       - services/cbsd_auth.py
+      - services/tls_matrix.py
     tests:
       - tests/security/test_certs_and_doctor.py
+      - tests/security/test_tls_matrix.py
       - tests/unit/test_certificate_policy.py
       - tests/unit/test_cbsd_auth.py
-    evidence: docs/compliance/evidence/P3-002_certificate_policies.md
-    notes: "CSV Ausente/parcial; P3-002 CBSD validators local (not harness PASS)."
+    evidence: docs/compliance/evidence/P3-003_tls_matrix.md
+    notes: "CSV Ausente/parcial; P3-002/P3-003 local (not harness PASS)."
 
   - id: FAMILY.SDS
     family: SDS
@@ -216,11 +220,13 @@ cases:
       - services/mtls_auth.py
       - services/certificate_policy.py
       - services/cbsd_auth.py
+      - services/tls_matrix.py
     tests:
+      - tests/security/test_tls_matrix.py
       - tests/unit/test_certificate_policy.py
       - tests/unit/test_cbsd_auth.py
-    evidence: docs/compliance/evidence/P3-002_certificate_policies.md
-    notes: "CSV Ausente/parcial; P3-002 Domain Proxy validators local (not harness PASS)."
+    evidence: docs/compliance/evidence/P3-003_tls_matrix.md
+    notes: "CSV Ausente/parcial; P3-002/P3-003 local (not harness PASS)."
 
   - id: FAMILY.GPR
     family: GPR
