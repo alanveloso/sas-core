@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     sas_admin_id: str = "sas_admin_id"
     fad_public_base: str = "https://localhost:9000"
     sas_sas_version: str = "v1.3"
+    # Peer FAD client (P5-002): TLS hostname check (default on). Set false only for
+    # lab peers whose leaf CN/SAN cannot match the injected URL host.
+    sas_fad_client_check_hostname: bool = True
     http_timeout_seconds: float = 30.0
     max_batch_size: int = 100
 
@@ -101,6 +104,17 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip().lower()
         return value
+
+    @field_validator("sas_fad_client_check_hostname", mode="before")
+    @classmethod
+    def _coerce_fad_check_hostname(cls, value: object) -> object:
+        if value is None or value == "":
+            return True
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
 
     @field_validator("certs_dir", mode="before")
     @classmethod

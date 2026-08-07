@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
-import ssl
 import threading
 from typing import Any
 
-import httpx
 from sqlalchemy.orm import Session
 
-from config import get_settings
-from models.models import Cbsd, Grant, PeerFadRecord, PeerSas
+from models.models import Cbsd, Grant, PeerFadRecord
+from services.fad_client_service import run_peer_fad_sync
 from services.fad_service import fad_cbsd_id
 from services.meas_report import clear_admin_flags, set_admin_flag
-from services.mtls_auth import ALLOWED_CIPHERS
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +52,8 @@ def trigger_daily_activities(db: Session) -> None:
 
     Duplicate calls while CPAS is already running are no-ops.
     """
+    from config import get_settings
+
     with _cpas_dispatch_lock:
         if is_cpas_running(db):
             return
@@ -116,120 +115,6 @@ def execute_cpas_pipeline(db: Session) -> None:
     run_peer_fad_sync(db)
     apply_peer_conflict_to_local_grants(db)
     mark_scheduled_success_if_applicable(db)
-
-
-def _client_ssl_context() -> ssl.SSLContext:
-    """mTLS client context compatible with SasTestHarnessServer / WINNF ciphers."""
-    settings = get_settings()
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    ctx.check_hostname = False  # Peer URLs use localhost / harness hostnames.
-    ctx.verify_mode = ssl.CERT_REQUIRED
-    ctx.load_verify_locations(cafile=str(settings.resolved_ssl_ca_certs))
-    ctx.load_cert_chain(
-        certfile=str(settings.resolved_client_certfile),
-        keyfile=str(settings.resolved_client_keyfile),
-    )
-    ctx.set_ciphers(":".join(ALLOWED_CIPHERS))
-    return ctx
-
-
-def _httpx_client() -> httpx.Client:
-    settings = get_settings()
-    return httpx.Client(
-        verify=_client_ssl_context(),
-        timeout=settings.http_timeout_seconds,
-    )
-
-
-def run_peer_fad_sync(db: Session) -> None:
-    """GET dump + cbsd activity files from every injected peer and persist records."""
-    peers = db.query(PeerSas).all()
-    if not peers:
-        return
-
-    with _httpx_client() as client:
-        for peer in peers:
-            try:
-                _sync_one_peer(db, client, peer)
-            except Exception:
-                logger.exception(
-                    "Failed to sync peer SAS id=%s url=%s", peer.id, peer.url
-                )
-    db.commit()
-
-
-def _sync_one_peer(db: Session, client: httpx.Client, peer: PeerSas) -> None:
-    base = (peer.url or "").rstrip("/")
-    if not base:
-        return
-
-    dump_url = f"{base}/dump"
-    resp = client.get(dump_url)
-    resp.raise_for_status()
-    manifesto = resp.json()
-    files = manifesto.get("files") or []
-
-    for file_meta in files:
-        if not isinstance(file_meta, dict):
-            continue
-        record_type = file_meta.get("recordType")
-        # Focus on CBSD records for GRA_5 / GRA_6; still store zone/esc for later.
-        if record_type == "coordination":
-            continue
-        file_url = file_meta.get("url")
-        if not file_url:
-            continue
-        file_resp = client.get(file_url)
-        file_resp.raise_for_status()
-        envelope = file_resp.json()
-        records = envelope.get("recordData") or []
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            record_id = str(record.get("id") or "")
-            if not record_id:
-                continue
-            _upsert_peer_record(
-                db,
-                peer_sas_id=peer.id,
-                record_type=str(record_type or "unknown"),
-                record_id=record_id,
-                record=record,
-            )
-
-
-def _upsert_peer_record(
-    db: Session,
-    *,
-    peer_sas_id: int,
-    record_type: str,
-    record_id: str,
-    record: dict[str, Any],
-) -> None:
-    existing = (
-        db.query(PeerFadRecord)
-        .filter_by(
-            peer_sas_id=peer_sas_id,
-            record_type=record_type,
-            record_id=record_id,
-        )
-        .first()
-    )
-    payload = json.dumps(record)
-    if existing:
-        existing.data_json = payload
-    else:
-        db.add(
-            PeerFadRecord(
-                peer_sas_id=peer_sas_id,
-                record_type=record_type,
-                record_id=record_id,
-                data_json=payload,
-            )
-        )
 
 
 def _peer_cbsd_records(db: Session) -> list[dict[str, Any]]:
