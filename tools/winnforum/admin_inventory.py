@@ -60,6 +60,10 @@ _UUT_DOMAIN_TOKENS: tuple[str, ...] = (
     "persist_exclusion_zone",
     "enable_ntia_exclusion_zones",
     "known_pal_ids",
+    "load_dpas",
+    "activate_dpa",
+    "bulk_dpa_activation",
+    "deactivate_dpa",
     "FccIdRecord",
     "PeerSas",
     "ConditionalRegistration",
@@ -324,15 +328,7 @@ def classify_uut_route(
 
     if "status_code=501" in block or "HTTP_501" in block:
         return "unimplemented", "returns 501"
-    if rel == "trigger/load_dpas" and (
-        "trigger_load_dpas" in block
-        or (
-            block.count("return") == 1
-            and "_empty_ok" in block
-            and "db." not in block
-            and "service" not in block.lower()
-        )
-    ):
+    if rel == "trigger/load_dpas" and "load_dpas" not in block:
         return "stub", "HTTP 200 empty; no DPA catalogue load"
     if "reset_db" in block:
         return "implemented", "resets database"

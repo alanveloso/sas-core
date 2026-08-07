@@ -369,14 +369,14 @@ methods:
     all ESC-monitored DPAs on all channels else deactivate all ESC-monitored DPAs on all channels'
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/bulk_dpa_activation)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - GRA
   - HBT
   - IPR
   - MCP
   - SIQ
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerDailyActivitiesImmediately
   endpoint: /admin/trigger/daily_activities_immediately
   http_method: POST
@@ -409,14 +409,14 @@ methods:
     highFrequency'
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/dpa_activation)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - GRA
   - HBT
   - IPR
   - MCP
   - SIQ
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerDpaDeactivation
   endpoint: /admin/trigger/dpa_deactivation
   http_method: POST
@@ -426,10 +426,10 @@ methods:
     highFrequency'
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/dpa_deactivation)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - MCP
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerEnableNtiaExclusionZones
   endpoint: /admin/trigger/enable_ntia_15_517
   http_method: POST
@@ -493,14 +493,14 @@ methods:
   request_schema: (none)
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/load_dpas)
-  uut_status: stub
+  uut_status: implemented
   consumers:
   - GRA
   - HBT
   - IPR
   - MCP
   - SIQ
-  notes: HTTP 200 empty; no DPA catalogue load
+  notes: mutates domain tables/services
 - method: TriggerMeasurementReportHeartbeat
   endpoint: /admin/trigger/meas_report_in_heartbeat_response
   http_method: POST
@@ -542,4 +542,3 @@ gaps:
   impl_paths_not_in_official_inventory: []
   stub_or_unimplemented:
   - /admin/query/propagation_and_antenna_model
-  - /admin/trigger/load_dpas

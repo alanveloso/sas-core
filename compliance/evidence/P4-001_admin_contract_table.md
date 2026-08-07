@@ -22,16 +22,16 @@
 | `QueryPropagationAndAntennaModel` | `/admin/query/propagation_and_antenna_model` | A dictionary with multiple key-value pairs where the keys are reliabilityLevel:  | 501 Not Implemented | read-only status/query | unimplemented | PAT |
 | `Reset` | `/admin/reset` | (none) | empty_200 | full UUT baseline reset | implemented | BPR,DRG,EPR,EXZ,FAD,FDB,FPR,GPR,GRA,HBT,HELPER,IPR,MCP,MES,PAT,PPR,QPR,REG,RLQ,SIQ,WDB |
 | `ResetEscZone` | `/admin/trigger/esc_reset` | (unspecified) | empty_200 | trigger/esc_reset | thin | — |
-| `TriggerBulkDpaActivation` | `/admin/trigger/bulk_dpa_activation` | A dictionary with the following key-value pairs: "activate": (boolean) if True,  | empty_200 | trigger side-effect (trigger/bulk_dpa_ac | thin | GRA,HBT,IPR,MCP,SIQ |
+| `TriggerBulkDpaActivation` | `/admin/trigger/bulk_dpa_activation` | A dictionary with the following key-value pairs: "activate": (boolean) if True,  | empty_200 | trigger side-effect (trigger/bulk_dpa_ac | implemented | GRA,HBT,IPR,MCP,SIQ |
 | `TriggerDailyActivitiesImmediately` | `/admin/trigger/daily_activities_immediately` | (none) | empty_200 | trigger side-effect (trigger/daily_activ | implemented | EXZ,FAD,FDB,FPR,GPR,GRA,HBT,HELPER,IPR,MCP,PPR,SIQ,WDB |
-| `TriggerDpaActivation` | `/admin/trigger/dpa_activation` | A dictionary with the following key-value pairs: "dpaId": (string) it represents | empty_200 | trigger side-effect (trigger/dpa_activat | thin | GRA,HBT,IPR,MCP,SIQ |
-| `TriggerDpaDeactivation` | `/admin/trigger/dpa_deactivation` | A dictionary with the following key-value pairs: "dpaId": (string) it represents | empty_200 | trigger side-effect (trigger/dpa_deactiv | thin | MCP |
+| `TriggerDpaActivation` | `/admin/trigger/dpa_activation` | A dictionary with the following key-value pairs: "dpaId": (string) it represents | empty_200 | trigger side-effect (trigger/dpa_activat | implemented | GRA,HBT,IPR,MCP,SIQ |
+| `TriggerDpaDeactivation` | `/admin/trigger/dpa_deactivation` | A dictionary with the following key-value pairs: "dpaId": (string) it represents | empty_200 | trigger side-effect (trigger/dpa_deactiv | implemented | MCP |
 | `TriggerEnableNtiaExclusionZones` | `/admin/trigger/enable_ntia_15_517` | (none) | empty_200 | trigger side-effect (trigger/enable_ntia | implemented | EXZ |
 | `TriggerEnableScheduledDailyActivities` | `/admin/trigger/enable_scheduled_daily_activities` | (none) | empty_200 | trigger side-effect (trigger/enable_sche | thin | FDB |
 | `TriggerEscDisconnect` | `/admin/trigger/disconnect_esc` | (none) | empty_200 | trigger side-effect (trigger/disconnect_ | thin | IPR |
 | `TriggerEscZone` | `/admin/trigger/esc_detection` | (unspecified) | empty_200 | trigger side-effect (trigger/esc_detecti | thin | — |
 | `TriggerFullActivityDump` | `/admin/trigger/create_full_activity_dump` | (none) | empty_200 | trigger side-effect (trigger/create_full | implemented | FAD,HELPER,SSS |
-| `TriggerLoadDpas` | `/admin/trigger/load_dpas` | (none) | empty_200 | trigger side-effect (trigger/load_dpas) | stub | GRA,HBT,IPR,MCP,SIQ |
+| `TriggerLoadDpas` | `/admin/trigger/load_dpas` | (none) | empty_200 | trigger side-effect (trigger/load_dpas) | implemented | GRA,HBT,IPR,MCP,SIQ |
 | `TriggerMeasurementReportHeartbeat` | `/admin/trigger/meas_report_in_heartbeat_response` | (none) | empty_200 | trigger side-effect (trigger/meas_report | thin | MES |
 | `TriggerMeasurementReportRegistration` | `/admin/trigger/meas_report_in_registration_response` | (none) | empty_200 | trigger side-effect (trigger/meas_report | thin | MES |
 | `TriggerPpaCreation` | `/admin/trigger/create_ppa` | A dictionary with multiple key-value pairs where the keys are cbsdIds: array of  | ppa_id string \| empty | trigger side-effect (trigger/create_ppa) | implemented | HELPER,PCR,WDB |

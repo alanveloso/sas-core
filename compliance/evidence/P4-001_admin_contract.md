@@ -51,9 +51,11 @@ env -u DATABASE_URL -u CERTS_DIR .venv/bin/pytest -q \
 
 | Endpoint | uut_status | Task |
 |---|---|---|
-| `/admin/trigger/load_dpas` | stub | P4-002 |
 | `/admin/query/propagation_and_antenna_model` | unimplemented (501) | PAT / P7 |
-| DPA act/bulk/deact, PPA, scheduled daily, DB URL | thin/partial | P4-002…P4-005 |
+| PPA / scheduled daily / DB URL inject | thin/partial | P4-003…P4-005 |
+
+`(load_dpas` stub removido em P4-002 — ver `P4-002_dpa_lifecycle.md`.)
+
 
 ## Escopo WInnForum
 

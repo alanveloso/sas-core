@@ -307,35 +307,33 @@ def get_daily_activities_status(db: Session = Depends(get_db)):
 
 
 @router.post("/trigger/load_dpas")
-def trigger_load_dpas():
+def trigger_load_dpas(db: Session = Depends(get_db)):
+    """Load ESC-monitored DPA catalogue from KML and activate all channels."""
+    from services.dpa_service import load_dpas
+
+    load_dpas(db)
     return _empty_ok()
 
 
 @router.post("/trigger/dpa_activation")
 async def trigger_dpa_activation(request: Request, db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_DPA_ACTIVE, set_admin_flag
+    """Activate one catalogue DPA on one validated channel."""
+    from services.dpa_service import activate_dpa
 
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    set_admin_flag(db, FLAG_DPA_ACTIVE, body if isinstance(body, dict) else {})
+    body = await _read_json_object(request)
+    activate_dpa(db, body)
     return _empty_ok()
 
 
 @router.post("/trigger/bulk_dpa_activation")
 async def trigger_bulk_dpa_activation(request: Request, db: Session = Depends(get_db)):
-    from services.meas_report import FLAG_DPA_ACTIVE, clear_admin_flags
+    """Bulk activate/deactivate all ESC-monitored DPAs on all catalogue channels."""
+    from services.dpa_service import bulk_dpa_activation
 
-    body: dict[str, Any] = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    # Deactivate clears stored DPA activations (HBT.12 / GRA prep).
-    if isinstance(body, dict) and body.get("activate") is False:
-        clear_admin_flags(db, FLAG_DPA_ACTIVE)
+    body = await _read_json_object(request)
+    raw = body.get("activate") if isinstance(body, dict) else None
+    activate = raw if isinstance(raw, bool) else None
+    bulk_dpa_activation(db, activate=activate)
     return _empty_ok()
 
 
@@ -459,11 +457,11 @@ def trigger_esc_reset(db: Session = Depends(get_db)):
 
 @router.post("/trigger/dpa_deactivation")
 async def trigger_dpa_deactivation(request: Request, db: Session = Depends(get_db)):
-    """Explicit DPA deactivation path used by harness TriggerDpaDeactivation."""
-    from services.meas_report import FLAG_DPA_ACTIVE, clear_admin_flags
+    """Deactivate one DPA on one channel (selective; harness TriggerDpaDeactivation)."""
+    from services.dpa_service import deactivate_dpa
 
-    del request  # body unused; deactivation is unconditional for this trigger
-    clear_admin_flags(db, FLAG_DPA_ACTIVE)
+    body = await _read_json_object(request)
+    deactivate_dpa(db, body)
     return _empty_ok()
 
 

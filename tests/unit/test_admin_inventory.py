@@ -116,7 +116,7 @@ def test_build_inventory_synthetic_marks_stub_and_none_request(tmp_path: Path):
     by_name = {m.method: m for m in inv.methods}
     assert by_name["Reset"].request_schema == "(none)"
     assert by_name["TriggerLoadDpas"].request_schema == "(none)"
-    assert by_name["TriggerLoadDpas"].uut_status == "stub"
+    assert by_name["TriggerLoadDpas"].uut_status == "implemented"
     assert by_name["QueryPropagationAndAntennaModel"].uut_status == "unimplemented"
     assert "fccId" in by_name["InjectFccId"].request_schema
     assert "GRA" in by_name["Reset"].consumers
@@ -171,12 +171,15 @@ def test_build_inventory_has_required_columns_and_marks_stubs():
     assert reset.response_schema
     assert reset.state_changed
     assert reset.consumers
-    assert by_name["TriggerLoadDpas"].uut_status == "stub"
+    assert by_name["TriggerLoadDpas"].uut_status == "implemented"
     assert by_name["TriggerLoadDpas"].request_schema == "(none)"
     assert by_name["QueryPropagationAndAntennaModel"].uut_status == "unimplemented"
     assert by_name["InjectExclusionZone"].uut_status == "implemented"
     assert by_name["GetDailyActivitiesStatus"].uut_status == "implemented"
     assert by_name["GetDailyActivitiesStatus"].request_schema == "(none)"
+    assert by_name["TriggerDpaActivation"].uut_status == "implemented"
+    assert by_name["TriggerBulkDpaActivation"].uut_status == "implemented"
+    assert by_name["TriggerDpaDeactivation"].uut_status == "implemented"
     # Schema drift note for blacklist serial field
     assert "cbsdSerialNumber" in by_name["BlacklistByFccIdAndSerialNumber"].notes
 
