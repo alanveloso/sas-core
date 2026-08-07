@@ -483,27 +483,42 @@ def run(cfg: RunnerConfig) -> int:
         workdir = harness_workdir(harness_root)
 
         if cfg.start_uut:
+            uut_env = {
+                **os.environ,
+                "SAS_EXECUTION_MODE": os.environ.get(
+                    "SAS_EXECUTION_MODE", "certification"
+                ),
+                "CERTS_DIR": str(cfg.certs_dir or (cfg.repo_root / "certs")),
+                # Cat A outdoor HAAT (REG.7): USGS NED 1″ GridFloat tiles.
+                "SAS_TERRAIN_DIR": os.environ.get(
+                    "SAS_TERRAIN_DIR",
+                    str(cfg.repo_root / "data" / "geo" / "ned"),
+                ),
+            }
+            # Authorize the harness Admin client fingerprint without hardcoding
+            # basenames — derived from the resolved --client-cert / env path.
+            if client_cert is not None and client_cert.is_file():
+                try:
+                    from services.certificate_policy import fingerprint_from_cert_pem
+
+                    uut_env["SAS_ADMIN_CERT_SHA1"] = fingerprint_from_cert_pem(
+                        client_cert
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"admin fingerprint not set: {exc}")
+            # UUT must use the sas-core interpreter; harness may use another
+            # (e.g. harness .venv with pyOpenSSL).
+            uut_python = sys.executable
             uut_log_fh = open(artifacts.uut_log_path, "w", encoding="utf-8")
             uut_proc = subprocess.Popen(
-                [cfg.python_executable, "main.py"],
+                [uut_python, "main.py"],
                 cwd=str(cfg.repo_root),
                 stdout=uut_log_fh,
                 stderr=subprocess.STDOUT,
                 text=True,
-                env={
-                    **os.environ,
-                    "SAS_EXECUTION_MODE": os.environ.get(
-                        "SAS_EXECUTION_MODE", "certification"
-                    ),
-                    "CERTS_DIR": str(cfg.certs_dir or (cfg.repo_root / "certs")),
-                    # Cat A outdoor HAAT (REG.7): USGS NED 1″ GridFloat tiles.
-                    "SAS_TERRAIN_DIR": os.environ.get(
-                        "SAS_TERRAIN_DIR",
-                        str(cfg.repo_root / "data" / "geo" / "ned"),
-                    ),
-                },
+                env=uut_env,
             )
-            notes.append(f"started UUT pid={uut_proc.pid}")
+            notes.append(f"started UUT pid={uut_proc.pid} python={uut_python}")
         else:
             artifacts.uut_log_path.write_text(
                 "UUT not started by runner (--start-uut not set)\n", encoding="utf-8"

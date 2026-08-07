@@ -317,6 +317,10 @@ def test_require_admin_rejects_cbsd_role_under_tls(ca_material, monkeypatch: pyt
         "services.certificate_policy.load_runtime_trust_context",
         lambda: ([ca_cert], None),
     )
+    monkeypatch.setattr(
+        "services.certificate_policy.load_admin_allowed_fingerprints",
+        lambda: set(),
+    )
     leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     leaf = _issue_leaf(
         issuer_cert=ca_cert, issuer_key=ca_key, subject_key=leaf_key, role_oid=OID_ROLE_CBSD
@@ -331,6 +335,68 @@ def test_require_admin_rejects_cbsd_role_under_tls(ca_material, monkeypatch: pyt
     with pytest.raises(HTTPException) as exc:
         require_admin_certificate(req)
     assert exc.value.status_code == 403
+
+
+def test_require_admin_accepts_allowlisted_fingerprint_without_role_sas(
+    ca_material, monkeypatch: pytest.MonkeyPatch
+):
+    """Harness admin leaves may lack ROLE_SAS; fingerprint allowlist authorizes them."""
+    ca_cert, ca_key = ca_material
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf = _issue_leaf(
+        issuer_cert=ca_cert, issuer_key=ca_key, subject_key=leaf_key, role_oid=OID_ROLE_CBSD
+    )
+    fp = sha1_fingerprint_colon(leaf)
+    monkeypatch.setattr(
+        "services.certificate_policy.load_runtime_trust_context",
+        lambda: ([ca_cert], None),
+    )
+    monkeypatch.setattr(
+        "services.certificate_policy.load_admin_allowed_fingerprints",
+        lambda: {fp},
+    )
+    der = leaf.public_bytes(serialization.Encoding.DER)
+    ssl_object = MagicMock()
+    ssl_object.getpeercert.return_value = der
+    transport = MagicMock()
+    transport.get_extra_info.return_value = ssl_object
+    req = MagicMock()
+    req.scope = {"transport": transport}
+    require_admin_certificate(req)  # does not raise
+
+
+def test_validate_admin_accepts_allowlisted_cbsd_role(ca_material):
+    ca_cert, ca_key = ca_material
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf = _issue_leaf(
+        issuer_cert=ca_cert, issuer_key=ca_key, subject_key=leaf_key, role_oid=OID_ROLE_CBSD
+    )
+    fp = sha1_fingerprint_colon(leaf)
+    denied = validate_admin_certificate(leaf, trust_roots=[ca_cert], allowed_fingerprints=set())
+    assert not denied.ok
+    assert denied.reason is CertRejectReason.WRONG_ROLE
+    allowed = validate_admin_certificate(
+        leaf, trust_roots=[ca_cert], allowed_fingerprints={fp}
+    )
+    assert allowed.ok, allowed.reason
+
+
+def test_load_admin_allowed_fingerprints_normalizes_and_rejects_garbage(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from config import get_settings
+    from services.certificate_policy import load_admin_allowed_fingerprints
+
+    monkeypatch.setenv(
+        "SAS_ADMIN_CERT_SHA1",
+        "5672624859c96704399136974a89ed19ac1d33f3, not-a-fp, AA:BB",
+    )
+    get_settings.cache_clear()
+    try:
+        fps = load_admin_allowed_fingerprints()
+        assert fps == {"56:72:62:48:59:C9:67:04:39:91:36:97:4A:89:ED:19:AC:1D:33:F3"}
+    finally:
+        get_settings.cache_clear()
 
 
 def test_load_runtime_trust_context_none_without_ca(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -213,8 +213,14 @@ def _validate_leaf(
     intermediates: Sequence[x509.Certificate] | None = None,
     crls: Sequence[x509.CertificateRevocationList] | None = None,
     blacklisted_fingerprints: AbstractSet[str] | None = None,
+    allowed_fingerprints: AbstractSet[str] | None = None,
 ) -> CertValidationResult:
-    """Shared leaf checks + role / ZONE policy gate."""
+    """Shared leaf checks + role / ZONE policy gate.
+
+    When ``allowed_fingerprints`` is set, a matching SHA-1 fingerprint satisfies
+    the role gate even if ``required_role`` is absent (used for Admin clients
+    provisioned without ROLE_SAS, e.g. harness admin leaves).
+    """
     clock = _utc_now(now)
 
     temporal = _check_temporal(cert, clock)
@@ -234,13 +240,18 @@ def _validate_leaf(
         return CertValidationResult(ok=False, reason=CertRejectReason.BAD_KEY_USAGE)
 
     policies = certificate_policy_oids(cert)
-    if required_role not in policies:
-        return CertValidationResult(ok=False, reason=CertRejectReason.WRONG_ROLE)
     if OID_ZONE in policies:
         return CertValidationResult(ok=False, reason=CertRejectReason.ZONE_POLICY)
 
+    fingerprint = sha1_fingerprint_colon(cert).upper()
+    role_ok = required_role in policies
+    fp_allow = bool(allowed_fingerprints) and fingerprint in {
+        item.upper() for item in allowed_fingerprints
+    }
+    if not role_ok and not fp_allow:
+        return CertValidationResult(ok=False, reason=CertRejectReason.WRONG_ROLE)
+
     if blacklisted_fingerprints:
-        fingerprint = sha1_fingerprint_colon(cert).upper()
         normalized = {item.upper() for item in blacklisted_fingerprints}
         if fingerprint in normalized:
             return CertValidationResult(ok=False, reason=CertRejectReason.BLACKLISTED)
@@ -330,19 +341,56 @@ def validate_admin_certificate(
     intermediates: Sequence[x509.Certificate] | None = None,
     crls: Sequence[x509.CertificateRevocationList] | None = None,
     blacklisted_fingerprints: AbstractSet[str] | None = None,
+    allowed_fingerprints: AbstractSet[str] | None = None,
 ) -> CertValidationResult:
     """Validate an Admin API client certificate.
 
-    WInnForum harness admin clients use ROLE_SAS; there is no separate admin OID.
+    Prefer ROLE_SAS (no dedicated Admin OID in WINNF-TS-0022). Additional SHA-1
+    fingerprints from ``allowed_fingerprints`` or ``SAS_ADMIN_CERT_SHA1`` may
+    authorize a leaf that passes PKI hygiene without ROLE_SAS (harness admin
+    clients are often issued under another role OID).
     """
-    return validate_sas_certificate(
+    fingerprints = allowed_fingerprints
+    if fingerprints is None:
+        fingerprints = load_admin_allowed_fingerprints() or None
+    return _validate_leaf(
         cert,
+        required_role=OID_ROLE_SAS,
         now=now,
         trust_roots=trust_roots,
         intermediates=intermediates,
         crls=crls,
         blacklisted_fingerprints=blacklisted_fingerprints,
+        allowed_fingerprints=fingerprints,
     )
+
+
+def load_admin_allowed_fingerprints() -> set[str]:
+    """Parse ``SAS_ADMIN_CERT_SHA1`` (comma-separated ``AA:BB:...`` digests)."""
+    from config import get_settings
+
+    raw = (get_settings().sas_admin_cert_sha1 or "").strip()
+    if not raw:
+        return set()
+    out: set[str] = set()
+    for part in raw.split(","):
+        token = part.strip().upper().replace(" ", "")
+        if not token:
+            continue
+        hex_digits = token.replace(":", "")
+        if len(hex_digits) != 40 or any(c not in "0123456789ABCDEF" for c in hex_digits):
+            logger.warning("Ignoring invalid SAS_ADMIN_CERT_SHA1 token")
+            continue
+        # Canonical colon form for comparison with sha1_fingerprint_colon().
+        canon = ":".join(hex_digits[i : i + 2] for i in range(0, 40, 2))
+        out.add(canon)
+    return out
+
+
+def fingerprint_from_cert_pem(path: Path) -> str:
+    """Return colon-hex SHA-1 fingerprint for a PEM certificate file."""
+    cert = x509.load_pem_x509_certificate(path.read_bytes())
+    return sha1_fingerprint_colon(cert)
 
 
 def load_trust_roots(paths: Iterable[Path]) -> list[x509.Certificate]:

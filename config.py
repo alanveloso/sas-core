@@ -76,6 +76,13 @@ class Settings(BaseSettings):
         description="SAS_EXECUTION_MODE=production|certification",
     )
 
+    # Admin API: extra SHA-1 fingerprints (AA:BB:..., comma-separated) authorized
+    # in addition to ROLE_SAS. Used when the harness admin leaf lacks ROLE_SAS.
+    sas_admin_cert_sha1: str = Field(
+        default="",
+        description="SAS_ADMIN_CERT_SHA1 comma-separated admin client fingerprints.",
+    )
+
     # External federal / marketplace DB basic auth
     db_sync_username: str = "username"
     db_sync_password: str = "password"
