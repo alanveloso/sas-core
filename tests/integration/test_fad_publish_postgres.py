@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -26,7 +27,7 @@ from services.fad_service import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON = str(ROOT / ".venv" / "bin" / "python")
+PYTHON = sys.executable
 
 
 def _pg_url() -> str | None:

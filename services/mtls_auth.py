@@ -81,8 +81,11 @@ def certificate_policy_oids(cert: x509.Certificate) -> set[ObjectIdentifier]:
         ext = cert.extensions.get_extension_for_oid(ExtensionOID.CERTIFICATE_POLICIES)
     except x509.ExtensionNotFound:
         return set()
+    value = ext.value
+    if not isinstance(value, x509.CertificatePolicies):
+        return set()
     oids: set[ObjectIdentifier] = set()
-    for policy in ext.value:
+    for policy in value:
         oids.add(policy.policy_identifier)
     return oids
 

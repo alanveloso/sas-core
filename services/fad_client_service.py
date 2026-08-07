@@ -142,14 +142,19 @@ def _ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, *, allow_lab:
     # Cloud metadata addresses are never acceptable, even for "lab" peers.
     if str(ip) in {"169.254.169.254", "169.254.169.253"}:
         return True
-    if ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+    if ip.is_multicast or ip.is_unspecified:
         return True
+    # Lab peers may use loopback / RFC1918 / link-local. Check those before
+    # ``is_reserved``: Python flags IPv6 ``::1`` as both loopback and reserved,
+    # which otherwise breaks ``localhost`` on dual-stack CI runners (GHA).
     if ip.is_link_local:
         return not allow_lab
     if ip.is_loopback:
         return not allow_lab
     if ip.is_private:
         return not allow_lab
+    if ip.is_reserved:
+        return True
     return False
 
 

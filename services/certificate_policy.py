@@ -87,7 +87,10 @@ def _is_ca(cert: x509.Certificate) -> bool:
         bc = cert.extensions.get_extension_for_oid(ExtensionOID.BASIC_CONSTRAINTS)
     except x509.ExtensionNotFound:
         return False
-    return bool(bc.value.ca)
+    value = bc.value
+    if not isinstance(value, x509.BasicConstraints):
+        return False
+    return bool(value.ca)
 
 
 def _has_client_auth(cert: x509.Certificate) -> bool:
@@ -95,7 +98,10 @@ def _has_client_auth(cert: x509.Certificate) -> bool:
         eku = cert.extensions.get_extension_for_oid(ExtensionOID.EXTENDED_KEY_USAGE)
     except x509.ExtensionNotFound:
         return False
-    return ExtendedKeyUsageOID.CLIENT_AUTH in eku.value
+    value = eku.value
+    if not isinstance(value, x509.ExtendedKeyUsage):
+        return False
+    return ExtendedKeyUsageOID.CLIENT_AUTH in value
 
 
 def _has_digital_signature(cert: x509.Certificate) -> bool:
@@ -104,7 +110,10 @@ def _has_digital_signature(cert: x509.Certificate) -> bool:
     except x509.ExtensionNotFound:
         # Harness leaves always carry KeyUsage; absence is treated as failure.
         return False
-    return bool(ku.value.digital_signature)
+    value = ku.value
+    if not isinstance(value, x509.KeyUsage):
+        return False
+    return bool(value.digital_signature)
 
 
 def _key_type_allowed(cert: x509.Certificate) -> bool:
@@ -245,9 +254,9 @@ def _validate_leaf(
 
     fingerprint = sha1_fingerprint_colon(cert).upper()
     role_ok = required_role in policies
-    fp_allow = bool(allowed_fingerprints) and fingerprint in {
-        item.upper() for item in allowed_fingerprints
-    }
+    fp_allow = False
+    if allowed_fingerprints:
+        fp_allow = fingerprint in {item.upper() for item in allowed_fingerprints}
     if not role_ok and not fp_allow:
         return CertValidationResult(ok=False, reason=CertRejectReason.WRONG_ROLE)
 

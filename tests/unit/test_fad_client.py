@@ -300,6 +300,20 @@ def test_reject_public_peer_resolving_to_private(monkeypatch):
         )
 
 
+def test_localhost_lab_peer_allows_ipv6_loopback(monkeypatch):
+    """``::1`` is is_reserved+is_loopback; lab localhost peers must still work."""
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        assert host == "localhost"
+        return [
+            (0, 0, 0, "", ("::1", 0, 0, 0)),
+            (0, 0, 0, "", ("127.0.0.1", 0)),
+        ]
+
+    monkeypatch.setattr(fad_client.socket, "getaddrinfo", fake_getaddrinfo)
+    assert_url_allowed_for_peer(f"{PEER_BASE}/dump", PEER_BASE)
+
+
 def test_sync_persists_records_and_purges_absent(db_session):
     peer = PeerSas(certificate_hash="peer-a", url=PEER_BASE)
     db_session.add(peer)

@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -36,7 +37,7 @@ from services.cpas_service import (
 from services.fad_service import fad_cbsd_id, get_published_dump
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON = str(ROOT / ".venv" / "bin" / "python")
+PYTHON = sys.executable
 
 _TABLES = (
     "fad_files",
