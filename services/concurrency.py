@@ -27,9 +27,11 @@ from models.models import Cbsd, Grant
 _registry_guard = threading.Lock()
 _locks: dict[str, threading.RLock] = {}
 
-# Distinct namespaces so CBSD and grant advisory keys never collide.
+# Distinct namespaces so CBSD, grant and FAD advisory keys never collide.
 _ADVISORY_NS_CBSD = b"cbsd\0"
 _ADVISORY_NS_GRANT = b"grant\0"
+_ADVISORY_NS_FAD = b"fad\0"
+_FAD_PUBLISH_LOCK_NAME = "publish"
 
 
 def _lock_for(key: str) -> threading.RLock:
@@ -111,6 +113,17 @@ def acquire_grant_xact_lock(db: Session, grant_id: str) -> None:
     if not _supports_advisory_lock(db):
         return
     key = _advisory_key(_ADVISORY_NS_GRANT, grant_id)
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+
+
+def acquire_fad_publish_xact_lock(db: Session) -> None:
+    """Serialize Full Activity Dump publication across PostgreSQL workers.
+
+    Transaction-scoped; released on commit/rollback. No-op on non-PostgreSQL.
+    """
+    if not _supports_advisory_lock(db):
+        return
+    key = _advisory_key(_ADVISORY_NS_FAD, _FAD_PUBLISH_LOCK_NAME)
     db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
 
 

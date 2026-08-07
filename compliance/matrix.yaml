@@ -112,9 +112,11 @@ cases:
     status: failing
     implementation:
       - services/fad_service.py
-    tests: []
-    evidence: null
-    notes: "CSV Parcial ~45%."
+      - routes/sas_sas_routes.py
+    tests:
+      - tests/unit/test_fad_server.py
+    evidence: compliance/evidence/P5-001_fad_server.md
+    notes: "CSV Parcial; P5-001 server snapshot/pagination/checksum. Official PASS pending harness FAD suite."
 
   - id: FAMILY.SSS
     family: SSS
