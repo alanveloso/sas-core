@@ -35,12 +35,13 @@ VALID_USER_ID = re.compile(r"^[A-Za-z0-9_:-]+$")
 def _cat_a_outdoor_haat_exceeds_limit(installation: dict[str, Any]) -> bool:
     """Return True if Cat A outdoor HAAT exceeds the 6 m Part 96 limit.
 
-    HAAT requires a terrain model / dataset. Fixture-coordinate lookup tables are
-    forbidden (AGENTS.md). Until a parameterized HAAT provider is wired through
-    the spectrum profile, this check is a no-op (returns False).
+    Uses the injectable ``HaatProvider`` (production: USGS NED 1″ / WInnForum
+    algorithm). Fail-closed when terrain data is missing or unreadable.
+    Fixture-coordinate lookup tables are forbidden (AGENTS.md).
     """
-    _ = installation
-    return False
+    from services.terrain.haat import cat_a_outdoor_haat_invalid
+
+    return cat_a_outdoor_haat_invalid(installation)
 
 
 def _b64url_decode(data: str) -> bytes:
@@ -234,12 +235,22 @@ def _validate_params(
             return INVALID_PARAM
 
     # Cat A outdoor: HAAT must be ≤ 6 m (47 CFR § 96.43 / WINNF REG.7 CBSD#8).
+    # Only evaluate when installation geometry required for HAAT is present;
+    # incomplete params fall through to PENDING via _has_pending_params.
     if category == "A" and installation.get("indoorDeployment") is False:
         height = installation.get("height")
         height_type = installation.get("heightType")
+        lat = installation.get("latitude")
+        lon = installation.get("longitude")
         if height_type == "AGL" and isinstance(height, (int, float)) and height > 6:
             return INVALID_PARAM
-        if _cat_a_outdoor_haat_exceeds_limit(installation):
+        haat_inputs_ready = (
+            isinstance(lat, (int, float))
+            and isinstance(lon, (int, float))
+            and isinstance(height, (int, float))
+            and height_type in ("AGL", "AMSL")
+        )
+        if haat_inputs_ready and _cat_a_outdoor_haat_exceeds_limit(installation):
             return INVALID_PARAM
 
     # Cat B must not claim indoorDeployment True in many WINNF scenarios

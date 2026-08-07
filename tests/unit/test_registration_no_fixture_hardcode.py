@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from services import registration_service
+from services.terrain import DeterministicHaatProvider, reset_haat_provider, set_haat_provider
 from tests.support.repo import REPO_ROOT
 
 
@@ -16,16 +17,25 @@ def test_registration_service_has_no_fixture_coordinate_table():
     assert "-77.113755" not in source
 
 
-def test_cat_a_haat_check_is_provider_noop_for_arbitrary_coordinates():
-    # Use non-fixture coordinates; HAAT remains unevaluated without a terrain provider.
-    assert (
-        registration_service._cat_a_outdoor_haat_exceeds_limit(
-            {
-                "latitude": 10.0,
-                "longitude": 20.0,
-                "height": 1.0,
-                "heightType": "AGL",
-            }
+def test_cat_a_haat_check_fail_closed_when_terrain_unavailable():
+    """Arbitrary coords with missing terrain must not silently approve (fail closed)."""
+    set_haat_provider(
+        DeterministicHaatProvider(
+            missing_locations={(10.0, 20.0)},
+            default_norm_haat_m=None,
         )
-        is False
     )
+    try:
+        assert (
+            registration_service._cat_a_outdoor_haat_exceeds_limit(
+                {
+                    "latitude": 10.0,
+                    "longitude": 20.0,
+                    "height": 1.0,
+                    "heightType": "AGL",
+                }
+            )
+            is True
+        )
+    finally:
+        reset_haat_provider()

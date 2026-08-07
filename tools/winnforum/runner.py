@@ -496,6 +496,11 @@ def run(cfg: RunnerConfig) -> int:
                         "SAS_EXECUTION_MODE", "certification"
                     ),
                     "CERTS_DIR": str(cfg.certs_dir or (cfg.repo_root / "certs")),
+                    # Cat A outdoor HAAT (REG.7): USGS NED 1″ GridFloat tiles.
+                    "SAS_TERRAIN_DIR": os.environ.get(
+                        "SAS_TERRAIN_DIR",
+                        str(cfg.repo_root / "data" / "geo" / "ned"),
+                    ),
                 },
             )
             notes.append(f"started UUT pid={uut_proc.pid}")

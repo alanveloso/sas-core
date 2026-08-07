@@ -32,6 +32,23 @@ def frozen_time():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _deterministic_haat_provider() -> Iterator[None]:
+    """Unit/integration default: flat terrain (norm HAAT = 0) without NED tiles.
+
+    Certification / REG.7 must inject or resolve the real NED-backed provider
+    via ``SAS_TERRAIN_DIR``; this fixture keeps local pytest independent of
+    the multi-GB USGS dataset.
+    """
+    from services.terrain import DeterministicHaatProvider, reset_haat_provider, set_haat_provider
+
+    set_haat_provider(DeterministicHaatProvider(default_norm_haat_m=0.0))
+    try:
+        yield
+    finally:
+        reset_haat_provider()
+
+
 @pytest.fixture
 def db_session(tmp_path: Path) -> Iterator[Session]:
     """Isolated SQLite database rebound for a single test."""

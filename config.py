@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     db_sync_username: str = "username"
     db_sync_password: str = "password"
 
+    # USGS NED 1″ GridFloat directory for Cat A outdoor HAAT (SAS_TERRAIN_DIR).
+    sas_terrain_dir: Optional[Path] = Field(
+        default=None,
+        description="Override path to NED GridFloat tiles (SAS_TERRAIN_DIR).",
+    )
+
     @field_validator("sas_execution_mode", mode="before")
     @classmethod
     def _normalize_execution_mode(cls, value: object) -> object:
@@ -94,6 +100,13 @@ class Settings(BaseSettings):
     def _coerce_certs_dir(cls, value: object) -> object:
         if value is None or value == "":
             return _DEFAULT_CERTS
+        return Path(str(value))
+
+    @field_validator("sas_terrain_dir", mode="before")
+    @classmethod
+    def _coerce_terrain_dir(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
         return Path(str(value))
 
     @field_validator(
