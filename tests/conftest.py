@@ -64,3 +64,5 @@ def db_session(tmp_path: Path) -> Iterator[Session]:
     finally:
         session.close()
         rebind_engine(previous_url)
+        # Keep process-default schema intact for module-level TestClient suites.
+        init_db(retries=1, delay_seconds=0)

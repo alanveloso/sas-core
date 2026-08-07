@@ -6,11 +6,15 @@ import logging
 import threading
 import time
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from config import get_settings
+from models.base import Base
+
+# Re-export for callers that historically imported Base from database.
+__all__ = ["Base", "SessionLocal", "engine", "get_db", "init_db", "rebind_engine", "reset_db"]
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +71,11 @@ def rebind_engine(database_url: str, *, echo: bool = False) -> None:
         previous.dispose()
 
 
-class Base(DeclarativeBase):
-    pass
-
-
 def get_db():
-    db = SessionLocal()
+    # Resolve SessionLocal via module attribute so rebind_engine is visible.
+    import database as database_module
+
+    db = database_module.SessionLocal()
     try:
         yield db
     except Exception:
@@ -82,9 +85,24 @@ def get_db():
         db.close()
 
 
+def _assert_required_tables(bind) -> None:
+    """Fail fast when create_all did not materialize mandatory tables."""
+    from models.registry import REQUIRED_TABLES
+
+    present = set(inspect(bind).get_table_names())
+    missing = REQUIRED_TABLES - present
+    if missing:
+        raise RuntimeError(
+            "Database schema incomplete after init_db; missing tables: "
+            + ", ".join(sorted(missing))
+        )
+
+
 def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
     """Create tables, retrying briefly while PostgreSQL becomes ready."""
-    from models import models  # noqa: F401
+    from models.registry import load_all_models
+
+    load_all_models()
 
     with _init_lock:
         last_exc: Exception | None = None
@@ -92,6 +110,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
             try:
                 Base.metadata.create_all(bind=engine)
                 _ensure_lifecycle_columns(engine)
+                _assert_required_tables(engine)
                 return
             except OperationalError as exc:
                 last_exc = exc
@@ -99,6 +118,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
                 # Concurrent create_all can race on SQLite ("table already exists").
                 if "already exists" in message:
                     _ensure_lifecycle_columns(engine)
+                    _assert_required_tables(engine)
                     return
                 logger.warning(
                     "init_db attempt %s/%s failed: %s", attempt, retries, exc
@@ -111,7 +131,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
 
 def _ensure_lifecycle_columns(bind) -> None:
     """Add lifecycle_state columns on existing DBs (create_all does not ALTER)."""
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
 
     inspector = inspect(bind)
     statements: list[str] = []
@@ -139,8 +159,11 @@ def _ensure_lifecycle_columns(bind) -> None:
 
 def reset_db() -> None:
     """Drop and recreate all tables (admin/reset)."""
-    from models import models  # noqa: F401
+    from models.registry import load_all_models
+
+    load_all_models()
 
     with _init_lock:
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
+        _assert_required_tables(engine)

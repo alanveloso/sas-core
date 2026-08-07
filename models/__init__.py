@@ -1,3 +1,4 @@
+from models.base import Base
 from models.models import (
     AdminInjectedData,
     BlacklistedFccId,
@@ -15,9 +16,11 @@ from models.models import (
     PeerSas,
     UserIdRecord,
 )
+from models.registry import REQUIRED_TABLES, expected_table_names, load_all_models
 
 __all__ = [
     "AdminInjectedData",
+    "Base",
     "BlacklistedFccId",
     "BlacklistedFccIdSerial",
     "Cbsd",
@@ -31,5 +34,8 @@ __all__ = [
     "PalRecord",
     "PeerFadRecord",
     "PeerSas",
+    "REQUIRED_TABLES",
     "UserIdRecord",
+    "expected_table_names",
+    "load_all_models",
 ]
