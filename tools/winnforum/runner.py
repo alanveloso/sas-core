@@ -116,19 +116,31 @@ def _path_from_env(name: str) -> Path | None:
 def resolve_cert_paths(
     cfg: RunnerConfig,
 ) -> tuple[Path | None, Path | None, Path | None, list[str]]:
-    """Resolve client/CA paths from CLI or env only (no hardcoded basenames)."""
+    """Resolve client/CA paths from CLI or env only (no hardcoded basenames).
+
+    Official harness leaf files live under ``<harness>/src/harness/certs/``
+    (not ``testdata/certs``). Callers must pass absolute paths via CLI/env;
+    preflight discovers and prints suggested ``WINNFORUM_*`` values.
+    """
     notes: list[str] = []
     client_cert = cfg.client_cert or _path_from_env(_ENV_CLIENT_CERT)
     client_key = cfg.client_key or _path_from_env(_ENV_CLIENT_KEY)
     ca_certs = cfg.ca_certs or _path_from_env(_ENV_CA_CERTS)
     if client_cert is None:
         notes.append(
-            f"client cert required via --client-cert or {_ENV_CLIENT_CERT}"
+            f"client cert required via --client-cert or {_ENV_CLIENT_CERT} "
+            "(typically under <harness>/src/harness/certs/)"
         )
     if client_key is None:
-        notes.append(f"client key required via --client-key or {_ENV_CLIENT_KEY}")
+        notes.append(
+            f"client key required via --client-key or {_ENV_CLIENT_KEY} "
+            "(typically under <harness>/src/harness/certs/)"
+        )
     if ca_certs is None:
-        notes.append(f"CA bundle required via --ca-certs or {_ENV_CA_CERTS}")
+        notes.append(
+            f"CA bundle required via --ca-certs or {_ENV_CA_CERTS} "
+            "(typically under <harness>/src/harness/certs/)"
+        )
     return client_cert, client_key, ca_certs, notes
 
 

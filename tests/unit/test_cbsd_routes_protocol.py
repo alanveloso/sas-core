@@ -55,6 +55,68 @@ def test_registration_route_success(db_session):
     assert body["cbsdId"]
 
 
+def test_registration_route_pending_when_indoor_deployment_absent(db_session):
+    """Schema dump must not invent indoorDeployment=None (WINNF REG.6 / REG.11)."""
+    fcc = make_fcc_id(db_session)
+    user = make_user_id(db_session)
+    payload = _registration_payload(fcc.fcc_id, "sn-route-pend", user.user_id)
+    del payload["installationParam"]["indoorDeployment"]
+    resp = client.post(
+        "/v1.2/registration",
+        json={"registrationRequest": [payload]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()["registrationResponse"][0]
+    assert body["response"]["responseCode"] == 200
+    assert "cbsdId" not in body
+
+
+def test_spectrum_inquiry_route_schema_error_omits_freeform_cbsd_id(db_session):
+    resp = client.post(
+        "/v1.2/spectrumInquiry",
+        json={
+            "spectrumInquiryRequest": [
+                {
+                    "cbsdId": "INVALID_CBSD_ID_12345",
+                    "inquiredSpectrum": [
+                        {
+                            "lowFrequency": 3700_000_000,
+                            "highFrequency": 3550_000_000,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()["spectrumInquiryResponse"][0]
+    assert body["response"]["responseCode"] == INVALID_VALUE
+    assert "cbsdId" not in body
+
+
+def test_spectrum_inquiry_route_schema_error_echoes_syntactic_cbsd_id(db_session):
+    resp = client.post(
+        "/v1.2/spectrumInquiry",
+        json={
+            "spectrumInquiryRequest": [
+                {
+                    "cbsdId": "fcc-route/sn-echo",
+                    "inquiredSpectrum": [
+                        {
+                            "lowFrequency": 3700_000_000,
+                            "highFrequency": 3550_000_000,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()["spectrumInquiryResponse"][0]
+    assert body["response"]["responseCode"] == INVALID_VALUE
+    assert body["cbsdId"] == "fcc-route/sn-echo"
+
+
 def _register_via_route(db_session, serial: str) -> str:
     fcc = make_fcc_id(db_session)
     user = make_user_id(db_session)

@@ -129,8 +129,30 @@ def test_uvicorn_run_accepts_ssl_context_factory():
 
 def test_uvicorn_h11_request_response_cycle_still_patchable():
     """mtls_auth.patch_uvicorn_for_client_cert depends on this private API surface."""
-    from uvicorn.protocols.http.h11_impl import RequestResponseCycle
+    import inspect as _inspect
 
-    init = RequestResponseCycle.__init__
-    params = list(inspect.signature(init).parameters)
-    assert "transport" in params
+    from uvicorn.protocols.http import h11_impl
+
+    src = _inspect.getsource(h11_impl.RequestResponseCycle)
+    assert "transport" in src
+    from services.mtls_auth import patch_uvicorn_for_client_cert
+
+    patch_uvicorn_for_client_cert()
+    assert getattr(h11_impl.RequestResponseCycle.__init__, "_sas_mtls_patched", False)
+
+
+def test_uvicorn_httptools_request_response_cycle_still_patchable():
+    """Default uvicorn[standard] HTTP stack must expose transport for mTLS binding."""
+    import inspect as _inspect
+
+    from uvicorn.protocols.http import httptools_impl
+
+    # Source must keep a named ``transport`` arg even if runtime __init__ is patched.
+    src = _inspect.getsource(httptools_impl.RequestResponseCycle)
+    assert "transport" in src
+    from services.mtls_auth import patch_uvicorn_for_client_cert
+
+    patch_uvicorn_for_client_cert()
+    assert getattr(
+        httptools_impl.RequestResponseCycle.__init__, "_sas_mtls_patched", False
+    )

@@ -102,11 +102,16 @@ def _run_batch(
         if parsed.items_for_service
         else []
     )
+    # SIQ: echo cbsdId only when syntactically ``fccId/serial`` (not free-form /
+    # unknown harness placeholders). Other procedures keep always-echo.
+    cbsd_id_echo = "syntactic" if procedure == "spectrumInquiry" else "always"
     merged = merge_schema_and_service_responses(
         schema_error_codes=parsed.schema_error_codes,
         service_index_map=parsed.service_index_map,
         service_responses=service_responses,
         echo_from_raw=raw_items,
+        echo_fields=("cbsdId", "grantId"),
+        cbsd_id_echo=cbsd_id_echo,
     )
     return JSONResponse({response_key: merged})
 

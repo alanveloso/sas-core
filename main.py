@@ -104,6 +104,8 @@ def _run_uvicorn(port: int, certfile: Path, keyfile: Path, ssl_factory) -> None:
         ssl_ca_certs=str(settings.resolved_ssl_ca_certs),
         ssl_cert_reqs=ssl.CERT_REQUIRED,
         ssl_context_factory=ssl_factory,
+        # Prefer h11; httptools is also patched in mtls_auth for mTLS fingerprinting.
+        http="h11",
         reload=False,
         log_level="info",
     )

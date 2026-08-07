@@ -103,6 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip mTLS Admin readiness probe (not recommended).",
     )
     p.add_argument("--health-timeout-seconds", type=float, default=60.0)
+    p.add_argument(
+        "--python",
+        dest="python_executable",
+        default=None,
+        help="Python executable for the harness process (prefer 3.11 venv).",
+    )
     return p
 
 
@@ -145,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         health_timeout_seconds=args.health_timeout_seconds,
         sas_profile=args.sas_profile,
         update_harness_ref=args.update_harness_ref,
+        python_executable=args.python_executable or sys.executable,
     )
     return run(cfg)
 

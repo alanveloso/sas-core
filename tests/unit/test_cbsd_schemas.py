@@ -142,6 +142,70 @@ def test_parse_preserves_installation_param_extras():
     assert inst["latitude"] == 1.0
 
 
+def test_parse_does_not_invent_none_indoor_deployment():
+    """Absent optional installation fields must stay absent (REG pending → 200)."""
+    raw = {
+        "userId": "u",
+        "fccId": "f",
+        "cbsdSerialNumber": "s",
+        "cbsdCategory": "A",
+        "installationParam": {
+            "latitude": 1.0,
+            "longitude": 2.0,
+            "height": 3.0,
+            "heightType": "AGL",
+        },
+    }
+    parsed = parse_item_batch([raw], item_model=RegistrationRequestItem)
+    assert parsed.schema_error_codes == [None]
+    inst = parsed.items_for_service[0]["installationParam"]
+    assert "indoorDeployment" not in inst
+
+
+def test_siq_schema_error_does_not_echo_freeform_cbsd_id():
+    raw = [
+        {
+            "cbsdId": "INVALID_CBSD_ID_12345",
+            "inquiredSpectrum": [
+                {"lowFrequency": 3700_000_000, "highFrequency": 3550_000_000}
+            ],
+        }
+    ]
+    parsed = parse_item_batch(raw, item_model=SpectrumInquiryRequestItem)
+    assert parsed.schema_error_codes[0] == INVALID_VALUE
+    merged = merge_schema_and_service_responses(
+        schema_error_codes=parsed.schema_error_codes,
+        service_index_map=parsed.service_index_map,
+        service_responses=[],
+        echo_from_raw=raw,
+        echo_fields=("cbsdId",),
+        cbsd_id_echo="syntactic",
+    )
+    assert "cbsdId" not in merged[0]
+    assert merged[0]["response"]["responseCode"] == INVALID_VALUE
+
+
+def test_siq_schema_error_echoes_syntactic_cbsd_id():
+    raw = [
+        {
+            "cbsdId": "fcc-lab/sn-1",
+            "inquiredSpectrum": [
+                {"lowFrequency": 3700_000_000, "highFrequency": 3550_000_000}
+            ],
+        }
+    ]
+    parsed = parse_item_batch(raw, item_model=SpectrumInquiryRequestItem)
+    merged = merge_schema_and_service_responses(
+        schema_error_codes=parsed.schema_error_codes,
+        service_index_map=parsed.service_index_map,
+        service_responses=[],
+        echo_from_raw=raw,
+        echo_fields=("cbsdId",),
+        cbsd_id_echo="syntactic",
+    )
+    assert merged[0]["cbsdId"] == "fcc-lab/sn-1"
+
+
 def test_missing_nested_frequency_maps_to_missing_or_invalid():
     with pytest.raises(ValidationError) as exc:
         FrequencyRange.model_validate({"lowFrequency": 1})

@@ -141,28 +141,33 @@ def _cpi_missing_params(request: dict[str, Any], db: Session) -> int | None:
     return None
 
 
+def _field_missing(container: dict[str, Any], field: str) -> bool:
+    """True when ``field`` is absent or explicitly null (schema dump artefact)."""
+    return field not in container or container.get(field) is None
+
+
 def _has_pending_params(merged: dict[str, Any]) -> bool:
     """True when conditional/required installation params are incomplete."""
     category = merged.get("cbsdCategory")
     installation = merged.get("installationParam") or {}
     air = merged.get("airInterface")
 
-    if not category or not air or "radioTechnology" not in (air or {}):
+    if not category or not air or _field_missing(air or {}, "radioTechnology"):
         return True
     if not installation:
         return True
 
     required_common = ["latitude", "longitude", "height", "heightType"]
     for field in required_common:
-        if field not in installation:
+        if _field_missing(installation, field):
             return True
 
     if category == "A":
-        if "indoorDeployment" not in installation:
+        if _field_missing(installation, "indoorDeployment"):
             return True
     elif category == "B":
         for field in ("antennaAzimuth", "antennaGain", "antennaBeamwidth"):
-            if field not in installation:
+            if _field_missing(installation, field):
                 return True
 
     return False
