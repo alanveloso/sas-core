@@ -80,7 +80,7 @@ def reset_terrain_provider() -> None:
 
 def grant_overlaps_dpa_tx_expire_band(low_hz: int, high_hz: int) -> bool:
     """True when the grant overlaps the Rel1Ext 3550–3650 MHz TxExpire band."""
-    return _overlaps(low_hz, high_hz, DPA_TX_BAND_LOW_HZ, DPA_TX_BAND_HIGH_HZ)
+    return bool(_overlaps(low_hz, high_hz, DPA_TX_BAND_LOW_HZ, DPA_TX_BAND_HIGH_HZ))
 
 
 def _installation(cbsd: Cbsd) -> dict[str, Any]:

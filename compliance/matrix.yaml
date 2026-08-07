@@ -285,8 +285,9 @@ cases:
       - tests/contract/test_admin_no_catchall.py
       - tests/unit/test_protection_data.py
       - tests/unit/test_propagation_service.py
+      - tests/unit/test_rel1ext_pat2.py
     evidence: compliance/evidence/P6-003_propagation_api.md
-    notes: "P6-003 Admin API implemented (FSS/PPA/DPA wiring). Rel1Ext PAT.2 mapped in compliance/rel1ext_delta.yaml (P7-001). Official PAT PASS BLOCKED_BY_ENV / P7-003. Not claimed PASS."
+    notes: "P6-003 Admin API + P7-003 Rel1Ext Type-3 UUT clutter/loading composition. Official PAT.2 harness still open / BLOCKED_BY_ENV. Not claimed PASS."
 
   - id: FAMILY.IPR
     family: IPR

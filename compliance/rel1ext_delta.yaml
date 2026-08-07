@@ -223,10 +223,13 @@ cases:
     '
   local_tests:
   - tests/unit/test_propagation_service.py
+  - tests/unit/test_rel1ext_pat2.py
   - tests/contract/test_admin_no_catchall.py
   evidence: null
   status: failing
-  notes: NEW. P6-003 API present without clutter/loading Type-3 semantics — P7-003.
+  notes: 'P7-003: Type-3 uses UUT P.2108 compose (ITM+clutter≤6 m AGL+8 dB loading);
+    local unit/cohort coverage in test_rel1ext_pat2. Official harness PAT.2 (ITM+NED,
+    ≥99.9% within +1 dB) still open — not claimed PASS / PASS_LOCAL without versioned evidence.'
 - id: WINNF.REL1Ext.FT.S.IPR.1
   family: IPR
   relation: replaces

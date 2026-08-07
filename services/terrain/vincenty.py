@@ -101,3 +101,88 @@ def geodesic_points(
         lats.append(plat)
         lons.append(plon)
     return lats, lons
+
+
+def geodesic_distance_km(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+    *,
+    accuracy: float = 1.0e-12,
+) -> float:
+    """Inverse Vincenty distance (km) on WGS84 — matches harness GeodesicDistanceBearing."""
+    if lat1 == lat2 and lon1 == lon2:
+        return 0.0
+
+    a = 6378.1370
+    f = 1.0 / 298.257223563
+    b = (1 - f) * a
+
+    phi1 = radians(lat1)
+    l1 = radians(lon1)
+    phi2 = radians(lat2)
+    l2 = radians(lon2)
+
+    u1 = atan((1 - f) * tan(phi1))
+    u2 = atan((1 - f) * tan(phi2))
+    l_diff = l2 - l1
+
+    lmbda = l_diff
+    last_lmbda = 9.0e40
+    cos_sq_alpha = 0.0
+    cos_2_sigma_m = 0.0
+    sin_sigma = 0.0
+    cos_sigma = 0.0
+    sigma = 0.0
+
+    while abs(lmbda - last_lmbda) > accuracy:
+        last_lmbda = lmbda
+        sin_sigma = (
+            (cos(u2) * sin(lmbda)) ** 2
+            + (cos(u1) * sin(u2) - sin(u1) * cos(u2) * cos(lmbda)) ** 2
+        ) ** 0.5
+        cos_sigma = sin(u1) * sin(u2) + cos(u1) * cos(u2) * cos(lmbda)
+        sigma = atan2(sin_sigma, cos_sigma)
+        if sin_sigma == 0.0:
+            return 0.0
+        sin_alpha = cos(u1) * cos(u2) * sin(lmbda) / sin_sigma
+        cos_sq_alpha = 1.0 - sin_alpha**2
+        if cos_sq_alpha == 0.0:
+            cos_2_sigma_m = 0.0
+        else:
+            cos_2_sigma_m = cos_sigma - 2.0 * sin(u1) * sin(u2) / cos_sq_alpha
+        c = (f / 16.0) * cos_sq_alpha * (4.0 + f * (4.0 - 3.0 * cos_sq_alpha))
+        lmbda = l_diff + (1.0 - c) * f * sin_alpha * (
+            sigma
+            + c
+            * sin_sigma
+            * (
+                cos_2_sigma_m
+                + c * cos_sigma * (-1.0 + 2.0 * cos_2_sigma_m**2)
+            )
+        )
+
+    usq = cos_sq_alpha * (a**2 - b**2) / b**2
+    a_coeff = 1 + usq / 16384.0 * (
+        4096.0 + usq * (-768.0 + usq * (320.0 - 175.0 * usq))
+    )
+    b_coeff = usq / 1024.0 * (256.0 + usq * (-128.0 + usq * (74.0 - 47.0 * usq)))
+    d_sigma = (
+        b_coeff
+        * sin_sigma
+        * (
+            cos_2_sigma_m
+            + 0.25
+            * b_coeff
+            * (
+                cos_sigma * (-1.0 + 2.0 * cos_2_sigma_m**2)
+                - (1.0 / 6.0)
+                * b_coeff
+                * cos_2_sigma_m
+                * (-3.0 + 4.0 * sin_sigma**2)
+                * (-3.0 + 4.0 * cos_2_sigma_m**2)
+            )
+        )
+    )
+    return float(b * a_coeff * (sigma - d_sigma))
