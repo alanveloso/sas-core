@@ -448,10 +448,10 @@ methods:
   request_schema: (none)
   response_schema: empty_200
   state_changed: trigger side-effect (trigger/enable_scheduled_daily_activities)
-  uut_status: thin
+  uut_status: implemented
   consumers:
   - FDB
-  notes: flag / minimal side-effect
+  notes: mutates domain tables/services
 - method: TriggerEscDisconnect
   endpoint: /admin/trigger/disconnect_esc
   http_method: POST

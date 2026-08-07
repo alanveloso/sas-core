@@ -109,11 +109,13 @@ def _run_certification_cpas() -> None:
 
 def execute_cpas_pipeline(db: Session) -> None:
     """Synchronous CPAS body shared by Celery workers and certification mode."""
+    from services.cpas_schedule_service import mark_scheduled_success_if_applicable
     from services.database_sync_service import sync_injected_database_urls
 
     sync_injected_database_urls(db)
     run_peer_fad_sync(db)
     apply_peer_conflict_to_local_grants(db)
+    mark_scheduled_success_if_applicable(db)
 
 
 def _client_ssl_context() -> ssl.SSLContext:

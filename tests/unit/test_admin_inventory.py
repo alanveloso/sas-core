@@ -182,6 +182,7 @@ def test_build_inventory_has_required_columns_and_marks_stubs():
     assert by_name["TriggerDpaDeactivation"].uut_status == "implemented"
     assert by_name["TriggerPpaCreation"].uut_status == "implemented"
     assert by_name["GetPpaCreationStatus"].uut_status == "implemented"
+    assert by_name["TriggerEnableScheduledDailyActivities"].uut_status == "implemented"
     # Schema drift note for blacklist serial field
     assert "cbsdSerialNumber" in by_name["BlacklistByFccIdAndSerialNumber"].notes
 

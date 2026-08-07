@@ -57,6 +57,8 @@ _UUT_DOMAIN_TOKENS: tuple[str, ...] = (
     "create_full_activity_dump",
     "trigger_daily_activities",
     "get_daily_activities_completed",
+    "enable_scheduled_daily_activities",
+    "tick_scheduled_cpas",
     "persist_exclusion_zone",
     "enable_ntia_exclusion_zones",
     "known_pal_ids",

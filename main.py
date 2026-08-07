@@ -57,6 +57,11 @@ app.include_router(sas_sas_router)
 @app.on_event("startup")
 def on_startup():
     from spectrum_profiles.context import active_profile_id, get_active_profile
+    from services.cpas_schedule_service import (
+        ensure_scheduler_loop_started,
+        is_schedule_enabled,
+    )
+    from database import SessionLocal
 
     profile = get_active_profile()
     print(
@@ -65,6 +70,13 @@ def on_startup():
         f"band={profile.band_plan.low_hz}-{profile.band_plan.high_hz} Hz)"
     )
     init_db()
+    # Resume schedule ticker if Admin previously enabled it (persisted flag).
+    session = SessionLocal()
+    try:
+        if is_schedule_enabled(session):
+            ensure_scheduler_loop_started()
+    finally:
+        session.close()
 
 
 def _rsa_ssl_context_factory(config, default_factory):

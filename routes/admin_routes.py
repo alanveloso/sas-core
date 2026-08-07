@@ -369,10 +369,16 @@ async def inject_database_url(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/trigger/enable_scheduled_daily_activities")
 def trigger_enable_scheduled_daily_activities(db: Session = Depends(get_db)):
-    """FDB_8: enable scheduled CPAS; MVP stores a flag and returns HTTP 200."""
-    from services.meas_report import set_admin_flag
+    """FDB_8: arm CPAS schedule (US/Pacific 02:00–04:00 by default)."""
+    from fastapi import HTTPException
 
-    set_admin_flag(db, "scheduled_daily_activities", {"enabled": True})
+    from services.cpas_schedule_service import enable_scheduled_daily_activities
+
+    try:
+        enable_scheduled_daily_activities(db)
+    except ValueError as exc:
+        # Fail closed on bad SAS_CPAS_TIMEZONE — never empty-200 as if armed.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _empty_ok()
 
 
