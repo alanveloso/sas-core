@@ -252,11 +252,12 @@ cases:
 
     '
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_iap_service.py
   - tests/unit/test_cpas_pipeline.py
   evidence: null
   status: failing
-  notes: P7-004. Baseline IPR.1 deprecated for Rel1Ext.
+  notes: 'P7-004: ESC absent protects ESC-monitored DPAs; local test_dpa_protection_ipr. Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.2
   family: IPR
   relation: replaces
@@ -275,11 +276,12 @@ cases:
     '
   response_time_change: authorize-or-terminate-within-configured-ESC-heartbeat-window
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_iap_service.py
   - tests/unit/test_dpa_lifecycle.py
   evidence: null
   status: failing
-  notes: P7-004.
+  notes: 'P7-004 domain wired (protected channels / movelist / grant|heartbeat hooks). Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.3
   family: IPR
   relation: replaces
@@ -292,11 +294,12 @@ cases:
   calculation_change: neighborhood-interference-vs-active-offshore-DPA-criteria
   response_time_change: grant-response-success-or-interference-related-failure-per-procedure
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_grant_pal_ppa.py
   - tests/unit/test_iap_service.py
   evidence: null
   status: failing
-  notes: P7-004.
+  notes: 'P7-004 domain wired (protected channels / movelist / grant|heartbeat hooks). Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.4
   family: IPR
   relation: replaces
@@ -310,11 +313,12 @@ cases:
   calculation_change: inland-DPA-protection-with-Rel1Ext-propagation-factors
   response_time_change: grant-response-constrained-by-inland-DPA-protection
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_dpa_lifecycle.py
   - tests/unit/test_iap_service.py
   evidence: null
   status: failing
-  notes: P7-004.
+  notes: 'P7-004 domain wired (protected channels / movelist / grant|heartbeat hooks). Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.5
   family: IPR
   relation: replaces
@@ -337,12 +341,13 @@ cases:
 
     '
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_dpa_lifecycle.py
   - tests/unit/test_cpas_pipeline.py
   - tests/unit/test_heartbeat_extended.py
   evidence: null
   status: failing
-  notes: P7-004.
+  notes: 'P7-004 domain wired (protected channels / movelist / grant|heartbeat hooks). Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.6
   family: IPR
   relation: replaces
@@ -355,11 +360,12 @@ cases:
   calculation_change: fail-closed-protect-affected-DPAs-as-if-active-or-unmonitored-per-spec
   response_time_change: grant-heartbeat-enforcement-after-ESC-connectivity-loss
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_cpas_pipeline.py
   - tests/unit/test_dpa_lifecycle.py
   evidence: null
   status: failing
-  notes: P7-004.
+  notes: 'P7-004 domain wired (protected channels / movelist / grant|heartbeat hooks). Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.7
   family: IPR
   relation: replaces
@@ -372,11 +378,12 @@ cases:
   calculation_change: aggregate-interference-vs-TH-plus-margin-without-clutter-loading-focus
   response_time_change: post-activation-heartbeat-stage-enforcement
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_iap_service.py
   - tests/unit/test_dpa_lifecycle.py
   evidence: null
   status: failing
-  notes: P7-004. IPR.8 adds clutter+loading on top of this class of scenario.
+  notes: 'P7-004: single-DPA evaluate + CPAS movelist. Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.IPR.8
   family: IPR
   relation: new
@@ -398,11 +405,14 @@ cases:
 
     '
   local_tests:
+  - tests/unit/test_dpa_protection_ipr.py
   - tests/unit/test_propagation_service.py
   - tests/unit/test_iap_service.py
   evidence: null
   status: failing
-  notes: NEW. Depends on P7-003 propagation Type-3 + P7-004 DPA CPAS wiring.
+  notes: 'P7-004: Rel1Ext clutter≤6m + 8dB loading in DPA aggregate (IPR.8). Local
+    greedy movelist is deterministic only — not official Monte-Carlo/keep-move proof.
+    Official open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.MCP.1
   family: MCP
   relation: replaces

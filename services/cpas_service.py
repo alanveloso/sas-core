@@ -277,6 +277,32 @@ def evaluate_cpas_protections(
             )
             decided_pks.add(grant.id)
 
+    # Rel1Ext IPR: refresh DPA move-lists and terminate grants still on them.
+    from services.dpa_protection import grant_on_any_movelist, refresh_activation_movelists
+    from services.propagation.errors import PropagationUnavailableError
+    from services.terrain.exceptions import TerrainError
+
+    try:
+        refresh_activation_movelists(db, commit=False)
+        for grant in grants:
+            if grant.id in decided_pks or grant.terminated:
+                continue
+            if grant_on_any_movelist(db, grant.grant_id):
+                decisions.append(
+                    CpasDecision(
+                        grant_pk=grant.id,
+                        grant_id=grant.grant_id,
+                        cbsd_id=grant.cbsd_id,
+                        reason="dpa_movelist",
+                        action="terminate",
+                        explanation="dpa_movelist",
+                    )
+                )
+                decided_pks.add(grant.id)
+    except (PropagationUnavailableError, TerrainError, ValueError, TypeError, KeyError):
+        # Do not invent terminations; peer/IAP decisions above still apply.
+        pass
+
     if iap_points and iap_coupling is not None:
         decisions.extend(
             _evaluate_iap_decisions(

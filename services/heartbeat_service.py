@@ -96,21 +96,34 @@ def _grant_overlaps_wisp(db: Session, grant: Grant) -> bool:
 
 
 def _grant_overlaps_active_dpa(db: Session, grant: Grant) -> bool:
+    from services.dpa_protection import (
+        ProtectionReason,
+        grant_frequency_overlaps_protected,
+        grant_on_any_movelist,
+        list_protected_dpa_channels,
+    )
     from services.dpa_service import (
         grant_overlaps_active_dpa,
         grant_overlaps_esc_monitored_catalogue,
     )
-    from services.esc_admin_service import is_esc_disconnected
+    from services.esc_admin_service import is_esc_absent, is_esc_disconnected
+
+    if grant_on_any_movelist(db, grant.grant_id):
+        return True
 
     low, high = grant.low_frequency, grant.high_frequency
     if grant_overlaps_active_dpa(db, low, high):
         return True
-    # Lost ESC-DE: protect all ESC-monitored catalogue channels (IPR disconnect).
-    if is_esc_disconnected(db) and grant_overlaps_esc_monitored_catalogue(
+    # Lost ESC-DE or no ESC present: protect all ESC-monitored catalogue channels.
+    if (is_esc_disconnected(db) or is_esc_absent(db)) and grant_overlaps_esc_monitored_catalogue(
         db, low, high
     ):
         return True
-    return False
+    # Always-on / inland DPAs (escMonitored=false) require continuous protection.
+    protected = grant_frequency_overlaps_protected(
+        list_protected_dpa_channels(db), low, high
+    )
+    return any(p.reason == ProtectionReason.ALWAYS_ON for p in protected)
 
 
 def process_heartbeat(

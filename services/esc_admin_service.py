@@ -17,6 +17,7 @@ from services.meas_report import admin_flag_set
 
 FLAG_ESC_DETECTION = "esc_detection"
 FLAG_ESC_DISCONNECTED = "esc_disconnected"
+FLAG_ESC_ABSENT = "esc_absent"
 KIND_ESC_AUDIT = "esc_admin_audit"
 
 
@@ -92,5 +93,37 @@ def is_esc_disconnected(db: Session) -> bool:
     return True
 
 
+def set_esc_absent(db: Session, *, absent: bool = True) -> dict[str, Any]:
+    """Mark that no ESC is present (IPR.1 — protect all ESC-monitored DPAs)."""
+    if not absent:
+        db.query(AdminInjectedData).filter_by(kind=FLAG_ESC_ABSENT).delete()
+        _append_audit(db, "esc_absent_cleared", {})
+        db.commit()
+        return {"absent": False}
+    payload = {
+        "absent": True,
+        "updatedAt": utc_now().replace(microsecond=0).isoformat(),
+    }
+    _write_flag(db, FLAG_ESC_ABSENT, payload)
+    _append_audit(db, "esc_absent", {})
+    db.commit()
+    return payload
+
+
+def is_esc_absent(db: Session) -> bool:
+    if not admin_flag_set(db, FLAG_ESC_ABSENT):
+        return False
+    row = db.query(AdminInjectedData).filter_by(kind=FLAG_ESC_ABSENT).first()
+    if not row:
+        return False
+    try:
+        data = json.loads(row.data_json or "{}")
+    except json.JSONDecodeError:
+        return True
+    if isinstance(data, dict) and "absent" in data:
+        return bool(data.get("absent"))
+    return True
+
+
 def esc_detection_active(db: Session) -> bool:
-    return admin_flag_set(db, FLAG_ESC_DETECTION)
+    return bool(admin_flag_set(db, FLAG_ESC_DETECTION))

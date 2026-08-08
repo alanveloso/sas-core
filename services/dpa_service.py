@@ -559,6 +559,22 @@ def activate_dpa(db: Session, body: dict[str, Any]) -> dict[str, Any]:
         }
 
     _upsert_activation(db, dpa_id=dpa_id, freq=freq)
+    from services.dpa_protection import refresh_activation_movelists
+    from services.propagation.errors import PropagationUnavailableError
+    from services.terrain.exceptions import TerrainError
+
+    try:
+        refresh_activation_movelists(db, commit=False)
+    except (PropagationUnavailableError, TerrainError, ValueError, TypeError, KeyError):
+        # Fail-closed movelist: all active grants overlapping this channel.
+        from services.dpa_protection import collect_active_dpa_grants
+
+        moved = [
+            g.grant_id
+            for g in collect_active_dpa_grants(db)
+            if g.low_hz < freq.high_hz and g.high_hz > freq.low_hz
+        ]
+        _upsert_activation(db, dpa_id=dpa_id, freq=freq, movelist=moved)
     _append_audit(
         db,
         "activate",

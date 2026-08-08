@@ -298,11 +298,15 @@ cases:
       - services/iap/aggregate.py
       - services/iap/models.py
       - services/cpas_service.py
+      - services/dpa_protection.py
+      - services/esc_admin_service.py
     tests:
       - tests/unit/test_iap_service.py
       - tests/unit/test_cpas_pipeline.py
+      - tests/unit/test_dpa_protection_ipr.py
+      - tests/unit/test_dpa_lifecycle.py
     evidence: compliance/evidence/P6-004_iap_aggregate.md
-    notes: "P6-004 IAP/aggregate local+peer FAD (frozen snapshot) + optional CPAS hook PASS_LOCAL. Rel1Ext IPR.1–8 mapped in compliance/rel1ext_delta.yaml (P7-001). Official IPR BLOCKED_BY_ENV/P7-004. Not claimed PASS."
+    notes: "P6-004 IAP + P7-004 Rel1Ext DPA protection domain (list protected / movelist / clutter+loading / ESC absent). Official IPR harness still open / BLOCKED_BY_ENV. Not claimed PASS."
 
   - id: FAMILY.PPR
     family: PPR

@@ -318,6 +318,15 @@ def process_grant(
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
+            # IPR.3/4: Rel1Ext DPA neighborhood aggregate violation → 400.
+            from services.dpa_protection import proposed_grant_violates_dpa
+
+            if proposed_grant_violates_dpa(
+                db, cbsd, low_hz=low, high_hz=high, max_eirp_dbm_mhz=max_eirp
+            ):
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
         # BPR: Canadian Border Sharing Zone PFD > -80 dBm/m²/MHz → 400.
         reg = _cbsd_reg(cbsd)
         installation = reg.get("installationParam") or {}
