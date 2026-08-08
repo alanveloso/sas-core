@@ -153,9 +153,16 @@ cases:
     status: failing
     implementation:
       - services/exclusion_zone_service.py
-    tests: []
-    evidence: null
-    notes: "CSV Parcial ~50%."
+      - services/iap/pre_iap_exclusions.py
+      - services/iap/protection_points.py
+      - services/cpas_service.py
+      - services/grant_service.py
+      - services/spectrum_inquiry_service.py
+    tests:
+      - tests/unit/test_c4_exz_epr.py
+      - tests/unit/test_grant_pal_ppa.py
+    evidence: compliance/evidence/C4_EXZ_EPR.md
+    notes: "C4: EXZ freeze + pre-IAP CPAS terminate + admission/SIQ/HBT. NTIA enable fail-closed without KML (BLOCKED_BY_DATASET). implemented + production wired; official validation pending (NOT_RUN)."
 
   - id: FAMILY.BPR
     family: BPR
@@ -172,10 +179,17 @@ cases:
     case_scope: family
     status: failing
     implementation:
+      - services/iap/protection_points.py
+      - services/esc_admin_service.py
+      - services/cpas_service.py
+      - services/mcp_protection.py
       - services/heartbeat_service.py
-    tests: []
-    evidence: null
-    notes: "CSV Parcial ~35%; ESC/peer rules simplified."
+      - services/dpa_protection.py
+    tests:
+      - tests/unit/test_c4_exz_epr.py
+      - tests/unit/test_mcp_iap_dpa.py
+    evidence: compliance/evidence/C4_EXZ_EPR.md
+    notes: "C4: ESC ProtectionPoints + frozen connectivity + peer ESC IAP points + multi-SAS peer grants. DPA/IPR disconnect semantics preserved. implemented + production wired; official validation pending (NOT_RUN). QPR/WDB/PCR/FDB → C5."
 
   - id: FAMILY.QPR
     family: QPR
@@ -255,10 +269,16 @@ cases:
     family: GPR
     case_scope: family
     status: untested
-    implementation: []
-    tests: []
-    evidence: null
-    notes: "CSV Ausente ~5%."
+    implementation:
+      - services/iap/protection_points.py
+      - services/iap/pre_iap_exclusions.py
+      - services/iap/engine.py
+      - services/cpas_service.py
+      - services/mcp_protection.py
+    tests:
+      - tests/unit/test_c3_gpr_ppr_fpr.py
+    evidence: compliance/evidence/C3_GPR_PPR_FPR.md
+    notes: "C3: GWPZ aggregate IAP + EZ purge + multi-SAS peer RF on production CPAS path. implemented + production wired; official validation pending (NOT_RUN)."
 
   - id: FAMILY.PCR
     family: PCR
@@ -312,19 +332,29 @@ cases:
     family: PPR
     case_scope: family
     status: untested
-    implementation: []
-    tests: []
-    evidence: null
-    notes: "CSV Ausente ~10%."
+    implementation:
+      - services/iap/protection_points.py
+      - services/cpas_service.py
+      - services/pal_service.py
+    tests:
+      - tests/unit/test_c3_gpr_ppr_fpr.py
+    evidence: compliance/evidence/C3_GPR_PPR_FPR.md
+    notes: "C3: PPA aggregate IAP with frozen PAL freqs; non-PPA zones excluded (P7-005). implemented + production wired; official validation pending (NOT_RUN)."
 
   - id: FAMILY.FPR
     family: FPR
     case_scope: family
     status: untested
-    implementation: []
-    tests: []
-    evidence: null
-    notes: "CSV Parcial muito baixo ~20%."
+    implementation:
+      - services/iap/protection_points.py
+      - services/iap/pre_iap_exclusions.py
+      - services/iap/models.py
+      - services/cpas_service.py
+      - services/federal_db_service.py
+    tests:
+      - tests/unit/test_c3_gpr_ppr_fpr.py
+    evidence: compliance/evidence/C3_GPR_PPR_FPR.md
+    notes: "C3: FSS_COCHANNEL + FSS_BLOCKING + TTC + GWBL pre-IAP EZ on CPAS path. implemented + production wired; official validation pending (NOT_RUN). EXZ/EPR residual → C4; QPR/WDB/PCR/FDB → C5."
 
   - id: FAMILY.MCP
     family: MCP

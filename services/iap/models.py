@@ -48,6 +48,8 @@ class ProtectionPoint(BaseModel):
     threshold_dbm: float
     entity_kind: ProtectedEntityKind = ProtectedEntityKind.GENERIC
     pre_iap_margin_db: float = Field(default=1.0, ge=0.0)
+    # WINNF-TS-0112 neighborhood (km). None = no distance filter (GENERIC/tests).
+    neighborhood_km: float | None = Field(default=None, ge=0.0)
 
 
 class GrantRfInfo(BaseModel):
@@ -69,6 +71,8 @@ class GrantRfInfo(BaseModel):
     grant_pk: int | None = None
     # Provenance: None/local for managing SAS; peer SAS PK (str) for FAD imports.
     source_sas_id: str | None = None
+    # Frozen CBSD category ("A"/"B"). Used for ESC neighborhood (40/80 km).
+    cbsd_category: str | None = None
 
 
 class GrantChannelContribution(BaseModel):

@@ -305,9 +305,18 @@ def process_grant(
         # EXZ: CBSD inside / within 50 m of an exclusion zone with overlapping freq → 400.
         lat, lon = _cbsd_location(cbsd)
         if lat is not None and lon is not None:
-            from services.exclusion_zone_service import point_hits_exclusion_zone
+            from services.exclusion_zone_service import (
+                ExclusionZoneError,
+                ExclusionZoneUnavailable,
+                point_hits_exclusion_zone,
+            )
 
-            if point_hits_exclusion_zone(db, lat, lon, low, high):
+            try:
+                if point_hits_exclusion_zone(db, lat, lon, low, high):
+                    responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                    continue
+            except (ExclusionZoneError, ExclusionZoneUnavailable):
+                # Fail-closed: required EXZ data missing/invalid → deny grant.
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 

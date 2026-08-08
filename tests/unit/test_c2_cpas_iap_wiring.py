@@ -80,6 +80,7 @@ def _add_grant(
 
 
 def _inject_fss(db: Session, *, lat: float = 39.0, lon: float = -77.0, fss_id: str = "fss/c2-1") -> None:
+    # Passband to CBRS high → co-channel IAP on overlapping CBRS segment.
     assert upsert_fss_record(
         db,
         {
@@ -96,13 +97,14 @@ def _inject_fss(db: Session, *, lat: float = 39.0, lon: float = -77.0, fss_id: s
                         },
                         "operationParam": {
                             "operationFrequencyRange": {
-                                "lowFrequency": 3_620_000_000,
-                                "highFrequency": 3_625_000_000,
+                                "lowFrequency": 3_600_000_000,
+                                "highFrequency": 4_200_000_000,
                             }
                         },
                     }
                 ],
-            }
+            },
+            "ttc": False,
         },
     )
 
@@ -355,14 +357,16 @@ def test_h_snapshot_n_ignores_n1_protection_and_rf(
         lambda **_k: _constant_coupling(1.0),
     )
     evaluate_cpas_protections(db_session, snap_n)
-    assert seen_points == ["fss:fss/c2-1"]
-    assert "fss:fss/c2-n1" not in seen_points
+    assert "fss-cc:fss/c2-1" in seen_points
+    assert all(not p.startswith("fss-") or "c2-n1" not in p for p in seen_points)
+    assert "fss-cc:fss/c2-n1" not in seen_points
+    assert "fss-bl:fss/c2-n1" not in seen_points
 
     snap_n1 = freeze_cpas_snapshot(db_session)
     ids_n1 = [p.point_id for p in __import__(
         "services.iap.protection_points", fromlist=["build_protection_points_from_frozen"]
     ).build_protection_points_from_frozen(snap_n1.protection_records)]
-    assert "fss:fss/c2-n1" in ids_n1
+    assert "fss-bl:fss/c2-n1" in ids_n1 or "fss-cc:fss/c2-n1" in ids_n1
 
 
 def test_i_explicit_override_precedence(

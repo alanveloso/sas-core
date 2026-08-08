@@ -33,6 +33,12 @@ def grant_rf_infos_from_peer_cbsd_record(
     height = float(install.get("height") or 0.0)
     height_type = install.get("heightType") or "AGL"
     indoor = bool(install.get("indoorDeployment"))
+    raw_cat = record.get("cbsdCategory")
+    if raw_cat is None or str(raw_cat).strip() == "":
+        category: str | None = None
+    else:
+        cat = str(raw_cat).strip().upper()
+        category = cat if cat in {"A", "B"} else None
     grants_raw = record.get("grants")
     if not isinstance(grants_raw, list):
         return []
@@ -73,6 +79,7 @@ def grant_rf_infos_from_peer_cbsd_record(
                 is_managing_sas=False,
                 grant_pk=None,
                 source_sas_id=src,
+                cbsd_category=category,
             )
         )
     return out

@@ -1,6 +1,10 @@
-"""Build IAP ``ProtectionPoint`` lists from admin-injected entities (P7-005 MCP.1).
+"""Build IAP ``ProtectionPoint`` lists from admin-injected entities (C3).
 
-Thresholds are parameterized via ``IapThresholdProfile`` (R2-IPM-style defaults).
+Thresholds default to WINNF-TS-0061 Table 8.4-2 values used by the harness
+``reference_models.iap.iap`` module (normative RBW figures). Official harness
+tolerances / fixture geometry remain ENV-bound for PASS_OFFICIAL.
+
+Neighborhood distances follow WINNF-TS-0112 / interference.py constants.
 No harness fixture IDs or coordinates are hard-coded.
 """
 
@@ -27,6 +31,38 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CBRS_LOW_HZ = 3_550_000_000
 _DEFAULT_CBRS_HIGH_HZ = 3_700_000_000
 
+# WINNF-TS-0112 / reference_models.interference (Hz).
+FSS_COEXIST_LOW_HZ = 3_600_000_000
+FSS_TTC_LOW_HZ = 3_700_000_000
+FSS_TTC_HIGH_HZ = 4_200_000_000
+
+# Neighborhood distances (km) — WINNF-TS-0112.
+NEIGHBORHOOD_GWPZ_KM = 40.0
+NEIGHBORHOOD_PPA_KM = 40.0
+NEIGHBORHOOD_FSS_COCHANNEL_KM = 150.0
+NEIGHBORHOOD_FSS_BLOCKING_KM = 40.0
+# ESC neighborhood (km) — WINNF-TS-0112 / interference.py:
+# ESC_NEIGHBORHOOD_DIST_A = 40, ESC_NEIGHBORHOOD_DIST_B = 80.
+# Per-grant filter in ``grants_in_neighborhood`` applies A/B; the point stores
+# the Cat-B envelope so distance filtering is never capped below 80 km.
+NEIGHBORHOOD_ESC_KM_A = 40.0
+NEIGHBORHOOD_ESC_KM_B = 80.0
+NEIGHBORHOOD_ESC_KM = NEIGHBORHOOD_ESC_KM_B
+
+
+def esc_neighborhood_km_for_category(category: str | None) -> float:
+    """Delegate to IAP engine helper (single source for ESC A/B distances)."""
+    from services.iap.engine import esc_neighborhood_km_for_category as _impl
+
+    return _impl(category)
+
+KIND_PAL = "pal"
+KIND_GWBL = "gwbl"
+
+
+class ProtectionEntityError(ValueError):
+    """Invalid / incomplete protection entity input (domain validation)."""
+
 
 def cbrs_band_hz() -> tuple[int, int]:
     """Active spectrum-profile band edges (not fixture-specific)."""
@@ -39,21 +75,25 @@ def cbrs_band_hz() -> tuple[int, int]:
         return _DEFAULT_CBRS_LOW_HZ, _DEFAULT_CBRS_HIGH_HZ
 
 
-# Back-compat aliases for importers/tests.
 CBRS_LOW_HZ = _DEFAULT_CBRS_LOW_HZ
 CBRS_HIGH_HZ = _DEFAULT_CBRS_HIGH_HZ
 
 
 @dataclass(frozen=True)
 class IapThresholdProfile:
-    """Default protection thresholds (dBm) and pre-IAP margin (dB).
+    """Protection thresholds (dBm) and pre-IAP margin (dB).
 
-    Values are profile defaults for local multi-constraint evaluation; official
-    harness tolerances / entity-specific tables remain ENV-bound for PASS_OFFICIAL.
+    Classification:
+    * ``esc_dbm`` / ``fss_cochannel_dbm`` / ``fss_blocking_dbm`` / ``ppa_dbm`` /
+      ``gwpz_dbm`` / ``pre_iap_margin_db`` — **A** normative defaults aligned to
+      WINNF-TS-0061 Table 8.4-2 / SSC higher-tier Mg=1 dB (not fixture copies).
+      ESC threshold: ``THRESH_ESC_DBM_PER_RBW = -109`` in harness
+      ``reference_models.iap.iap`` (same table).
     """
 
     esc_dbm: float = -109.0
     fss_cochannel_dbm: float = -129.0
+    fss_blocking_dbm: float = -60.0
     ppa_dbm: float = -80.0
     gwpz_dbm: float = -80.0
     pre_iap_margin_db: float = 1.0
@@ -128,11 +168,27 @@ def _point_from_installation(inst: Any) -> tuple[float, float] | None:
     return lat, lon
 
 
-def protection_point_from_fss_payload(
+def parse_fss_ttc(payload: dict[str, Any]) -> bool | None:
+    """Return True/False when ``ttc`` is present; None when missing."""
+    if "ttc" not in payload:
+        return None
+    raw = payload.get("ttc")
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text in {"true", "1", "yes", "on"}:
+            return True
+        if text in {"false", "0", "no", "off"}:
+            return False
+    raise ProtectionEntityError(f"invalid FSS ttc value: {raw!r}")
+
+
+def _fss_record_and_loc_freq(
     payload: dict[str, Any],
-    *,
-    profile: IapThresholdProfile = IapThresholdProfile(),
-) -> ProtectionPoint | None:
+) -> tuple[dict[str, Any], tuple[float, float], tuple[int, int]] | None:
     record = payload.get("record") if isinstance(payload.get("record"), dict) else payload
     if not isinstance(record, dict):
         return None
@@ -143,23 +199,100 @@ def protection_point_from_fss_payload(
     if first is None:
         return None
     loc = _point_from_installation(first.get("installationParam"))
-    fr = _freq_pair((first.get("operationParam") or {}).get("operationFrequencyRange"))
+    fr_blob = (first.get("operationParam") or {}).get("operationFrequencyRange")
+    if isinstance(fr_blob, dict) and (
+        "lowFrequency" in fr_blob or "highFrequency" in fr_blob
+    ):
+        fr = _freq_pair(fr_blob)
+        if fr is None:
+            raise ProtectionEntityError("FSS operationFrequencyRange invalid")
+    else:
+        fr = None
     if loc is None or fr is None:
         return None
-    clipped = clip_frequency_to_cbrs(fr[0], fr[1])
-    if clipped is None:
-        return None
+    return record, loc, fr
+
+
+def protection_points_from_fss_payload(
+    payload: dict[str, Any],
+    *,
+    profile: IapThresholdProfile = IapThresholdProfile(),
+) -> list[ProtectionPoint]:
+    """Build FSS_COCHANNEL and/or FSS_BLOCKING points (0–2).
+
+    Semantics aligned with harness ``performIapForFssCochannel`` /
+    ``performIapForFssBlocking`` + TTC gate (not fixture geometry).
+    """
+    parsed = _fss_record_and_loc_freq(payload)
+    if parsed is None:
+        return []
+    record, loc, (fss_low, fss_high) = parsed
+    if fss_low <= 0 or fss_high <= fss_low:
+        raise ProtectionEntityError("FSS operationFrequencyRange invalid")
+
+    ttc = parse_fss_ttc(payload) if isinstance(payload, dict) else None
     point_id = str(record.get("id") or "fss").strip() or "fss"
-    return ProtectionPoint(
-        point_id=f"fss:{point_id}",
-        latitude=loc[0],
-        longitude=loc[1],
-        low_hz=clipped[0],
-        high_hz=clipped[1],
-        threshold_dbm=profile.fss_cochannel_dbm,
-        entity_kind=ProtectedEntityKind.FSS_COCHANNEL,
-        pre_iap_margin_db=profile.pre_iap_margin_db,
-    )
+    band_low, band_high = cbrs_band_hz()
+    out: list[ProtectionPoint] = []
+
+    # Co-channel: FSS passband overlaps CBRS and extends to/above CBRS high
+    # (harness requires fss_high >= CBRS_HIGH for co-channel IAP).
+    if fss_high >= band_high and fss_low < band_high:
+        clipped = clip_frequency_to_cbrs(max(fss_low, band_low), band_high)
+        if clipped is not None:
+            out.append(
+                ProtectionPoint(
+                    point_id=f"fss-cc:{point_id}",
+                    latitude=loc[0],
+                    longitude=loc[1],
+                    low_hz=clipped[0],
+                    high_hz=clipped[1],
+                    threshold_dbm=profile.fss_cochannel_dbm,
+                    entity_kind=ProtectedEntityKind.FSS_COCHANNEL,
+                    pre_iap_margin_db=profile.pre_iap_margin_db,
+                    neighborhood_km=NEIGHBORHOOD_FSS_COCHANNEL_KM,
+                )
+            )
+
+    # Blocking: protect CBRS emissions below FSS low edge, unless FSS is
+    # entirely in 3700–4200 with TTC explicitly false.
+    entirely_ttc_band = fss_low >= FSS_TTC_LOW_HZ and fss_high <= FSS_TTC_HIGH_HZ
+    if entirely_ttc_band and ttc is False:
+        return out
+    if entirely_ttc_band and ttc is None:
+        raise ProtectionEntityError(
+            "FSS in 3700–4200 MHz requires explicit ttc for blocking applicability"
+        )
+    if fss_low > band_low:
+        block_high = min(fss_low, band_high)
+        if block_high > band_low:
+            out.append(
+                ProtectionPoint(
+                    point_id=f"fss-bl:{point_id}",
+                    latitude=loc[0],
+                    longitude=loc[1],
+                    low_hz=band_low,
+                    high_hz=block_high,
+                    threshold_dbm=profile.fss_blocking_dbm,
+                    entity_kind=ProtectedEntityKind.FSS_BLOCKING,
+                    pre_iap_margin_db=profile.pre_iap_margin_db,
+                    neighborhood_km=NEIGHBORHOOD_FSS_BLOCKING_KM,
+                )
+            )
+    return out
+
+
+def protection_point_from_fss_payload(
+    payload: dict[str, Any],
+    *,
+    profile: IapThresholdProfile = IapThresholdProfile(),
+) -> ProtectionPoint | None:
+    """Back-compat: first co-channel point if any, else first blocking point."""
+    points = protection_points_from_fss_payload(payload, profile=profile)
+    for pt in points:
+        if pt.entity_kind is ProtectedEntityKind.FSS_COCHANNEL:
+            return pt
+    return points[0] if points else None
 
 
 def protection_point_from_wisp_payload(
@@ -167,7 +300,6 @@ def protection_point_from_wisp_payload(
     *,
     profile: IapThresholdProfile = IapThresholdProfile(),
 ) -> ProtectionPoint | None:
-    # Lazy import avoids services.iap ↔ dpa_protection cycle at package import.
     from services.dpa_protection import polygon_representative_point
 
     record = payload.get("record")
@@ -183,7 +315,10 @@ def protection_point_from_wisp_payload(
     if isinstance(deps, list) and deps and isinstance(deps[0], dict):
         fr = _freq_pair((deps[0].get("operationParam") or {}).get("operationFrequencyRange"))
     if fr is None:
-        fr = cbrs_band_hz()
+        # Record omitted frequency: protect GWPZ-typical upper CBRS segment
+        # from spectrum profile (3650–3700 when band is standard CBRS).
+        band_low, band_high = cbrs_band_hz()
+        fr = (max(band_low, 3_650_000_000), band_high)
     clipped = clip_frequency_to_cbrs(fr[0], fr[1])
     if clipped is None:
         return None
@@ -197,13 +332,35 @@ def protection_point_from_wisp_payload(
         threshold_dbm=profile.gwpz_dbm,
         entity_kind=ProtectedEntityKind.GWPZ,
         pre_iap_margin_db=profile.pre_iap_margin_db,
+        neighborhood_km=NEIGHBORHOOD_GWPZ_KM,
     )
+
+
+def _pal_freq_from_record(pal: dict[str, Any]) -> tuple[int, int] | None:
+    """Resolve PAL protected band from common WINNF / marketplace shapes."""
+    channel = pal.get("channelAssignment") or {}
+    if isinstance(channel, dict):
+        primary = channel.get("primaryAssignment")
+        if isinstance(primary, dict):
+            fr = _freq_pair(primary.get("operationFrequencyRange")) or _freq_pair(primary)
+            if fr is not None:
+                return fr
+        fr = _freq_pair(channel.get("operationFrequencyRange"))
+        if fr is not None:
+            return fr
+    block = pal.get("palBlock")
+    if isinstance(block, dict):
+        fr = _freq_pair(block)
+        if fr is not None:
+            return fr
+    return _freq_pair(pal.get("operationFrequencyRange"))
 
 
 def protection_point_from_zone_payload(
     payload: dict[str, Any],
     *,
     profile: IapThresholdProfile = IapThresholdProfile(),
+    pal_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> ProtectionPoint | None:
     from services.dpa_protection import polygon_representative_point
 
@@ -212,16 +369,38 @@ def protection_point_from_zone_payload(
         return None
     if record.get("terminated") is True:
         return None
-    # Align with grant/PPA/CPAS consumers: only real PPAs become IAP points.
     if record.get("usage") != "PPA" and "ppaInfo" not in record:
         return None
     geom = _geometry_from_zone_blob(record.get("zone"))
     loc = polygon_representative_point(geom)
     if loc is None:
         return None
-    # PPA frequency may be absent on ZoneData; protect full band until PAL binding exists.
-    band_low, band_high = cbrs_band_hz()
-    clipped = clip_frequency_to_cbrs(band_low, band_high)
+
+    pals = pal_by_id or {}
+    ppa_info = record.get("ppaInfo") or {}
+    pal_ids = ppa_info.get("palId") or []
+    ranges: list[tuple[int, int]] = []
+    if isinstance(pal_ids, list):
+        for pal_id in pal_ids:
+            pal = pals.get(str(pal_id))
+            if not isinstance(pal, dict):
+                continue
+            pf = _pal_freq_from_record(pal)
+            if pf is not None:
+                ranges.append(pf)
+    if ranges:
+        low = min(r[0] for r in ranges)
+        high = max(r[1] for r in ranges)
+        clipped = clip_frequency_to_cbrs(low, high)
+    else:
+        # No usable PAL binding: cannot invent a protected band silently.
+        # Fail closed at builder → omit point (caller may treat missing PPA
+        # PAL as incomplete when PPA requires protection).
+        logger.info(
+            "PPA %s has no resolvable PAL frequency; skipping IAP point",
+            record.get("id"),
+        )
+        return None
     if clipped is None:
         return None
     point_id = str(record.get("id") or "ppa").strip() or "ppa"
@@ -234,6 +413,7 @@ def protection_point_from_zone_payload(
         threshold_dbm=profile.ppa_dbm,
         entity_kind=ProtectedEntityKind.PPA,
         pre_iap_margin_db=profile.pre_iap_margin_db,
+        neighborhood_km=NEIGHBORHOOD_PPA_KM,
     )
 
 
@@ -243,22 +423,35 @@ def protection_point_from_esc_sensor_record(
     record_id: str,
     profile: IapThresholdProfile = IapThresholdProfile(),
 ) -> ProtectionPoint | None:
+    if not isinstance(record, dict):
+        raise ProtectionEntityError("ESC sensor record must be an object")
     loc = _point_from_installation(record.get("installationParam"))
     if loc is None:
-        # Some ESC wraps nest installation under deploymentParam[0].
         deps = record.get("deploymentParam")
         if isinstance(deps, list) and deps and isinstance(deps[0], dict):
             loc = _point_from_installation(deps[0].get("installationParam"))
     if loc is None:
+        # Incomplete sensor without coordinates: skip (not fail-open protection).
         return None
     fr = None
+    saw_freq_blob = False
     for key in ("protectionFrequencyRange", "operationFrequencyRange"):
-        fr = _freq_pair(record.get(key))
-        if fr is not None:
+        blob = record.get(key)
+        if isinstance(blob, dict) and (
+            "lowFrequency" in blob or "highFrequency" in blob
+        ):
+            saw_freq_blob = True
+            fr = _freq_pair(blob)
+            if fr is None:
+                raise ProtectionEntityError(
+                    f"ESC {record_id} frequency range invalid"
+                )
             break
     if fr is None:
+        if saw_freq_blob:
+            raise ProtectionEntityError(f"ESC {record_id} frequency range invalid")
+        # Spectrum-profile default lower 100 MHz (class B config, not fixture).
         band_low, band_high = cbrs_band_hz()
-        # ESC default: lower portion of the active band when record omits a range.
         fr = (band_low, min(band_high, band_low + 100_000_000))
     clipped = clip_frequency_to_cbrs(fr[0], fr[1])
     if clipped is None:
@@ -273,7 +466,19 @@ def protection_point_from_esc_sensor_record(
         threshold_dbm=profile.esc_dbm,
         entity_kind=ProtectedEntityKind.ESC,
         pre_iap_margin_db=profile.pre_iap_margin_db,
+        neighborhood_km=NEIGHBORHOOD_ESC_KM,
     )
+
+
+def _index_pals(pal_payloads: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for pal in pal_payloads or []:
+        if not isinstance(pal, dict):
+            continue
+        pid = pal.get("palId") or (pal.get("record") or {}).get("palId")
+        if pid:
+            out[str(pid)] = pal
+    return out
 
 
 def build_protection_points_from_payloads(
@@ -282,16 +487,16 @@ def build_protection_points_from_payloads(
     wisp_payloads: list[dict[str, Any]] | None = None,
     zone_payloads: list[dict[str, Any]] | None = None,
     esc_records: list[tuple[str, dict[str, Any]]] | None = None,
+    pal_payloads: list[dict[str, Any]] | None = None,
     profile: IapThresholdProfile | None = None,
 ) -> list[ProtectionPoint]:
     """Build IAP points from already-loaded payloads (frozen or live)."""
     thr = profile or IapThresholdProfile()
     points: list[ProtectionPoint] = []
+    pal_by_id = _index_pals(pal_payloads)
 
     for payload in fss_payloads or []:
-        pt = protection_point_from_fss_payload(payload, profile=thr)
-        if pt is not None:
-            points.append(pt)
+        points.extend(protection_points_from_fss_payload(payload, profile=thr))
 
     for payload in wisp_payloads or []:
         pt = protection_point_from_wisp_payload(payload, profile=thr)
@@ -299,7 +504,9 @@ def build_protection_points_from_payloads(
             points.append(pt)
 
     for payload in zone_payloads or []:
-        pt = protection_point_from_zone_payload(payload, profile=thr)
+        pt = protection_point_from_zone_payload(
+            payload, profile=thr, pal_by_id=pal_by_id
+        )
         if pt is not None:
             points.append(pt)
 
@@ -314,19 +521,69 @@ def build_protection_points_from_payloads(
     return points
 
 
+def _assert_frozen_esc_connectivity(
+    protection_records: tuple[tuple[str, str, str], ...],
+) -> None:
+    """Fail-closed when frozen ESC state is invalid (not missing)."""
+    from services.esc_admin_service import (
+        KIND_ESC_STATE,
+        EscConnectivityError,
+        EscConnectivityState,
+        parse_frozen_esc_connectivity,
+    )
+
+    for kind, _rid, data_json in protection_records:
+        if kind != KIND_ESC_STATE:
+            continue
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise ProtectionEntityError("esc_state JSON invalid") from exc
+        try:
+            state = parse_frozen_esc_connectivity(data)
+        except EscConnectivityError as exc:
+            raise ProtectionEntityError(str(exc)) from exc
+        if state in {EscConnectivityState.INVALID, EscConnectivityState.UNKNOWN}:
+            raise ProtectionEntityError(
+                f"ESC connectivity state {state.value} cannot authorize RF"
+            )
+        # CONNECTED / DISCONNECTED / ABSENT: keep ESC IAP points active.
+        # Disconnect/absent strengthen DPA/IPR paths; they do not drop EPR IAP.
+        return
+
+
+def protection_points_from_peer_esc_records(
+    peer_esc_records: list[dict[str, Any]],
+    *,
+    profile: IapThresholdProfile | None = None,
+) -> list[ProtectionPoint]:
+    """Build ESC ProtectionPoints from frozen peer FAD esc_sensor payloads."""
+    thr = profile or IapThresholdProfile()
+    out: list[ProtectionPoint] = []
+    for idx, record in enumerate(peer_esc_records):
+        if not isinstance(record, dict):
+            continue
+        rid = str(record.get("id") or f"peer-esc:{idx}")
+        pt = protection_point_from_esc_sensor_record(
+            record, record_id=f"peer:{rid}", profile=thr
+        )
+        if pt is not None:
+            out.append(pt)
+    return out
+
+
 def build_protection_points_from_frozen(
     protection_records: tuple[tuple[str, str, str], ...],
     *,
     profile: IapThresholdProfile | None = None,
+    peer_esc_records: list[dict[str, Any]] | None = None,
 ) -> list[ProtectionPoint]:
-    """Build IAP points from ``CpasSnapshot.protection_records`` generation N.
-
-    Each tuple is ``(kind, record_id, data_json)`` with kind in
-    ``{fss, wisp, zone, esc_sensor}``.
-    """
+    """Build IAP points from ``CpasSnapshot.protection_records`` generation N."""
+    _assert_frozen_esc_connectivity(protection_records)
     fss: list[dict[str, Any]] = []
     wisp: list[dict[str, Any]] = []
     zones: list[dict[str, Any]] = []
+    pals: list[dict[str, Any]] = []
     esc: list[tuple[str, dict[str, Any]]] = []
     for kind, record_id, data_json in protection_records:
         try:
@@ -341,15 +598,29 @@ def build_protection_points_from_frozen(
             wisp.append(data)
         elif kind == KIND_ZONE:
             zones.append(data)
+        elif kind == KIND_PAL:
+            pals.append(data)
         elif kind == "esc_sensor":
             esc.append((record_id, data))
-    return build_protection_points_from_payloads(
+        # gwbl / exclusion_zone / ntia / esc_state: pre-IAP or connectivity only.
+    points = build_protection_points_from_payloads(
         fss_payloads=fss,
         wisp_payloads=wisp,
         zone_payloads=zones,
         esc_records=esc,
+        pal_payloads=pals,
         profile=profile,
     )
+    if peer_esc_records:
+        points.extend(
+            protection_points_from_peer_esc_records(
+                peer_esc_records, profile=profile
+            )
+        )
+        points.sort(
+            key=lambda p: (p.entity_kind.value, p.point_id, p.low_hz, p.high_hz)
+        )
+    return points
 
 
 def build_protection_points_from_db(
@@ -369,11 +640,14 @@ def build_protection_points_from_db(
         if isinstance(data, dict):
             esc_records.append((row.record_id, data))
 
+    from services.pal_service import load_pal_records
+
     points = build_protection_points_from_payloads(
         fss_payloads=load_injected(db, KIND_FSS),
         wisp_payloads=load_injected(db, KIND_WISP),
         zone_payloads=load_injected(db, KIND_ZONE),
         esc_records=esc_records,
+        pal_payloads=load_pal_records(db),
         profile=profile,
     )
     logger.debug("Built %d IAP protection points from injections", len(points))
@@ -381,20 +655,47 @@ def build_protection_points_from_db(
 
 
 def capture_protection_records_for_freeze(db: Session) -> tuple[tuple[str, str, str], ...]:
-    """Snapshot protection entity payloads for CPAS generation N."""
+    """Snapshot protection entity payloads for CPAS generation N.
+
+    Includes FSS/WISP/ZONE/ESC/PAL/GWBL plus EXZ/NTIA and ESC connectivity
+    so EXZ/EPR evaluate without live N+1 regulatory reads.
+    """
     from models.models import EscSensor
+    from services.esc_admin_service import capture_esc_connectivity_for_freeze
+    from services.exclusion_zone_service import capture_exclusion_zone_records_for_freeze
+    from services.pal_service import load_pal_records
 
     rows: list[tuple[str, str, str]] = []
-    for kind in (KIND_FSS, KIND_WISP, KIND_ZONE):
+    for kind in (KIND_FSS, KIND_WISP, KIND_ZONE, KIND_GWBL):
         for idx, payload in enumerate(load_injected(db, kind)):
             record_id = ""
             if isinstance(payload, dict):
-                record = payload.get("record") if isinstance(payload.get("record"), dict) else payload
+                record = (
+                    payload.get("record")
+                    if isinstance(payload.get("record"), dict)
+                    else payload
+                )
                 if isinstance(record, dict):
-                    record_id = str(record.get("id") or "")
+                    record_id = str(
+                        record.get("id")
+                        or record.get("palId")
+                        or payload.get("palId")
+                        or ""
+                    )
             if not record_id:
                 record_id = f"{kind}:{idx}"
-            rows.append((kind, record_id, json.dumps(payload, sort_keys=True, default=str)))
+            rows.append(
+                (kind, record_id, json.dumps(payload, sort_keys=True, default=str))
+            )
+
+    for idx, pal in enumerate(load_pal_records(db)):
+        pal_id = str(pal.get("palId") or f"pal:{idx}")
+        rows.append(
+            (KIND_PAL, pal_id, json.dumps(pal, sort_keys=True, default=str))
+        )
+
+    rows.extend(capture_exclusion_zone_records_for_freeze(db))
+    rows.append(capture_esc_connectivity_for_freeze(db))
 
     for row in db.query(EscSensor).order_by(EscSensor.id).all():
         rows.append(("esc_sensor", str(row.record_id), row.data_json or "{}"))

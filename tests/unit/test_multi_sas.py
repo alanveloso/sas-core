@@ -395,6 +395,9 @@ def test_ppa_conflict_terminates_overlapping_grant(db_session, monkeypatch):
 
 
 def test_esc_peer_conflict_terminates_nearby_grant(db_session, monkeypatch):
+    from services.iap import coupling as coupling_mod
+    from services.iap.aggregate import dbm_to_mw
+
     cbsd, grant = _add_cbsd_grant(db_session, fcc="fcc-e", serial="sn-e", grant_id="GE")
     peer = PeerSas(certificate_hash="peer-e", url=PEER_BASE)
     db_session.add(peer)
@@ -413,6 +416,13 @@ def test_esc_peer_conflict_terminates_nearby_grant(db_session, monkeypatch):
         )
     )
     db_session.commit()
+    # Peer ESC also yields an IAP ProtectionPoint (C4); stub coupling so boolean
+    # peer_esc terminate remains the assertion under test without ITM/ENV.
+    monkeypatch.setattr(
+        coupling_mod,
+        "make_production_iap_coupling",
+        lambda **_k: (lambda g, p, ch, eirp: dbm_to_mw(eirp) * 1e-20),
+    )
     snap = freeze_cpas_snapshot(db_session)
     decisions = evaluate_cpas_protections(db_session, snap)
     assert any(d.reason == "peer_esc" and d.grant_pk == grant.id for d in decisions)

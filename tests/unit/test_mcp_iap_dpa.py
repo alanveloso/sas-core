@@ -168,7 +168,18 @@ def test_zone_without_ppa_markers_is_not_iap_point():
                     ],
                 },
             }
-        }
+        },
+        pal_by_id={
+            "pal-x": {
+                "palId": "pal-x",
+                "channelAssignment": {
+                    "primaryAssignment": {
+                        "lowFrequency": 3_550_000_000,
+                        "highFrequency": 3_560_000_000,
+                    }
+                },
+            }
+        },
     )
     assert ppa is not None
     assert ppa.entity_kind == ProtectedEntityKind.PPA
@@ -200,7 +211,11 @@ def test_default_cpas_without_entities_skips_iap_legitimately(
     )
     db_session.commit()
     snap = freeze_cpas_snapshot(db_session)
-    assert snap.protection_records == ()
+    # Connectivity is always frozen; without sensors/zones there are no IAP points.
+    assert all(k == "esc_state" for k, _r, _d in snap.protection_records)
+    from services.iap.protection_points import build_protection_points_from_frozen
+
+    assert build_protection_points_from_frozen(snap.protection_records) == []
     decisions = evaluate_cpas_protections(db_session, snap)
     assert calls == []
     assert all(d.reason != "iap" for d in decisions)

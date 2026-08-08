@@ -40,6 +40,7 @@ def resolve_iap_points(
     *,
     build_from_db: bool = True,
     protection_records: tuple[tuple[str, str, str], ...] | None = None,
+    peer_esc_records: list[dict[str, Any]] | None = None,
 ) -> list[Any]:
     """Return explicit points, or build from frozen/live entities when enabled."""
     if iap_points is not None:
@@ -49,7 +50,11 @@ def resolve_iap_points(
     if protection_records is not None:
         from services.iap.protection_points import build_protection_points_from_frozen
 
-        return list(build_protection_points_from_frozen(protection_records))
+        return list(
+            build_protection_points_from_frozen(
+                protection_records, peer_esc_records=peer_esc_records
+            )
+        )
     from services.iap.protection_points import build_protection_points_from_db
 
     return list(build_protection_points_from_db(db))
@@ -63,6 +68,7 @@ def resolve_iap_context(
     iap_coupling: Any | None = None,
     build_from_db: bool = True,
     coupling_factory: Any | None = None,
+    peer_esc_records: list[dict[str, Any]] | None = None,
 ) -> IapResolveResult:
     """Resolve ProtectionPoints + coupling for production or test override.
 
@@ -77,17 +83,24 @@ def resolve_iap_context(
         iap_enabled,
         make_production_iap_coupling,
     )
+    from services.iap.protection_points import ProtectionEntityError
     from services.propagation.errors import PropagationUnavailableError
 
     if not iap_enabled():
         return IapResolveResult(points=(), coupling=None, source="disabled")
 
-    points = resolve_iap_points(
-        db,
-        iap_points,
-        build_from_db=build_from_db,
-        protection_records=protection_records if iap_points is None else None,
-    )
+    try:
+        points = resolve_iap_points(
+            db,
+            iap_points,
+            build_from_db=build_from_db,
+            protection_records=protection_records if iap_points is None else None,
+            peer_esc_records=peer_esc_records if iap_points is None else None,
+        )
+    except ProtectionEntityError as exc:
+        raise IapCouplingUnavailable(
+            f"IAP protection entity invalid: {exc}"
+        ) from exc
     if not points:
         return IapResolveResult(points=(), coupling=None, source="none")
 

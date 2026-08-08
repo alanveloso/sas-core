@@ -193,6 +193,16 @@ def distance_to_geojson_m(
     return best
 
 
+def geojson_geometry_usable(zone: dict[str, Any] | None) -> bool:
+    """True when zone yields at least one valid closed outer ring."""
+    if not zone or not isinstance(zone, dict):
+        return False
+    rings = iter_geojson_rings(zone)
+    if not rings:
+        return False
+    return any(_ring_is_valid(ring) for ring in rings)
+
+
 def within_geojson_buffer_m(
     lat: float,
     lon: float,
@@ -203,6 +213,8 @@ def within_geojson_buffer_m(
     if not zone:
         return False
     for ring in iter_geojson_rings(zone):
+        if not _ring_is_valid(ring):
+            continue
         bbox = _ring_bbox(ring)
         if bbox is not None:
             expanded = _expand_bbox_m(bbox, buffer_m + 5.0, lat)

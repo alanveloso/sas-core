@@ -99,7 +99,7 @@ def _parse_installation_from_registration(
 ) -> dict[str, Any]:
     """Extract installation / category fields used by RF evaluation."""
     install: dict[str, Any] = {}
-    category = (cbsd_category_fallback or "A").upper()
+    category = (cbsd_category_fallback or "").upper()
     if registration_json:
         try:
             reg = json.loads(registration_json)
@@ -112,7 +112,9 @@ def _parse_installation_from_registration(
             if reg.get("cbsdCategory"):
                 category = str(reg["cbsdCategory"]).upper()
     if category not in {"A", "B"}:
-        category = "A"
+        # Unknown: do not silently force Cat A (ESC 40 km would under-protect).
+        # Empty string → ESC IAP uses Cat-B distance (80 km) conservatively.
+        category = ""
     return {"install": install, "cbsd_category": category}
 
 
@@ -217,6 +219,7 @@ def frozen_to_iap_grant_rf(frozen: FrozenLocalGrantRf) -> Any | None:
         is_managing_sas=True,
         grant_pk=frozen.grant_pk,
         source_sas_id=None,
+        cbsd_category=str(frozen.cbsd_category) if frozen.cbsd_category else None,
     )
 
 @dataclass(frozen=True)
@@ -360,8 +363,16 @@ def freeze_cpas_snapshot(
         for row in peer_rows
     )
     from services.iap.protection_points import capture_protection_records_for_freeze
+    from services.exclusion_zone_service import (
+        ExclusionZoneError,
+        ExclusionZoneUnavailable,
+    )
 
-    protection_records = capture_protection_records_for_freeze(db)
+    try:
+        protection_records = capture_protection_records_for_freeze(db)
+    except (ExclusionZoneError, ExclusionZoneUnavailable) as exc:
+        raise CpasRfEvaluationError(f"CPAS EXZ freeze failed: {exc}") from exc
+
     frozen_locals = tuple(local_grants)
     return CpasSnapshot(
         frozen_at=utc_now().replace(microsecond=0).isoformat(),
@@ -458,6 +469,7 @@ def evaluate_cpas_protections(
     peer_cbsd = _frozen_peer_records(snapshot, "cbsd")
     peer_zones = _frozen_peer_records(snapshot, "zone")
     peer_esc = _frozen_peer_records(snapshot, "esc_sensor")
+    pal_by_id = _frozen_pal_index(snapshot.protection_records)
     peer_decisions: list[CpasDecision] = []
     decided_pks: set[int] = set()
     for frozen in local_grants:
@@ -466,7 +478,9 @@ def evaluate_cpas_protections(
         reason: str | None = None
         if _frozen_peer_has_grant_for_cbsd(frozen, peer_cbsd):
             reason = "peer_same_cbsd_grant"
-        elif _frozen_conflicts_peer_ppa(db, frozen, peer_zones):
+        elif _frozen_conflicts_peer_ppa(
+            db, frozen, peer_zones, pal_by_id=pal_by_id
+        ):
             reason = "peer_ppa"
         elif _frozen_conflicts_peer_esc(frozen, peer_esc):
             reason = "peer_esc"
@@ -483,6 +497,30 @@ def evaluate_cpas_protections(
             )
             decided_pks.add(frozen.grant_pk)
 
+    # Pre-IAP EZ terminations (GWPZ / FSS+GWBL / TTC purge) — local only.
+    from services.iap.pre_iap_exclusions import evaluate_pre_iap_exclusions
+    from services.iap.protection_points import ProtectionEntityError
+
+    try:
+        for frozen, reason in evaluate_pre_iap_exclusions(
+            local_grants, snapshot.protection_records
+        ):
+            if frozen.grant_pk in decided_pks:
+                continue
+            peer_decisions.append(
+                CpasDecision(
+                    grant_pk=frozen.grant_pk,
+                    grant_id=frozen.grant_id,
+                    cbsd_id=frozen.cbsd_id,
+                    reason=reason,
+                    action="terminate",
+                    explanation=reason,
+                )
+            )
+            decided_pks.add(frozen.grant_pk)
+    except ProtectionEntityError as exc:
+        raise CpasRfEvaluationError(f"pre-IAP exclusion failed: {exc}") from exc
+
     # Production IAP: build points from frozen protection_records + production
     # coupling unless explicit test overrides are provided.
     iap_decisions: list[CpasDecision] = []
@@ -493,6 +531,7 @@ def evaluate_cpas_protections(
             iap_points=iap_points,
             iap_coupling=iap_coupling,
             build_from_db=build_iap_points_from_db,
+            peer_esc_records=peer_esc,
         )
     except IapCouplingUnavailable as exc:
         raise CpasRfEvaluationError(str(exc)) from exc
@@ -952,10 +991,33 @@ def _frozen_peer_has_grant_for_cbsd(
     return False
 
 
+def _frozen_pal_index(
+    protection_records: tuple[tuple[str, str, str], ...],
+) -> dict[str, dict[str, Any]]:
+    from services.iap.protection_points import KIND_PAL
+
+    out: dict[str, dict[str, Any]] = {}
+    for kind, _rid, data_json in protection_records:
+        if kind != KIND_PAL:
+            continue
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        pid = data.get("palId")
+        if pid:
+            out[str(pid)] = data
+    return out
+
+
 def _frozen_conflicts_peer_ppa(
     db: Session,
     frozen: FrozenLocalGrantRf,
     peer_zones: list[dict[str, Any]],
+    *,
+    pal_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
     from services.geometry import within_geojson_buffer_m
 
@@ -974,7 +1036,7 @@ def _frozen_conflicts_peer_ppa(
             buffer_m,
         ):
             continue
-        for low, high in _ppa_protected_ranges(db, record):
+        for low, high in _ppa_protected_ranges(db, record, pal_by_id=pal_by_id):
             if _freq_overlaps(frozen.low_hz, frozen.high_hz, low, high):
                 return True
     return False
@@ -1055,22 +1117,30 @@ def _freq_overlaps(a_low: int, a_high: int, b_low: int, b_high: int) -> bool:
     return a_low < b_high and a_high > b_low
 
 
-def _ppa_protected_ranges(db: Session, ppa: dict[str, Any]) -> list[tuple[int, int]]:
-    """Resolve PPA-protected frequencies via linked local PAL records."""
-    from services.spectrum_inquiry_service import _load_injected, _pal_freq
+def _ppa_protected_ranges(
+    db: Session,
+    ppa: dict[str, Any],
+    *,
+    pal_by_id: dict[str, dict[str, Any]] | None = None,
+) -> list[tuple[int, int]]:
+    """Resolve PPA-protected frequencies via PAL records (frozen preferred)."""
+    from services.iap.protection_points import _pal_freq_from_record
+    from services.pal_service import load_pal_records
+    from services.spectrum_inquiry_service import _pal_freq
 
     ppa_info = ppa.get("ppaInfo") or {}
     pal_ids = ppa_info.get("palId") or []
     if not pal_ids:
         return []
-    pals = _load_injected(db, "pal")
-    pal_by_id = {p.get("palId"): p for p in pals if p.get("palId")}
+    if pal_by_id is None:
+        pals = load_pal_records(db)
+        pal_by_id = {str(p.get("palId")): p for p in pals if p.get("palId")}
     ranges: list[tuple[int, int]] = []
     for pal_id in pal_ids:
-        pal = pal_by_id.get(pal_id)
+        pal = pal_by_id.get(str(pal_id)) or pal_by_id.get(pal_id)
         if not pal:
             continue
-        pf = _pal_freq(pal)
+        pf = _pal_freq_from_record(pal) or _pal_freq(pal)
         if pf:
             ranges.append(pf)
     return ranges

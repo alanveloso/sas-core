@@ -169,10 +169,18 @@ def _build_available_channels(
 
     # Exclusions from GWPZ / WISP when CBSD is inside the zone.
     if lat is not None and lon is not None:
-        from services.exclusion_zone_service import exclusion_freq_ranges_at_point
+        from services.exclusion_zone_service import (
+            ExclusionZoneError,
+            ExclusionZoneUnavailable,
+            exclusion_freq_ranges_at_point,
+        )
 
-        for ex_low, ex_high in exclusion_freq_ranges_at_point(db, lat, lon):
-            segments = _subtract_range(segments, ex_low, ex_high)
+        try:
+            for ex_low, ex_high in exclusion_freq_ranges_at_point(db, lat, lon):
+                segments = _subtract_range(segments, ex_low, ex_high)
+        except (ExclusionZoneError, ExclusionZoneUnavailable):
+            # Fail-closed SIQ: withhold entire CBRS when EXZ data is unusable.
+            return []
 
         for wisp in wisps:
             zone = wisp.get("zone")
