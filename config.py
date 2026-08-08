@@ -111,6 +111,12 @@ class Settings(BaseSettings):
             "doctor/startup fail otherwise. SAS_PROTECTION_DATA_STRICT."
         ),
     )
+    # BPR Arrangement R path loss: ITM (default) or explicit free_space lab profile.
+    # Free Space is never a silent substitute when ITM/reference_models are missing.
+    sas_bpr_path_loss_model: Literal["itm", "free_space"] = Field(
+        default="itm",
+        description="SAS_BPR_PATH_LOSS_MODEL=itm|free_space (free_space lab/test only).",
+    )
 
     @field_validator("sas_execution_mode", mode="before")
     @classmethod
@@ -163,6 +169,18 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip().lower() not in ("0", "false", "no", "off")
         return bool(value)
+
+    @field_validator("sas_bpr_path_loss_model", mode="before")
+    @classmethod
+    def _normalize_bpr_path_loss_model(cls, value: object) -> object:
+        if value is None or value == "":
+            return "itm"
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("-", "_")
+            if normalized in ("free_space", "fs", "freespace"):
+                return "free_space"
+            return "itm"
+        return value
 
     @field_validator(
         "ssl_certfile",

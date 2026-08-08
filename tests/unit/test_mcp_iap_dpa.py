@@ -564,6 +564,7 @@ def test_mcp_dpa_uses_frozen_local_pks_not_live_n_plus_one(
 
     def _spy_refresh(db, **kwargs):
         seen["grant_pks"] = kwargs.get("grant_pks")
+        seen["local_grants"] = kwargs.get("local_grants")
         return real_refresh(db, **kwargs)
 
     monkeypatch.setattr(dpa_mod, "refresh_activation_movelists", _spy_refresh)
@@ -586,7 +587,9 @@ def test_mcp_dpa_uses_frozen_local_pks_not_live_n_plus_one(
         iap_coupling=_constant_coupling(1e-18),
         path_loss_fn=_stub_itm_fn(80.0),
     )
-    assert seen.get("grant_pks") == snapshot_n.active_grant_pks
+    local_ids = {g.grant_id for g in (seen.get("local_grants") or [])}
+    assert "grant-mcp-freeze-a" in local_ids
+    assert "grant-mcp-freeze-b" not in local_ids
     decided_ids = {d.grant_id for d in decisions_n}
     assert "grant-mcp-freeze-b" not in decided_ids
     assert "grant-mcp-freeze-a" in decided_ids
@@ -594,15 +597,14 @@ def test_mcp_dpa_uses_frozen_local_pks_not_live_n_plus_one(
 
     # Same local set for IAP path: only frozen PKs are loaded into RF grants.
     iap_seen: list[str] = []
-    real_iap = __import__(
-        "services.cpas_service", fromlist=["_evaluate_iap_decisions"]
-    )._evaluate_iap_decisions
+    cpas_mod = __import__("services.cpas_service", fromlist=["_evaluate_iap_decisions_from_frozen"])
+    real_iap = cpas_mod._evaluate_iap_decisions_from_frozen
 
-    def _spy_iap(db, grants, **kwargs):
-        iap_seen.extend(g.grant_id for g in grants)
-        return real_iap(db, grants, **kwargs)
+    def _spy_iap(local_grants, **kwargs):
+        iap_seen.extend(g.grant_id for g in local_grants)
+        return real_iap(local_grants, **kwargs)
 
-    monkeypatch.setattr("services.cpas_service._evaluate_iap_decisions", _spy_iap)
+    monkeypatch.setattr(cpas_mod, "_evaluate_iap_decisions_from_frozen", _spy_iap)
     evaluate_cpas_protections(
         db_session,
         snapshot_n,

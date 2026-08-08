@@ -638,3 +638,48 @@ def test_postgres_dpa_collect_uses_frozen_local_pks(pg_session):
         pg_session, grant_pks=snap_n1.active_grant_pks
     )
     assert {g.grant_id for g in frozen_n1} >= {"G-MCP-A", "G-MCP-B"}
+
+
+def test_postgres_rf_snapshot_n_vs_n1_registration_mutation(pg_session):
+    """C1: frozen local RF stays at generation N on real PostgreSQL."""
+    from services.cpas_service import evaluate_cpas_protections
+
+    grant = _seed_conflict_grant(
+        pg_session, fcc="fcc-rf-n", serial="sn-rf-n", grant_id="G-RF-N"
+    )
+    snap_n = freeze_cpas_snapshot(pg_session)
+    assert len(snap_n.local_grants) == 1
+    assert snap_n.local_grants[0].latitude == pytest.approx(39.0)
+    assert snap_n.local_grants[0].max_eirp_dbm_mhz == pytest.approx(20.0)
+
+    cbsd = pg_session.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).one()
+    cbsd.registration_json = json.dumps(
+        {
+            "cbsdCategory": "B",
+            "installationParam": {
+                "latitude": 41.25,
+                "longitude": -95.0,
+                "height": 25.0,
+                "heightType": "AGL",
+                "indoorDeployment": True,
+            },
+        }
+    )
+    cbsd.cbsd_category = "B"
+    grant.max_eirp = 32.0
+    pg_session.commit()
+
+    # Re-evaluate generation N: frozen RF must ignore live mutations.
+    assert snap_n.local_grants[0].latitude == pytest.approx(39.0)
+    assert snap_n.local_grants[0].height_m == pytest.approx(10.0)
+    assert snap_n.local_grants[0].cbsd_category == "A"
+    assert snap_n.local_grants[0].indoor is False
+    assert snap_n.local_grants[0].max_eirp_dbm_mhz == pytest.approx(20.0)
+    evaluate_cpas_protections(pg_session, snap_n)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    assert snap_n1.local_grants[0].latitude == pytest.approx(41.25)
+    assert snap_n1.local_grants[0].height_m == pytest.approx(25.0)
+    assert snap_n1.local_grants[0].cbsd_category == "B"
+    assert snap_n1.local_grants[0].indoor is True
+    assert snap_n1.local_grants[0].max_eirp_dbm_mhz == pytest.approx(32.0)

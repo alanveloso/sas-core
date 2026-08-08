@@ -36,6 +36,36 @@ _cpas_pipeline_lock = threading.RLock()  # SQLite / same-process aid
 
 
 @dataclass(frozen=True)
+class FrozenLocalGrantRf:
+    """Immutable local grant + installation RF captured at CPAS freeze time.
+
+    Evaluation must use this record as the source of truth for propagation /
+    DPA / IAP / peer-geo rules so mid-run registration or EIRP mutations cannot
+    mix generation N with N+1.
+    """
+
+    grant_pk: int
+    grant_id: str
+    cbsd_id: str
+    fcc_id: str
+    cbsd_serial_number: str
+    low_hz: int
+    high_hz: int
+    max_eirp_dbm_mhz: float | None
+    lifecycle_state: str
+    terminated: bool
+    latitude: float | None
+    longitude: float | None
+    height_m: float | None
+    height_type: str
+    indoor: bool
+    cbsd_category: str
+    antenna_azimuth: float | None = None
+    antenna_beamwidth: float | None = None
+    antenna_gain: float | None = None
+
+
+@dataclass(frozen=True)
 class CpasSnapshot:
     """Frozen view of local grants + peer sync inputs used for decisions."""
 
@@ -47,7 +77,144 @@ class CpasSnapshot:
     # (peer_sas_id, record_type, record_id, data_json).
     # Evaluation must use this set so mid-run peer N→N+1 cannot widen decisions.
     peer_records: tuple[tuple[int, str, str, str], ...] = ()
+    # Local RF/install params frozen with membership (generation N).
+    local_grants: tuple[FrozenLocalGrantRf, ...] = ()
 
+
+class CpasRfEvaluationError(Exception):
+    """Required CPAS RF/DPA evaluation failed; pipeline must abort (no silent skip)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _parse_installation_from_registration(
+    registration_json: str | None,
+    *,
+    cbsd_category_fallback: str | None = None,
+) -> dict[str, Any]:
+    """Extract installation / category fields used by RF evaluation."""
+    install: dict[str, Any] = {}
+    category = (cbsd_category_fallback or "A").upper()
+    if registration_json:
+        try:
+            reg = json.loads(registration_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            reg = {}
+        if isinstance(reg, dict):
+            raw_install = reg.get("installationParam") or {}
+            if isinstance(raw_install, dict):
+                install = raw_install
+            if reg.get("cbsdCategory"):
+                category = str(reg["cbsdCategory"]).upper()
+    if category not in {"A", "B"}:
+        category = "A"
+    return {"install": install, "cbsd_category": category}
+
+
+def _frozen_local_grant_from_orm(grant: Grant, cbsd: Cbsd) -> FrozenLocalGrantRf:
+    parsed = _parse_installation_from_registration(
+        cbsd.registration_json, cbsd_category_fallback=cbsd.cbsd_category
+    )
+    install = parsed["install"]
+    lat = lon = height = None
+    try:
+        lat = float(install["latitude"])
+        lon = float(install["longitude"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    try:
+        height = float(install.get("height"))
+    except (TypeError, ValueError):
+        height = None
+    height_type = str(install.get("heightType") or "AGL").upper()
+    if height_type not in {"AGL", "AMSL"}:
+        height_type = "AGL"
+
+    def _opt_float(key: str) -> float | None:
+        raw = install.get(key)
+        if raw is None or raw == "":
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    return FrozenLocalGrantRf(
+        grant_pk=int(grant.id),
+        grant_id=str(grant.grant_id),
+        cbsd_id=str(grant.cbsd_id),
+        fcc_id=str(cbsd.fcc_id or ""),
+        cbsd_serial_number=str(cbsd.cbsd_serial_number or ""),
+        low_hz=int(grant.low_frequency),
+        high_hz=int(grant.high_frequency),
+        max_eirp_dbm_mhz=(
+            float(grant.max_eirp) if grant.max_eirp is not None else None
+        ),
+        lifecycle_state=str(grant.lifecycle_state or ""),
+        terminated=bool(grant.terminated),
+        latitude=lat,
+        longitude=lon,
+        height_m=height,
+        height_type=height_type,
+        indoor=bool(install.get("indoorDeployment", False)),
+        cbsd_category=str(parsed["cbsd_category"]),
+        antenna_azimuth=_opt_float("antennaAzimuth"),
+        antenna_beamwidth=_opt_float("antennaBeamwidth"),
+        antenna_gain=_opt_float("antennaGain"),
+    )
+
+
+def frozen_to_dpa_grant_rf(frozen: FrozenLocalGrantRf) -> Any | None:
+    """Map a frozen local grant to ``DpaGrantRf`` when coordinates are present."""
+    from services.dpa_protection import DpaGrantRf
+
+    if frozen.latitude is None or frozen.longitude is None:
+        return None
+    height = float(frozen.height_m if frozen.height_m is not None else 0.0)
+    return DpaGrantRf(
+        grant_id=frozen.grant_id,
+        cbsd_id=frozen.cbsd_id,
+        latitude=float(frozen.latitude),
+        longitude=float(frozen.longitude),
+        height_m=height,
+        height_is_agl=frozen.height_type != "AMSL",
+        indoor=bool(frozen.indoor),
+        low_hz=int(frozen.low_hz),
+        high_hz=int(frozen.high_hz),
+        max_eirp_dbm_mhz=float(
+            frozen.max_eirp_dbm_mhz if frozen.max_eirp_dbm_mhz is not None else 0.0
+        ),
+        is_managing_sas=True,
+        cbsd_category=frozen.cbsd_category,
+    )
+
+
+def frozen_to_iap_grant_rf(frozen: FrozenLocalGrantRf) -> Any | None:
+    """Map a frozen local grant to IAP ``GrantRfInfo``."""
+    from services.iap import GrantRfInfo
+
+    if frozen.latitude is None or frozen.longitude is None:
+        return None
+    height = float(frozen.height_m if frozen.height_m is not None else 0.0)
+    return GrantRfInfo(
+        grant_id=frozen.grant_id,
+        cbsd_id=frozen.cbsd_id,
+        latitude=float(frozen.latitude),
+        longitude=float(frozen.longitude),
+        height_m=height,
+        height_is_agl=frozen.height_type != "AMSL",
+        indoor=bool(frozen.indoor),
+        low_hz=int(frozen.low_hz),
+        high_hz=int(frozen.high_hz),
+        max_eirp_dbm_mhz=float(
+            frozen.max_eirp_dbm_mhz if frozen.max_eirp_dbm_mhz is not None else 0.0
+        ),
+        is_managing_sas=True,
+        grant_pk=frozen.grant_pk,
+        source_sas_id=None,
+    )
 
 @dataclass(frozen=True)
 class CpasDecision:
@@ -165,15 +332,21 @@ def _append_cpas_audit(db: Session, event: str, detail: dict[str, Any]) -> None:
 def freeze_cpas_snapshot(
     db: Session, peer_sync_report: dict[str, Any] | None = None
 ) -> CpasSnapshot:
-    """Capture active grant PKs and peer FAD rows; decisions only use this set."""
+    """Capture active grant PKs, local RF params, and peer FAD rows."""
     # SessionLocal uses autoflush=False; pending peer/grant rows must be visible.
     db.flush()
-    rows = (
-        db.query(Grant.id)
+    grants = (
+        db.query(Grant)
         .filter_by(terminated=False)
         .order_by(Grant.id)
         .all()
     )
+    local_grants: list[FrozenLocalGrantRf] = []
+    for grant in grants:
+        cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+        if cbsd is None:
+            continue
+        local_grants.append(_frozen_local_grant_from_orm(grant, cbsd))
     peer_rows = (
         db.query(PeerFadRecord)
         .order_by(PeerFadRecord.peer_sas_id, PeerFadRecord.record_type, PeerFadRecord.id)
@@ -183,12 +356,14 @@ def freeze_cpas_snapshot(
         (int(row.peer_sas_id), row.record_type, row.record_id, row.data_json)
         for row in peer_rows
     )
+    frozen_locals = tuple(local_grants)
     return CpasSnapshot(
         frozen_at=utc_now().replace(microsecond=0).isoformat(),
-        active_grant_pks=tuple(int(r[0]) for r in rows),
+        active_grant_pks=tuple(g.grant_pk for g in frozen_locals),
         peer_sync_report=dict(peer_sync_report or {}),
         peer_record_count=len(peer_records),
         peer_records=peer_records,
+        local_grants=frozen_locals,
     )
 
 
@@ -242,8 +417,12 @@ def evaluate_cpas_protections(
     IAP runs next; DPA movelists are then refreshed with effective EIRPs so IAP
     and DPA constraints are jointly satisfied. Without IAP inputs, DPA-only
     evaluation matches the Rel1Ext IPR path.
+
+    Local RF/install parameters come from ``snapshot.local_grants`` (generation N).
+    When ``local_grants`` is empty (legacy test fixtures), values are hydrated once
+    from the DB into an in-memory freeze for this call only.
     """
-    if not snapshot.active_grant_pks:
+    if not snapshot.active_grant_pks and not snapshot.local_grants:
         return []
     from services.mcp_protection import (
         effective_eirp_by_grant_id,
@@ -253,42 +432,47 @@ def evaluate_cpas_protections(
         resolve_iap_points,
     )
 
+    local_grants = list(snapshot.local_grants)
+    if not local_grants and snapshot.active_grant_pks:
+        # Legacy snapshots that only carried PKs: hydrate once for this evaluation.
+        rows = (
+            db.query(Grant)
+            .filter(Grant.id.in_(snapshot.active_grant_pks))
+            .order_by(Grant.id)
+            .all()
+        )
+        for grant in rows:
+            cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+            if cbsd is not None:
+                local_grants.append(_frozen_local_grant_from_orm(grant, cbsd))
+
     peer_cbsd = _frozen_peer_records(snapshot, "cbsd")
     peer_zones = _frozen_peer_records(snapshot, "zone")
     peer_esc = _frozen_peer_records(snapshot, "esc_sensor")
     peer_decisions: list[CpasDecision] = []
     decided_pks: set[int] = set()
-    grants = (
-        db.query(Grant)
-        .filter(Grant.id.in_(snapshot.active_grant_pks))
-        .order_by(Grant.id)
-        .all()
-    )
-    for grant in grants:
-        if grant.terminated:
-            continue
-        cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
-        if cbsd is None:
+    for frozen in local_grants:
+        if frozen.terminated:
             continue
         reason: str | None = None
-        if peer_has_grant_for_cbsd(db, cbsd, peer_cbsd_records=peer_cbsd):
+        if _frozen_peer_has_grant_for_cbsd(frozen, peer_cbsd):
             reason = "peer_same_cbsd_grant"
-        elif _grant_conflicts_peer_ppa(db, cbsd, grant, peer_zones):
+        elif _frozen_conflicts_peer_ppa(db, frozen, peer_zones):
             reason = "peer_ppa"
-        elif _grant_conflicts_peer_esc(db, cbsd, grant, peer_esc):
+        elif _frozen_conflicts_peer_esc(frozen, peer_esc):
             reason = "peer_esc"
         if reason:
             peer_decisions.append(
                 CpasDecision(
-                    grant_pk=grant.id,
-                    grant_id=grant.grant_id,
-                    cbsd_id=grant.cbsd_id,
+                    grant_pk=frozen.grant_pk,
+                    grant_id=frozen.grant_id,
+                    cbsd_id=frozen.cbsd_id,
                     reason=reason,
                     action="terminate",
                     explanation=reason,
                 )
             )
-            decided_pks.add(grant.id)
+            decided_pks.add(frozen.grant_pk)
 
     # IAP runs only with coupling. Auto-build from injections is gated on coupling
     # so default CPAS does not silently skip configured entities (fail-open).
@@ -298,9 +482,8 @@ def evaluate_cpas_protections(
             db, iap_points, build_from_db=build_iap_points_from_db
         )
         if resolved_points:
-            iap_decisions = _evaluate_iap_decisions(
-                db,
-                grants,
+            iap_decisions = _evaluate_iap_decisions_from_frozen(
+                local_grants,
                 snapshot=snapshot,
                 decided_pks=decided_pks,
                 iap_points=resolved_points,
@@ -315,8 +498,8 @@ def evaluate_cpas_protections(
     eirp_map = effective_eirp_by_grant_id(iap_decisions)
     exclude_ids = iap_terminated_grant_ids(iap_decisions)
 
-    # Rel1Ext IPR / MCP: DPA uses the same frozen local PKs + peer FAD generation
-    # as IAP (never the live grant/peer tables for membership).
+    # Rel1Ext IPR / MCP: DPA uses the same frozen local RF + peer FAD generation
+    # as IAP (never live registration_json / EIRP for RF inputs).
     from services.dpa_protection import (
         dpa_grants_from_frozen_peer_cbsds,
         grant_on_any_movelist,
@@ -325,36 +508,54 @@ def evaluate_cpas_protections(
     from services.propagation.errors import PropagationUnavailableError
     from services.terrain.exceptions import TerrainError
 
+    frozen_dpa: list[Any] = []
+    for frozen in local_grants:
+        if frozen.grant_pk in decided_pks:
+            continue
+        if frozen.grant_id in exclude_ids:
+            continue
+        rf = frozen_to_dpa_grant_rf(frozen)
+        if rf is None:
+            continue
+        if eirp_map and frozen.grant_id in eirp_map:
+            from dataclasses import replace
+
+            rf = replace(rf, max_eirp_dbm_mhz=float(eirp_map[frozen.grant_id]))
+        frozen_dpa.append(rf)
+
     peer_dpa_grants = dpa_grants_from_frozen_peer_cbsds(_frozen_peer_cbsd_rows(snapshot))
     dpa_decisions: list[CpasDecision] = []
     try:
         refresh_activation_movelists(
             db,
             path_loss_fn=path_loss_fn,
-            grant_pks=snapshot.active_grant_pks,
+            local_grants=frozen_dpa,
             peer_grants=peer_dpa_grants,
-            eirp_by_grant_id=eirp_map or None,
-            exclude_grant_ids=exclude_ids or None,
             commit=False,
         )
-        for grant in grants:
-            if grant.id in decided_pks:
+        for frozen in local_grants:
+            if frozen.grant_pk in decided_pks:
                 continue
-            if grant_on_any_movelist(db, grant.grant_id):
+            if grant_on_any_movelist(db, frozen.grant_id):
                 dpa_decisions.append(
                     CpasDecision(
-                        grant_pk=grant.id,
-                        grant_id=grant.grant_id,
-                        cbsd_id=grant.cbsd_id,
+                        grant_pk=frozen.grant_pk,
+                        grant_id=frozen.grant_id,
+                        cbsd_id=frozen.cbsd_id,
                         reason="dpa_movelist",
                         action="terminate",
                         explanation="dpa_movelist",
                     )
                 )
-                decided_pks.add(grant.id)
-    except (PropagationUnavailableError, TerrainError, ValueError, TypeError, KeyError):
-        # Do not invent terminations; peer/IAP decisions above still apply.
-        pass
+                decided_pks.add(frozen.grant_pk)
+    except (PropagationUnavailableError, TerrainError) as exc:
+        raise CpasRfEvaluationError(
+            f"CPAS DPA RF evaluation unavailable: {exc}"
+        ) from exc
+    except (ValueError, TypeError, KeyError) as exc:
+        raise CpasRfEvaluationError(
+            f"CPAS DPA RF evaluation failed: {type(exc).__name__}: {exc}"
+        ) from exc
 
     dpa_term_ids = {d.grant_id for d in dpa_decisions}
     iap_kept = [
@@ -365,50 +566,8 @@ def evaluate_cpas_protections(
     return merge_constraint_decisions(peer_decisions, iap_kept, dpa_decisions)
 
 
-def _local_grant_to_rf_info(db: Session, grant: Grant) -> Any | None:
-    from services.iap import GrantRfInfo
-
-    cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
-    if cbsd is None:
-        return None
-    install: dict[str, Any] = {}
-    if cbsd.registration_json:
-        try:
-            reg = json.loads(cbsd.registration_json)
-            if isinstance(reg, dict):
-                raw_install = reg.get("installationParam") or {}
-                if isinstance(raw_install, dict):
-                    install = raw_install
-        except (TypeError, ValueError, json.JSONDecodeError):
-            install = {}
-    try:
-        lat = float(install.get("latitude"))
-        lon = float(install.get("longitude"))
-    except (TypeError, ValueError):
-        return None
-    eirp = float(grant.max_eirp if grant.max_eirp is not None else 0.0)
-    height = float(install.get("height") or 0.0)
-    height_type = install.get("heightType") or "AGL"
-    return GrantRfInfo(
-        grant_id=grant.grant_id,
-        cbsd_id=grant.cbsd_id,
-        latitude=lat,
-        longitude=lon,
-        height_m=height,
-        height_is_agl=height_type != "AMSL",
-        indoor=bool(install.get("indoorDeployment")),
-        low_hz=int(grant.low_frequency),
-        high_hz=int(grant.high_frequency),
-        max_eirp_dbm_mhz=eirp,
-        is_managing_sas=True,
-        grant_pk=grant.id,
-        source_sas_id=None,
-    )
-
-
-def _evaluate_iap_decisions(
-    db: Session,
-    grants: list[Grant],
+def _evaluate_iap_decisions_from_frozen(
+    local_grants: list[FrozenLocalGrantRf],
     *,
     snapshot: CpasSnapshot,
     decided_pks: set[int],
@@ -419,18 +578,18 @@ def _evaluate_iap_decisions(
     from services.iap.peer_fad import grant_rf_infos_from_frozen_peer_cbsds
 
     rf_grants: list[Any] = []
-    for grant in grants:
-        if grant.terminated or grant.id in decided_pks:
+    for frozen in local_grants:
+        if frozen.terminated or frozen.grant_pk in decided_pks:
             continue
-        info = _local_grant_to_rf_info(db, grant)
+        info = frozen_to_iap_grant_rf(frozen)
         if info is not None:
             rf_grants.append(info)
 
-    # Peer FAD grants from the frozen snapshot only (never live PeerFadRecord).
-    peer_rf = grant_rf_infos_from_frozen_peer_cbsds(_frozen_peer_cbsd_rows(snapshot))
+    peer_rf = grant_rf_infos_from_frozen_peer_cbsds(
+        list(_frozen_peer_cbsd_rows(snapshot))
+    )
     rf_grants.extend(peer_rf)
 
-    # Deterministic order: local managing grants first (by pk), then peers.
     rf_grants.sort(
         key=lambda g: (
             0 if g.is_managing_sas else 1,
@@ -445,7 +604,6 @@ def _evaluate_iap_decisions(
     run = run_iap(list(iap_points), rf_grants, coupling=iap_coupling)
     out: list[CpasDecision] = []
     for item in run.merged_decisions:
-        # Peer grants never produce local CPAS mutations.
         if not item.grant_pk:
             continue
         if item.action == "keep":
@@ -463,6 +621,37 @@ def _evaluate_iap_decisions(
         )
     return out
 
+
+def _local_grant_to_rf_info(db: Session, grant: Grant) -> Any | None:
+    """Legacy helper: build IAP RF from live ORM (non-CPAS callers / tests)."""
+    cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+    if cbsd is None:
+        return None
+    return frozen_to_iap_grant_rf(_frozen_local_grant_from_orm(grant, cbsd))
+
+
+def _evaluate_iap_decisions(
+    db: Session,
+    grants: list[Grant],
+    *,
+    snapshot: CpasSnapshot,
+    decided_pks: set[int],
+    iap_points: list[Any],
+    iap_coupling: Any,
+) -> list[CpasDecision]:
+    """Legacy path kept for direct unit spies; prefer frozen evaluation."""
+    local = []
+    for grant in grants:
+        cbsd = db.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).first()
+        if cbsd is not None:
+            local.append(_frozen_local_grant_from_orm(grant, cbsd))
+    return _evaluate_iap_decisions_from_frozen(
+        local,
+        snapshot=snapshot,
+        decided_pks=decided_pks,
+        iap_points=iap_points,
+        iap_coupling=iap_coupling,
+    )
 
 def apply_cpas_decisions(db: Session, decisions: list[CpasDecision]) -> int:
     """Apply CPAS decisions via lifecycle / EIRP updates (no commit)."""
@@ -733,6 +922,75 @@ def peer_has_grant_for_cbsd(
         if record.get("id") != target_id:
             continue
         if _active_peer_grants(record):
+            return True
+    return False
+
+
+def _frozen_peer_has_grant_for_cbsd(
+    frozen: FrozenLocalGrantRf, peer_cbsd_records: list[dict[str, Any]]
+) -> bool:
+    target_id = fad_cbsd_id(frozen.fcc_id, frozen.cbsd_serial_number)
+    for record in peer_cbsd_records:
+        if record.get("id") != target_id:
+            continue
+        if _active_peer_grants(record):
+            return True
+    return False
+
+
+def _frozen_conflicts_peer_ppa(
+    db: Session,
+    frozen: FrozenLocalGrantRf,
+    peer_zones: list[dict[str, Any]],
+) -> bool:
+    from services.geometry import within_geojson_buffer_m
+
+    if frozen.latitude is None or frozen.longitude is None:
+        return False
+    buffer_m = _peer_ppa_buffer_m()
+    for record in peer_zones:
+        if record.get("usage") != "PPA" and "ppaInfo" not in record:
+            continue
+        if record.get("terminated") is True:
+            continue
+        if not within_geojson_buffer_m(
+            float(frozen.latitude),
+            float(frozen.longitude),
+            record.get("zone"),
+            buffer_m,
+        ):
+            continue
+        for low, high in _ppa_protected_ranges(db, record):
+            if _freq_overlaps(frozen.low_hz, frozen.high_hz, low, high):
+                return True
+    return False
+
+
+def _frozen_conflicts_peer_esc(
+    frozen: FrozenLocalGrantRf,
+    peer_esc_records: list[dict[str, Any]],
+) -> bool:
+    from services.geometry import haversine_m
+
+    esc_radius_m, esc_low, esc_high = _peer_esc_params()
+    if not _freq_overlaps(frozen.low_hz, frozen.high_hz, esc_low, esc_high):
+        return False
+    if frozen.latitude is None or frozen.longitude is None:
+        return False
+    for record in peer_esc_records:
+        inst = record.get("installationParam") or {}
+        esc_lat, esc_lon = inst.get("latitude"), inst.get("longitude")
+        if esc_lat is None or esc_lon is None:
+            continue
+        if (
+            haversine_m(
+                float(frozen.latitude),
+                float(frozen.longitude),
+                float(esc_lat),
+                float(esc_lon),
+            )
+            <= esc_radius_m
+        ):
             return True
     return False
 

@@ -195,7 +195,9 @@ def test_dpa_amsl_converts_via_terrain():
         "height": 150.0,
         "heightType": "AMSL",
     }
-    terrain = lambda *_: 50.0
+    def terrain(*_: object) -> float:
+        return 50.0
+
     result = compute_propagation_and_antenna_model(
         {
             "modelType": "3",

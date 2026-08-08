@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from services.iap.models import GrantRfInfo
 
@@ -79,7 +79,7 @@ def grant_rf_infos_from_peer_cbsd_record(
 
 
 def grant_rf_infos_from_frozen_peer_cbsds(
-    peer_cbsd_rows: list[tuple[str | int, dict[str, Any]]],
+    peer_cbsd_rows: Sequence[tuple[str | int, dict[str, Any]]],
 ) -> list[GrantRfInfo]:
     """Build peer RF grants from frozen ``(source_sas_id, cbsd_record)`` rows.
 
