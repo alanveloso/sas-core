@@ -258,7 +258,7 @@ def trigger_enable_ntia_15_517(db: Session = Depends(get_db)):
 @router.post("/injectdata/peer_sas")
 async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     """Persist peer SAS certificateHash + url for SAS↔SAS authorization."""
-    from services.ssrf import SsrfError, assert_https_egress_url_allowed
+    from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
 
     body: dict[str, Any] = {}
     try:
@@ -270,7 +270,9 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     if cert_hash:
         if url:
             try:
-                assert_https_egress_url_allowed(url, allow_lab_private=True)
+                assert_https_egress_url_allowed(
+                    url, allow_lab_private=allow_lab_private_egress()
+                )
             except SsrfError:
                 # Admin contract: invalid peer URL is ignored (no row poison).
                 return _empty_ok()

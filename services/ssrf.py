@@ -49,13 +49,29 @@ def _ip_blocked(
     return False
 
 
+def allow_lab_private_egress() -> bool:
+    """Whether loopback/RFC1918 egress is permitted for Admin/WDB pulls.
+
+    Enabled only when ``SAS_EXECUTION_MODE=certification`` (harness lab) or when
+    ``SAS_SSRF_ALLOW_LAB_PRIVATE`` is explicitly true. Production defaults to
+    fail-closed.
+    """
+    from config import get_settings
+
+    settings = get_settings()
+    if settings.sas_execution_mode == "certification":
+        return True
+    return bool(settings.sas_ssrf_allow_lab_private)
+
+
 def assert_https_egress_url_allowed(
-    url: str, *, allow_lab_private: bool = True
+    url: str, *, allow_lab_private: bool = False
 ) -> None:
     """Reject non-https, userinfo, metadata hosts, and blocked resolved IPs.
 
-    When ``allow_lab_private`` is true, loopback/RFC1918 are allowed only if the
-    hostname itself is loopback/private (lab/harness injects).
+    Fail-closed by default: loopback/RFC1918/link-local are blocked.
+    Pass ``allow_lab_private=True`` only for explicit lab/harness inject paths
+    where the hostname itself is loopback/private.
     """
     parsed = urlparse(url)
     if parsed.scheme.lower() != "https":

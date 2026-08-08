@@ -47,10 +47,12 @@ def _ssl_context() -> ssl.SSLContext:
 
 def _http_get(url: str, *, auth: bool = False) -> bytes:
     """Fetch URL without following redirects (SSRF / open-redirect control)."""
-    from services.ssrf import SsrfError, assert_https_egress_url_allowed
+    from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
 
     try:
-        assert_https_egress_url_allowed(url, allow_lab_private=True)
+        assert_https_egress_url_allowed(
+            url, allow_lab_private=allow_lab_private_egress()
+        )
     except SsrfError as exc:
         raise DatabaseSyncError(f"ssrf_blocked:{exc}") from exc
 

@@ -11,9 +11,10 @@ from starlette.requests import Request
 from config import clear_settings_cache, get_settings
 from main import app
 from services import mtls_auth, rbac, winnf_role_oids
+from services.rate_limit import clear_rate_limit_buckets
 from services.request_limits import RequestSizeLimitMiddleware
 from services.rbac import ROLE_CBSD, ROLE_DOMAIN_PROXY, ROLE_SAS, roles_for_surface
-from services.ssrf import SsrfError, assert_https_egress_url_allowed
+from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
 
 client = TestClient(app)
 
@@ -21,7 +22,9 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def _clear_settings():
     clear_settings_cache()
+    clear_rate_limit_buckets()
     yield
+    clear_rate_limit_buckets()
     clear_settings_cache()
 
 
@@ -69,7 +72,28 @@ def test_ssrf_allows_lab_loopback_https(monkeypatch):
         return [(None, None, None, None, ("127.0.0.1", 0))]
 
     monkeypatch.setattr("services.ssrf.socket.getaddrinfo", _fake_getaddrinfo)
-    assert_https_egress_url_allowed("https://127.0.0.1:8443/dump")
+    assert_https_egress_url_allowed(
+        "https://127.0.0.1:8443/dump", allow_lab_private=True
+    )
+    with pytest.raises(SsrfError):
+        # Default is fail-closed for loopback.
+        assert_https_egress_url_allowed("https://127.0.0.1:8443/dump")
+
+
+def test_allow_lab_private_egress_gated_by_mode(monkeypatch):
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
+    monkeypatch.setenv("SAS_SSRF_ALLOW_LAB_PRIVATE", "false")
+    clear_settings_cache()
+    assert allow_lab_private_egress() is False
+
+    monkeypatch.setenv("SAS_SSRF_ALLOW_LAB_PRIVATE", "true")
+    clear_settings_cache()
+    assert allow_lab_private_egress() is True
+
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "certification")
+    monkeypatch.setenv("SAS_SSRF_ALLOW_LAB_PRIVATE", "false")
+    clear_settings_cache()
+    assert allow_lab_private_egress() is True
 
 
 def test_request_size_limit_rejects_large_content_length(monkeypatch):
@@ -176,8 +200,10 @@ def test_asgi_size_limit_no_content_length_under_and_over(monkeypatch):
 
 def test_request_size_limit_preserves_valid_cbsd_body(monkeypatch):
     """Valid CBSD-shaped JSON under the limit reaches the route unchanged."""
+    monkeypatch.delenv("SAS_MAX_REQUEST_BODY_BYTES", raising=False)
     monkeypatch.setenv("SAS_MAX_REQUEST_BODY_BYTES", "65536")
     clear_settings_cache()
+    assert get_settings().sas_max_request_body_bytes == 65536
     payload = {
         "registrationRequest": [
             {
@@ -206,6 +232,24 @@ def test_request_size_limit_preserves_valid_cbsd_body(monkeypatch):
     # Auth / validation may fail; must not be size-limit 413 and body must parse.
     assert resp.status_code != 413
     assert len(raw) < get_settings().sas_max_request_body_bytes
+
+
+def test_rate_limit_ignores_spoofed_fingerprint_header(monkeypatch):
+    """Client-supplied x-ssl-client-sha1 must not split/bypass the IP bucket."""
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
+    monkeypatch.setenv("SAS_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("SAS_RATE_LIMIT_PER_SECOND", "1")
+    monkeypatch.setenv("SAS_RATE_LIMIT_BURST", "2")
+    clear_settings_cache()
+    codes = []
+    for i in range(5):
+        codes.append(
+            client.get(
+                "/admin/metrics",
+                headers={"x-ssl-client-sha1": f"AA:BB:CC:{i:02d}"},
+            ).status_code
+        )
+    assert 429 in codes
 
 
 def test_certification_keeps_size_limit_and_disables_rate_limit(monkeypatch):

@@ -85,6 +85,13 @@ class Settings(BaseSettings):
         default=8 * 1024 * 1024,
         description="Absolute cap on a single peer FAD activity file body.",
     )
+    sas_ssrf_allow_lab_private: bool = Field(
+        default=False,
+        description=(
+            "Allow loopback/RFC1918 egress targets for Admin/WDB pulls. "
+            "Forced on when SAS_EXECUTION_MODE=certification; keep false in production."
+        ),
+    )
 
     # API listeners
     api_host: str = "0.0.0.0"
@@ -176,6 +183,17 @@ class Settings(BaseSettings):
     @field_validator("sas_rate_limit_enabled", mode="before")
     @classmethod
     def _coerce_rate_limit_enabled(cls, value: object) -> object:
+        if value is None or value == "":
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
+
+    @field_validator("sas_ssrf_allow_lab_private", mode="before")
+    @classmethod
+    def _coerce_ssrf_allow_lab_private(cls, value: object) -> object:
         if value is None or value == "":
             return False
         if isinstance(value, bool):

@@ -15,6 +15,16 @@ from starlette.responses import JSONResponse, Response
 
 from config import get_settings
 
+# Instances registered so tests can reset in-process buckets between cases.
+_RATE_LIMIT_MIDDLEWARES: list[RateLimitMiddleware] = []
+
+
+def clear_rate_limit_buckets() -> None:
+    """Drop all token buckets (test isolation / config changes)."""
+    for mw in _RATE_LIMIT_MIDDLEWARES:
+        with mw._lock:
+            mw._buckets.clear()
+
 
 class _TokenBucket:
     __slots__ = ("tokens", "updated_at")
@@ -29,6 +39,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._lock = threading.Lock()
         self._buckets: dict[str, _TokenBucket] = {}
+        if self not in _RATE_LIMIT_MIDDLEWARES:
+            _RATE_LIMIT_MIDDLEWARES.append(self)
 
     def _enabled(self) -> bool:
         settings = get_settings()
@@ -37,10 +49,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return bool(settings.sas_rate_limit_enabled)
 
     def _client_key(self, request: Request) -> str:
-        # Prefer mTLS fingerprint when present; else peer host.
-        fp = request.headers.get("x-ssl-client-sha1") or ""
-        if fp.strip():
-            return f"cert:{fp.strip().upper()}"
+        # Prefer mTLS fingerprint from the TLS peer cert only — never trust
+        # client-supplied fingerprint headers (spoofable).
+        from services.mtls_auth import load_client_certificate, sha1_fingerprint_colon
+
+        cert = load_client_certificate(request)
+        if cert is not None:
+            return f"cert:{sha1_fingerprint_colon(cert)}"
         client = request.client
         if client is not None:
             return f"ip:{client.host}"
