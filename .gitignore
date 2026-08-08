@@ -13,6 +13,9 @@ htmlcov/
 artifacts/
 .cache/
 
+# P8-005 generated bundle (PREVIEW until rebuilt after P8-004 campaign).
+certification-package/
+
 # USGS NED GridFloat tiles (WInnForum Common-Data); keep README + VERSION.
 data/geo/ned/**
 !data/geo/ned/README.md

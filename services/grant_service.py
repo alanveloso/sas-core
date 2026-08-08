@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 
 from models.models import Cbsd, FccIdRecord, Grant
 from services.blacklist_service import is_cbsd_blacklisted
+from services.dpa_neighborhood import (
+    compute_transmit_expire_time,
+    fmt_transmit_expire,
+)
 from services.geometry import point_in_geojson
 from services.spectrum_inquiry_service import (
     CBRS_HIGH_HZ,
@@ -206,11 +210,13 @@ def _resolve_channel(
 
 
 def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
-    default = datetime.utcnow() + timedelta(seconds=DEFAULT_GRANT_DURATION_SEC)
+    from services.clock import ensure_utc, utc_now
+
+    default = utc_now() + timedelta(seconds=DEFAULT_GRANT_DURATION_SEC)
     if pal_license_exp is None:
         return default
     # Must be ≤ PAL licenseExpiration (GRA.13).
-    return min(default, pal_license_exp)
+    return min(default, ensure_utc(pal_license_exp))
 
 
 def process_grant(
@@ -301,9 +307,32 @@ def process_grant(
         # EXZ: CBSD inside / within 50 m of an exclusion zone with overlapping freq → 400.
         lat, lon = _cbsd_location(cbsd)
         if lat is not None and lon is not None:
-            from services.exclusion_zone_service import point_hits_exclusion_zone
+            from services.exclusion_zone_service import (
+                ExclusionZoneError,
+                ExclusionZoneUnavailable,
+                point_hits_exclusion_zone,
+            )
 
-            if point_hits_exclusion_zone(db, lat, lon, low, high):
+            try:
+                if point_hits_exclusion_zone(db, lat, lon, low, high):
+                    responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                    continue
+            except (ExclusionZoneError, ExclusionZoneUnavailable):
+                # Fail-closed: required EXZ data missing/invalid → deny grant.
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
+            # QPR: quiet-zone / FCC / Table Mountain / configurable protected areas.
+            from services.quiet_zone_service import grant_blocked_by_quiet_zone
+
+            if grant_blocked_by_quiet_zone(
+                lat,
+                lon,
+                cbsd_category=cbsd.cbsd_category or (_cbsd_reg(cbsd).get("cbsdCategory")),
+                low_hz=low,
+                high_hz=high,
+                db=db,
+            ):
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
@@ -311,6 +340,15 @@ def process_grant(
             from services.federal_db_service import grant_blocked_by_fss_gwbl
 
             if grant_blocked_by_fss_gwbl(db, lat, lon, low, high):
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
+            # IPR.3/4: Rel1Ext DPA neighborhood aggregate violation → 400.
+            from services.dpa_protection import proposed_grant_violates_dpa
+
+            if proposed_grant_violates_dpa(
+                db, cbsd, low_hz=low, high_hz=high, max_eirp_dbm_mhz=max_eirp
+            ):
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
@@ -359,6 +397,13 @@ def process_grant(
 
                 grant_id = f"grant/{uuid.uuid4().hex}"
                 expire = _grant_expire_time(pal_exp)
+                tx_expire = compute_transmit_expire_time(
+                    db,
+                    cbsd,
+                    expire,
+                    low_hz=int(low),
+                    high_hz=int(high),
+                )
 
                 stamp = grant_sync_stamp(db)
                 grant_payload = dict(req) if isinstance(req, dict) else {}
@@ -382,6 +427,7 @@ def process_grant(
                         high_frequency=high,
                         max_eirp=max_eirp,
                         grant_expire_time=expire,
+                        transmit_expire_time=tx_expire,
                         heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
                         lifecycle_state=GrantState.GRANTED.value,
                         grant_json=json.dumps(grant_payload),
@@ -393,6 +439,7 @@ def process_grant(
                         "cbsdId": cbsd_id,
                         "grantId": grant_id,
                         "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "transmitExpireTime": fmt_transmit_expire(tx_expire),
                         "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
                         "channelType": channel_type,
                         "response": {"responseCode": SUCCESS},

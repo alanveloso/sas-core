@@ -184,6 +184,16 @@ def test_refuse_checkout_on_user_harness_dir(tmp_path: Path):
         ensure_harness_checkout(cfg, [])
 
 
+def test_prepare_artifact_dir_avoids_same_stamp_collision(tmp_path: Path):
+    from tools.winnforum.runner import prepare_artifact_dir
+
+    first = prepare_artifact_dir(tmp_path, stamp="fixedstamp")
+    second = prepare_artifact_dir(tmp_path, stamp="fixedstamp")
+    assert first.directory == tmp_path / "fixedstamp"
+    assert second.directory == tmp_path / "fixedstamp_1"
+    assert first.directory.is_dir() and second.directory.is_dir()
+
+
 def test_source_has_no_hardcoded_admin_cert_basename():
     text = (REPO_ROOT / "tools" / "winnforum" / "runner.py").read_text(encoding="utf-8")
     assert "admin.cert" not in text

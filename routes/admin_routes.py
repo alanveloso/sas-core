@@ -60,17 +60,41 @@ async def _read_json_object(request: Request) -> dict[str, Any]:
 
 @router.post("/reset")
 def admin_reset():
+    # Do not open a DB session here: reset_db() drop_all/create_all on the
+    # process engine while a request-scoped Session is open is unsafe.
+    import logging
+
+    from services.request_context import get_request_id
+
+    logging.getLogger(__name__).info(
+        "admin_reset request_id=%s", get_request_id() or "-"
+    )
     reset_db()
     return _empty_ok()
 
 
+@router.get("/metrics")
+def admin_metrics():
+    """Operational metrics snapshot (latency/error counters). Admin mTLS only."""
+    from services.metrics import get_metrics
+
+    return JSONResponse(get_metrics().snapshot())
+
+
 @router.post("/injectdata/fcc_id")
 def inject_fcc_id(body: InjectFccIdRequest, db: Session = Depends(get_db)):
+    from services.audit_log import append_admin_audit
+
     existing = db.query(FccIdRecord).filter_by(fcc_id=body.fccId).first()
     if existing:
         existing.fcc_max_eirp = body.fccMaxEirp
     else:
         db.add(FccIdRecord(fcc_id=body.fccId, fcc_max_eirp=body.fccMaxEirp))
+    append_admin_audit(
+        db,
+        "inject_fcc_id",
+        {"fccId": body.fccId, "fccMaxEirp": body.fccMaxEirp},
+    )
     db.commit()
     return _empty_ok()
 
@@ -195,29 +219,47 @@ async def inject_zone(request: Request, db: Session = Depends(get_db)):
 @router.post("/injectdata/exclusion_zone")
 async def inject_exclusion_zone(request: Request, db: Session = Depends(get_db)):
     """Persist GeoJSON exclusion zone + frequencyRanges (EXZ_1)."""
-    from services.exclusion_zone_service import persist_exclusion_zone
+    from fastapi import HTTPException
+
+    from services.exclusion_zone_service import (
+        ExclusionZoneError,
+        persist_exclusion_zone,
+    )
 
     body: dict[str, Any] = {}
     try:
         body = await request.json()
     except Exception:
         pass
-    persist_exclusion_zone(db, body if isinstance(body, dict) else {})
+    try:
+        persist_exclusion_zone(db, body if isinstance(body, dict) else {})
+    except ExclusionZoneError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _empty_ok()
 
 
 @router.post("/trigger/enable_ntia_15_517")
 def trigger_enable_ntia_15_517(db: Session = Depends(get_db)):
     """Enable NTIA TR 15-517 coastal exclusion zones (EXZ_2)."""
-    from services.exclusion_zone_service import enable_ntia_exclusion_zones
+    from fastapi import HTTPException
 
-    enable_ntia_exclusion_zones(db)
+    from services.exclusion_zone_service import (
+        ExclusionZoneUnavailable,
+        enable_ntia_exclusion_zones,
+    )
+
+    try:
+        enable_ntia_exclusion_zones(db)
+    except ExclusionZoneUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return _empty_ok()
 
 
 @router.post("/injectdata/peer_sas")
 async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     """Persist peer SAS certificateHash + url for SAS↔SAS authorization."""
+    from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
+
     body: dict[str, Any] = {}
     try:
         body = await request.json()
@@ -226,6 +268,14 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     cert_hash = (body.get("certificateHash") or "").strip()
     url = (body.get("url") or "").strip()
     if cert_hash:
+        if url:
+            try:
+                assert_https_egress_url_allowed(
+                    url, allow_lab_private=allow_lab_private_egress()
+                )
+            except SsrfError:
+                # Admin contract: invalid peer URL is ignored (no row poison).
+                return _empty_ok()
         existing = db.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
         if existing:
             existing.url = url
@@ -233,6 +283,22 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
             db.add(PeerSas(certificate_hash=cert_hash, url=url))
         db.commit()
     return _empty_ok()
+
+
+@router.get("/security/trust_material")
+def security_trust_material():
+    """Inspect on-disk CA/CRL material (Admin mTLS)."""
+    from services.trust_reload import trust_material_status
+
+    return trust_material_status()
+
+
+@router.post("/security/reload_trust_material")
+def security_reload_trust_material():
+    """Re-read CA/CRL from disk for app-layer validators (Admin mTLS)."""
+    from services.trust_reload import reload_trust_material
+
+    return reload_trust_material()
 
 
 @router.post("/injectdata/esc_sensor")
@@ -269,6 +335,12 @@ def trigger_create_full_activity_dump(db: Session = Depends(get_db)):
 @router.post("/trigger/daily_activities_immediately")
 def trigger_daily_activities_immediately(db: Session = Depends(get_db)):
     """Start CPAS: pull peer FADs and apply conflict resolution."""
+    from services.audit_log import append_admin_audit
+
+    # Commit audit before dispatch: trigger_daily_activities commits the
+    # running flag via set_admin_flag; avoid a trailing commit racing the
+    # certification worker session.
+    append_admin_audit(db, "trigger_daily_activities", {}, commit=True)
     trigger_daily_activities(db)
     return _empty_ok()
 

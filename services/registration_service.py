@@ -354,11 +354,15 @@ def process_registration(
             responses.append({"response": {"responseCode": PENDING}})
             continue
 
-        # QPR.2 / QPR.6: reject CBSDs inside NRAO/NRRO or within 2.4 km of FCC offices.
+        # QPR: NRQZ / FCC offices (Cat A 2.4 / Cat B 4.8) / Table Mountain / config areas.
         from services.quiet_zone_service import registration_blocked_by_quiet_zone
 
         installation = merged.get("installationParam") or {}
-        if registration_blocked_by_quiet_zone(installation):
+        if registration_blocked_by_quiet_zone(
+            installation,
+            cbsd_category=merged.get("cbsdCategory"),
+            db=db,
+        ):
             responses.append({"response": {"responseCode": INVALID_PARAM}})
             continue
 

@@ -602,3 +602,457 @@ def test_postgres_freeze_captures_peer_records(pg_session):
     snap = freeze_cpas_snapshot(pg_session)
     assert snap.peer_record_count >= 1
     assert any(rt == "cbsd" for _pid, rt, _rid, _data in snap.peer_records)
+
+
+def test_postgres_dpa_collect_uses_frozen_local_pks(pg_session):
+    """P7-005: DPA membership follows CpasSnapshot PKs on real PostgreSQL."""
+    from services.cpas_service import evaluate_cpas_protections
+    from services.dpa_protection import collect_active_dpa_grants
+
+    grant_a = _seed_conflict_grant(
+        pg_session, fcc="fcc-mcp-a", serial="sn-mcp-a", grant_id="G-MCP-A"
+    )
+    snap_n = freeze_cpas_snapshot(pg_session)
+    grant_b = _seed_conflict_grant(
+        pg_session, fcc="fcc-mcp-b", serial="sn-mcp-b", grant_id="G-MCP-B"
+    )
+    pg_session.commit()
+
+    frozen = collect_active_dpa_grants(pg_session, grant_pks=snap_n.active_grant_pks)
+    frozen_ids = {g.grant_id for g in frozen}
+    assert "G-MCP-A" in frozen_ids
+    assert "G-MCP-B" not in frozen_ids
+
+    live = collect_active_dpa_grants(pg_session, grant_pks=None)
+    live_ids = {g.grant_id for g in live}
+    assert "G-MCP-A" in live_ids and "G-MCP-B" in live_ids
+
+    decisions = evaluate_cpas_protections(pg_session, snap_n)
+    assert all(d.grant_pk != grant_b.id for d in decisions)
+    assert all(d.grant_id != "G-MCP-B" for d in decisions)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    assert grant_a.id in snap_n1.active_grant_pks
+    assert grant_b.id in snap_n1.active_grant_pks
+    frozen_n1 = collect_active_dpa_grants(
+        pg_session, grant_pks=snap_n1.active_grant_pks
+    )
+    assert {g.grant_id for g in frozen_n1} >= {"G-MCP-A", "G-MCP-B"}
+
+
+def test_postgres_rf_snapshot_n_vs_n1_registration_mutation(pg_session):
+    """C1: frozen local RF stays at generation N on real PostgreSQL."""
+    from services.cpas_service import evaluate_cpas_protections
+
+    grant = _seed_conflict_grant(
+        pg_session, fcc="fcc-rf-n", serial="sn-rf-n", grant_id="G-RF-N"
+    )
+    snap_n = freeze_cpas_snapshot(pg_session)
+    assert len(snap_n.local_grants) == 1
+    assert snap_n.local_grants[0].latitude == pytest.approx(39.0)
+    assert snap_n.local_grants[0].max_eirp_dbm_mhz == pytest.approx(20.0)
+
+    cbsd = pg_session.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).one()
+    cbsd.registration_json = json.dumps(
+        {
+            "cbsdCategory": "B",
+            "installationParam": {
+                "latitude": 41.25,
+                "longitude": -95.0,
+                "height": 25.0,
+                "heightType": "AGL",
+                "indoorDeployment": True,
+            },
+        }
+    )
+    cbsd.cbsd_category = "B"
+    grant.max_eirp = 32.0
+    pg_session.commit()
+
+    # Re-evaluate generation N: frozen RF must ignore live mutations.
+    assert snap_n.local_grants[0].latitude == pytest.approx(39.0)
+    assert snap_n.local_grants[0].height_m == pytest.approx(10.0)
+    assert snap_n.local_grants[0].cbsd_category == "A"
+    assert snap_n.local_grants[0].indoor is False
+    assert snap_n.local_grants[0].max_eirp_dbm_mhz == pytest.approx(20.0)
+    evaluate_cpas_protections(pg_session, snap_n)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    assert snap_n1.local_grants[0].latitude == pytest.approx(41.25)
+    assert snap_n1.local_grants[0].height_m == pytest.approx(25.0)
+    assert snap_n1.local_grants[0].cbsd_category == "B"
+    assert snap_n1.local_grants[0].indoor is True
+    assert snap_n1.local_grants[0].max_eirp_dbm_mhz == pytest.approx(32.0)
+
+
+def test_postgres_iap_protection_records_freeze_n_vs_n1(pg_session, monkeypatch):
+    """C2: frozen protection_records drive IAP; mid-run inject is N+1 only."""
+    from services.cpas_service import evaluate_cpas_protections
+    from services.data_injection_service import upsert_fss_record
+    from services.iap import coupling as coupling_mod
+    from services.iap.aggregate import dbm_to_mw
+    from services.iap.protection_points import build_protection_points_from_frozen
+
+    assert upsert_fss_record(
+        pg_session,
+        {
+            "record": {
+                "id": "fss/pg-c2-n",
+                "type": "FSS",
+                "deploymentParam": [
+                    {
+                        "installationParam": {"latitude": 39.0, "longitude": -77.0},
+                        "operationParam": {
+                            "operationFrequencyRange": {
+                                "lowFrequency": 3600000000,
+                                "highFrequency": 4200000000,
+                            }
+                        },
+                    }
+                ],
+            },
+            "ttc": False,
+        },
+    )
+    grant = _seed_conflict_grant(
+        pg_session, fcc="fcc-c2-iap", serial="sn-c2-iap", grant_id="G-C2-IAP"
+    )
+    # Align grant freq with FSS band for IAP overlap.
+    grant.low_frequency = 3620000000
+    grant.high_frequency = 3625000000
+    grant.max_eirp = 37.0
+    cbsd = pg_session.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).one()
+    reg = json.loads(cbsd.registration_json)
+    reg["installationParam"]["latitude"] = 39.001
+    reg["installationParam"]["longitude"] = -77.001
+    cbsd.registration_json = json.dumps(reg)
+    pg_session.commit()
+
+    snap_n = freeze_cpas_snapshot(pg_session)
+    assert any(rid == "fss/pg-c2-n" for _k, rid, _d in snap_n.protection_records)
+
+    assert upsert_fss_record(
+        pg_session,
+        {
+            "record": {
+                "id": "fss/pg-c2-n1",
+                "type": "FSS",
+                "deploymentParam": [
+                    {
+                        "installationParam": {"latitude": 10.0, "longitude": 10.0},
+                        "operationParam": {
+                            "operationFrequencyRange": {
+                                "lowFrequency": 3620000000,
+                                "highFrequency": 3625000000,
+                            }
+                        },
+                    }
+                ],
+            }
+        },
+    )
+    pg_session.commit()
+
+    def _coupling(**_k):
+        def _fn(grant, point, channel, eirp_dbm_mhz):
+            return dbm_to_mw(eirp_dbm_mhz) * 1.0
+
+        return _fn
+
+    monkeypatch.setattr(coupling_mod, "make_production_iap_coupling", _coupling)
+    seen: list[str] = []
+    real = __import__(
+        "services.cpas_service", fromlist=["_evaluate_iap_decisions_from_frozen"]
+    )._evaluate_iap_decisions_from_frozen
+
+    def _spy(local_grants, **kwargs):
+        for p in kwargs.get("iap_points") or []:
+            seen.append(p.point_id)
+        return real(local_grants, **kwargs)
+
+    monkeypatch.setattr("services.cpas_service._evaluate_iap_decisions_from_frozen", _spy)
+    evaluate_cpas_protections(pg_session, snap_n)
+    assert "fss-cc:fss/pg-c2-n" in seen
+    assert all("pg-c2-n1" not in p for p in seen)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    ids = [
+        p.point_id
+        for p in build_protection_points_from_frozen(snap_n1.protection_records)
+    ]
+    assert "fss-bl:fss/pg-c2-n1" in ids or "fss-cc:fss/pg-c2-n1" in ids
+
+
+def test_postgres_c3_gwpz_pal_freeze_n_vs_n1(pg_session):
+    """C3: GWPZ + PAL in protection_records stay on generation N during evaluate."""
+    from services.data_injection_service import upsert_wisp_record
+    from services.iap.protection_points import build_protection_points_from_frozen
+    from services.pal_service import upsert_pal_record
+
+    assert upsert_wisp_record(
+        pg_session,
+        {
+            "record": {
+                "id": "wisp/pg-c3-n",
+                "type": "GWPZ",
+                "deploymentParam": [
+                    {
+                        "operationParam": {
+                            "operationFrequencyRange": {
+                                "lowFrequency": 3650000000,
+                                "highFrequency": 3700000000,
+                            }
+                        }
+                    }
+                ],
+            },
+            "zone": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-77.002, 39.048],
+                        [-76.998, 39.048],
+                        [-76.998, 39.052],
+                        [-77.002, 39.052],
+                        [-77.002, 39.048],
+                    ]
+                ],
+            },
+        },
+    )
+    upsert_pal_record(
+        pg_session,
+        {
+            "palId": "pal-pg-c3-n",
+            "userId": "u-pg-c3",
+            "licenseStatus": "VALID",
+            "channelAssignment": {
+                "primaryAssignment": {
+                    "lowFrequency": 3550000000,
+                    "highFrequency": 3560000000,
+                }
+            },
+        },
+    )
+    pg_session.commit()
+    snap_n = freeze_cpas_snapshot(pg_session)
+    kinds_n = {k for k, _r, _d in snap_n.protection_records}
+    assert "wisp" in kinds_n
+    assert "pal" in kinds_n
+    assert any(rid == "wisp/pg-c3-n" for _k, rid, _d in snap_n.protection_records)
+    assert any(rid == "pal-pg-c3-n" for _k, rid, _d in snap_n.protection_records)
+
+    assert upsert_wisp_record(
+        pg_session,
+        {
+            "record": {
+                "id": "wisp/pg-c3-n1",
+                "type": "GWPZ",
+                "deploymentParam": [
+                    {
+                        "operationParam": {
+                            "operationFrequencyRange": {
+                                "lowFrequency": 3650000000,
+                                "highFrequency": 3700000000,
+                            }
+                        }
+                    }
+                ],
+            },
+            "zone": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [10.0, 10.0],
+                        [10.01, 10.0],
+                        [10.01, 10.01],
+                        [10.0, 10.01],
+                        [10.0, 10.0],
+                    ]
+                ],
+            },
+        },
+    )
+    upsert_pal_record(
+        pg_session,
+        {
+            "palId": "pal-pg-c3-n1",
+            "userId": "u-pg-c3",
+            "licenseStatus": "VALID",
+            "channelAssignment": {
+                "primaryAssignment": {
+                    "lowFrequency": 3560000000,
+                    "highFrequency": 3570000000,
+                }
+            },
+        },
+    )
+    pg_session.commit()
+
+    pts_n = build_protection_points_from_frozen(snap_n.protection_records)
+    assert any(p.point_id == "gwpz:wisp/pg-c3-n" for p in pts_n)
+    assert all("pg-c3-n1" not in p.point_id for p in pts_n)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    ids = {rid for _k, rid, _d in snap_n1.protection_records}
+    assert "wisp/pg-c3-n1" in ids
+    assert "pal-pg-c3-n1" in ids
+
+
+def test_postgres_c4_exz_esc_freeze_n_vs_n1(pg_session):
+    """C4: EXZ + ESC connectivity freeze stay on generation N during evaluate."""
+    from models.models import EscSensor
+    from services.esc_admin_service import disconnect_esc
+    from services.exclusion_zone_service import persist_exclusion_zone
+
+    persist_exclusion_zone(
+        pg_session,
+        {
+            "zone": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-77.01, 38.99],
+                        [-76.99, 38.99],
+                        [-76.99, 39.01],
+                        [-77.01, 39.01],
+                        [-77.01, 38.99],
+                    ]
+                ],
+            },
+            "frequencyRanges": [
+                {"lowFrequency": 3550000000, "highFrequency": 3560000000}
+            ],
+        },
+    )
+    pg_session.add(
+        EscSensor(
+            record_id="esc_sensor/pg-c4-n",
+            data_json=json.dumps(
+                {
+                    "id": "esc_sensor/pg-c4-n",
+                    "installationParam": {"latitude": 39.0, "longitude": -77.0},
+                    "protectionFrequencyRange": {
+                        "lowFrequency": 3550000000,
+                        "highFrequency": 3650000000,
+                    },
+                }
+            ),
+        )
+    )
+    pg_session.commit()
+    snap_n = freeze_cpas_snapshot(pg_session)
+    kinds = {k for k, _r, _d in snap_n.protection_records}
+    assert "exclusion_zone" in kinds
+    assert "esc_sensor" in kinds
+    assert "esc_state" in kinds
+    assert any(rid == "esc_sensor/pg-c4-n" for _k, rid, _d in snap_n.protection_records)
+
+    disconnect_esc(pg_session)
+    persist_exclusion_zone(
+        pg_session,
+        {
+            "zone": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [10.0, 10.0],
+                        [10.01, 10.0],
+                        [10.01, 10.01],
+                        [10.0, 10.01],
+                        [10.0, 10.0],
+                    ]
+                ],
+            },
+            "frequencyRanges": [
+                {"lowFrequency": 3550000000, "highFrequency": 3700000000}
+            ],
+        },
+    )
+    pg_session.add(
+        EscSensor(
+            record_id="esc_sensor/pg-c4-n1",
+            data_json=json.dumps(
+                {
+                    "id": "esc_sensor/pg-c4-n1",
+                    "installationParam": {"latitude": 10.0, "longitude": 10.0},
+                    "protectionFrequencyRange": {
+                        "lowFrequency": 3550000000,
+                        "highFrequency": 3650000000,
+                    },
+                }
+            ),
+        )
+    )
+    pg_session.commit()
+
+    # Generation N still connected + original EXZ/ESC only.
+    state_n = next(d for k, _r, d in snap_n.protection_records if k == "esc_state")
+    assert json.loads(state_n)["state"] == "connected"
+    assert all(rid != "esc_sensor/pg-c4-n1" for _k, rid, _d in snap_n.protection_records)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    state_n1 = next(d for k, _r, d in snap_n1.protection_records if k == "esc_state")
+    assert json.loads(state_n1)["state"] == "disconnected"
+    ids = {rid for _k, rid, _d in snap_n1.protection_records}
+    assert "esc_sensor/pg-c4-n1" in ids
+    exz_n = sum(1 for k, _r, _d in snap_n.protection_records if k == "exclusion_zone")
+    exz_n1 = sum(1 for k, _r, _d in snap_n1.protection_records if k == "exclusion_zone")
+    assert exz_n1 > exz_n
+
+
+def test_postgres_wdb_pal_freeze_n_vs_n1(pg_session):
+    """C5: WDB PAL replace publishes N+1; frozen CPAS snapshot stays on N."""
+    from services.data_injection_service import get_injection_generations
+    from services.iap.protection_points import capture_protection_records_for_freeze
+    from services.pal_service import load_pal_records, replace_pal_records
+
+    replace_pal_records(
+        pg_session,
+        [
+            {
+                "palId": "pal-pg-n",
+                "userId": "u-pg",
+                "licenseStatus": "VALID",
+                "channelAssignment": {
+                    "primaryAssignment": {
+                        "lowFrequency": 3550_000_000,
+                        "highFrequency": 3560_000_000,
+                    }
+                },
+            }
+        ],
+    )
+    gen_n = int(get_injection_generations(pg_session).get("pal") or 0)
+    frozen = capture_protection_records_for_freeze(pg_session)
+    pals_n = {rid for k, rid, _d in frozen if k == "pal"}
+    assert "pal-pg-n" in pals_n
+
+    # Ingest N+1 while frozen N is held (same session pattern as C2–C4).
+    replace_pal_records(
+        pg_session,
+        [
+            {
+                "palId": "pal-pg-n1",
+                "userId": "u-pg",
+                "licenseStatus": "VALID",
+                "channelAssignment": {
+                    "primaryAssignment": {
+                        "lowFrequency": 3560_000_000,
+                        "highFrequency": 3570_000_000,
+                    }
+                },
+            }
+        ],
+    )
+    gen_n1 = int(get_injection_generations(pg_session).get("pal") or 0)
+    assert gen_n1 == gen_n + 1
+    # Live store is N+1.
+    assert {p["palId"] for p in load_pal_records(pg_session)} == {"pal-pg-n1"}
+    # Frozen capture from before replace must not be mutated in-place.
+    assert "pal-pg-n" in pals_n
+    assert "pal-pg-n1" not in pals_n
+
+    frozen_next = capture_protection_records_for_freeze(pg_session)
+    pals_next = {rid for k, rid, _d in frozen_next if k == "pal"}
+    assert pals_next == {"pal-pg-n1"}

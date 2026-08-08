@@ -246,7 +246,11 @@ def heartbeat_federal_code(
     db: Session, cbsd: Cbsd | None, grant: Grant
 ) -> int | None:
     """Return 500/501 when federal DB protection applies, else None."""
-    from services.exclusion_zone_service import point_hits_exclusion_zone
+    from services.exclusion_zone_service import (
+        ExclusionZoneError,
+        ExclusionZoneUnavailable,
+        point_hits_exclusion_zone,
+    )
 
     loc = _cbsd_lat_lon(cbsd)
     if loc is None:
@@ -257,9 +261,14 @@ def heartbeat_federal_code(
     low, high = grant.low_frequency, grant.high_frequency
 
     # Exclusion zones from federal EXZ KML.
-    if meta.get("exz", 0) > 0 and point_hits_exclusion_zone(db, lat, lon, low, high):
-        grant_exz = int(gmeta.get("exz_gen") or 0)
-        return 500 if grant_exz < meta["exz"] else 501
+    if meta.get("exz", 0) > 0:
+        try:
+            hits = point_hits_exclusion_zone(db, lat, lon, low, high)
+        except (ExclusionZoneError, ExclusionZoneUnavailable):
+            hits = True  # fail-closed
+        if hits:
+            grant_exz = int(gmeta.get("exz_gen") or 0)
+            return 500 if grant_exz < meta["exz"] else 501
 
     # Scheduled portal DPAs (MVP: any DPA sync conflicts CBRS overlapping grants).
     if meta.get("dpa", 0) > 0 and _overlaps(low, high, 3_500_000_000, 3_700_000_000):

@@ -36,19 +36,21 @@ class RenewalResult:
 
 
 def _parse_utc_z(value: str | datetime | None) -> datetime | None:
+    from services.clock import ensure_utc
+
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.replace(microsecond=0)
+        return ensure_utc(value).replace(microsecond=0)
     text = str(value).strip()
     if not text:
         return None
     try:
         if text.endswith("Z"):
-            return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(
-            tzinfo=None, microsecond=0
-        )
+            parsed = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
+            return ensure_utc(parsed).replace(microsecond=0)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return ensure_utc(parsed).replace(microsecond=0)
     except (TypeError, ValueError):
         return None
 
@@ -172,13 +174,15 @@ def compute_renewal(
     checks (DPA/federal/CPAS); this function refuses terminal/expired grants and
     caps PAL renewals at ``licenseExpiration``.
     """
-    wall = (now or datetime.utcnow()).replace(microsecond=0)
+    from services.clock import ensure_utc, utc_now
+
+    wall = ensure_utc(now or utc_now()).replace(microsecond=0)
     state = resolve_grant_state(grant, now=wall)
     if state in TERMINAL_GRANT_STATES or grant.terminated:
         return RenewalResult(
             ok=False, response_code=INVALID_PARAM, detail="terminal_or_expired"
         )
-    if grant.grant_expire_time.replace(microsecond=0) <= wall:
+    if ensure_utc(grant.grant_expire_time).replace(microsecond=0) <= wall:
         return RenewalResult(
             ok=False, response_code=INVALID_PARAM, detail="grant_already_expired"
         )
@@ -199,7 +203,7 @@ def compute_renewal(
             return RenewalResult(
                 ok=False, response_code=INVALID_PARAM, detail="pal_license_missing"
             )
-        cap = cap.replace(microsecond=0)
+        cap = ensure_utc(cap).replace(microsecond=0)
         if cap <= wall:
             return RenewalResult(
                 ok=False, response_code=INVALID_PARAM, detail="pal_license_expired"

@@ -1,9 +1,12 @@
-"""Propagation / antenna Admin query (WInnForum PAT) — P6-003.
+"""Propagation / antenna Admin query (WInnForum PAT) — P6-003 / P7-003.
 
 Mirrors harness ``computePropagationAntennaModel`` / ``computePropagationDpa``
 without fixture hardcodes. Numerical engines are injectable so unit tests do not
 require the compiled ITM extension; production loads WInnForum reference models
 from the sibling harness checkout when available.
+
+Type-3 (DPA) uses Rel1Ext composition: ITM + P.2108 clutter + activity/loading
+(see ``services.propagation.rel1ext_dpa``).
 """
 
 from __future__ import annotations
@@ -15,11 +18,16 @@ from services.propagation.errors import (
     PropagationRequestError,
     PropagationUnavailableError,
 )
+from services.propagation.rel1ext_dpa import (
+    ACTIVITY_LOSS_FACTOR_DB,
+    calc_p2108_clutter_db,
+    compose_dpa_pathloss_db,
+)
 
 FREQ_MHZ_DEFAULT = 3625.0
 PPA_RX_HEIGHT_M = 1.5
 PPA_GRID_ARCSEC = 1
-ACTIVITY_LOSS_FACTOR_DEFAULT = 8.0
+ACTIVITY_LOSS_FACTOR_DEFAULT = ACTIVITY_LOSS_FACTOR_DB
 
 
 class _Incidence(Protocol):
@@ -185,21 +193,28 @@ def _compute_dpa(
         freq_mhz=FREQ_MHZ_DEFAULT,
         is_height_cbsd_amsl=(tx["heightType"] == "AMSL"),
     )
+    # Rel1Ext Type-3 clutter is owned by the UUT (single formula). Harness
+    # ``engines.calc_p2108`` remains available for other callers / diagnostics
+    # but must not diverge from this path for Admin PAT.2.
     clutter_loss = _engine_call(
         "P.2108 clutter",
-        engines.calc_p2108,
+        calc_p2108_clutter_db,
         tx["latitude"],
         tx["longitude"],
         tx["height"],
         rx_lat,
         rx_lon,
         is_height_cbsd_amsl=(tx["heightType"] == "AMSL"),
+        terrain_elevation_m=engines.terrain_elevation_m,
     )
 
+    # Rel1Ext Type-3: no antenna e/f/g — path loss only (PAT.2).
     return {
-        "pathlossDb": float(path_loss.db_loss)
-        + float(clutter_loss)
-        + float(engines.activity_loss_factor)
+        "pathlossDb": compose_dpa_pathloss_db(
+            float(path_loss.db_loss),
+            float(clutter_loss),
+            activity_loss_db=float(engines.activity_loss_factor),
+        )
     }
 
 

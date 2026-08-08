@@ -318,16 +318,12 @@ def _upsert_activation(
     dpa_id: str,
     freq: FrequencyRange,
     movelist: list[Any] | None = None,
+    source: str | None = None,
 ) -> None:
     key = _activation_key(dpa_id, freq.low_hz, freq.high_hz)
-    payload = {
-        "dpaId": dpa_id,
-        "frequencyRange": freq.as_dict(),
-        "activationKey": key,
-        "movelist": list(movelist or []),
-        "activatedAt": _utc_now_iso(),
-        "active": True,
-    }
+    # SessionLocal uses autoflush=False — flush so prior pending activations are
+    # visible to this scan (avoids duplicate rows for the same activation key).
+    db.flush()
     # Replace any existing row with same key (scan — AdminInjectedData has no unique).
     for row in db.query(AdminInjectedData).filter_by(kind=FLAG_DPA_ACTIVE).all():
         data = _parse_activation_row(row)
@@ -339,9 +335,32 @@ def _upsert_activation(
             and int(fr.get("lowFrequency", -1)) == freq.low_hz
             and int(fr.get("highFrequency", -1)) == freq.high_hz
         ):
+            payload = {
+                "dpaId": dpa_id,
+                "frequencyRange": freq.as_dict(),
+                "activationKey": key,
+                "movelist": list(movelist or []),
+                "activatedAt": _utc_now_iso(),
+                "active": True,
+            }
+            # Preserve scheduled/manual provenance across movelist refreshes.
+            effective_source = source if source is not None else data.get("source")
+            if effective_source:
+                payload["source"] = effective_source
             row.data_json = json.dumps(payload)
             return
+    payload = {
+        "dpaId": dpa_id,
+        "frequencyRange": freq.as_dict(),
+        "activationKey": key,
+        "movelist": list(movelist or []),
+        "activatedAt": _utc_now_iso(),
+        "active": True,
+    }
+    if source:
+        payload["source"] = source
     db.add(AdminInjectedData(kind=FLAG_DPA_ACTIVE, data_json=json.dumps(payload)))
+    db.flush()
 
 
 def _insert_activation(
@@ -538,6 +557,40 @@ def _channel_in_definition(definition: dict[str, Any], freq: FrequencyRange) -> 
     )
 
 
+def refresh_or_fail_closed_movelists(
+    db: Session,
+    channels: list[tuple[str, FrequencyRange]],
+) -> None:
+    """Refresh movelists; on RF/domain error use conservative overlapping grants.
+
+    Shared by explicit ``activate_dpa`` and scheduled DPA materialization so both
+    paths share the same fail-closed policy. A successful refresh that yields an
+    empty movelist (no grants need to move) remains valid. An RF evaluation that
+    cannot complete must never be left as a silent empty movelist when overlapping
+    grants exist.
+
+    Provenance ``source`` on existing activation rows is preserved across refresh.
+    """
+    from services.dpa_protection import (
+        collect_active_dpa_grants,
+        refresh_activation_movelists,
+    )
+    from services.propagation.errors import PropagationUnavailableError
+    from services.terrain.exceptions import TerrainError
+
+    try:
+        refresh_activation_movelists(db, commit=False)
+    except (PropagationUnavailableError, TerrainError, ValueError, TypeError, KeyError):
+        grants = collect_active_dpa_grants(db)
+        for dpa_id, freq in channels:
+            moved = [
+                g.grant_id
+                for g in grants
+                if g.low_hz < freq.high_hz and g.high_hz > freq.low_hz
+            ]
+            _upsert_activation(db, dpa_id=dpa_id, freq=freq, movelist=moved)
+
+
 def activate_dpa(db: Session, body: dict[str, Any]) -> dict[str, Any]:
     """Activate one DPA on one channel after validating id and channel coverage."""
     dpa_id = body.get("dpaId")
@@ -559,6 +612,7 @@ def activate_dpa(db: Session, body: dict[str, Any]) -> dict[str, Any]:
         }
 
     _upsert_activation(db, dpa_id=dpa_id, freq=freq)
+    refresh_or_fail_closed_movelists(db, [(dpa_id, freq)])
     _append_audit(
         db,
         "activate",

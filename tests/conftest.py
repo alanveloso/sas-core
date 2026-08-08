@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from sqlalchemy.orm import Session
+
+# Fast schema path for unit tests: create_all + alembic stamp (see migrations.py).
+# Explicit Alembic upgrade/downgrade coverage lives in test_p8_002_migrations.py.
+os.environ.setdefault("SAS_SCHEMA_VIA_CREATE_ALL", "1")
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -17,6 +22,21 @@ if str(_ROOT) not in sys.path:
 import database  # noqa: E402
 from database import init_db, rebind_engine  # noqa: E402
 from tests.fixtures.factories import reset_factory_counter  # noqa: E402
+
+# Snapshot at import time (normally local sqlite). Used when a prior test left the
+# process engine on a dead/ephemeral PostgreSQL URL.
+_RESTORE_URL = str(database.engine.url)
+if _RESTORE_URL.startswith("postgresql"):
+    _RESTORE_URL = f"sqlite:///{_ROOT / '.pytest_engine_restore.db'}"
+
+
+def _safe_restore_engine(preferred: str) -> None:
+    """Rebind to ``preferred`` when usable; otherwise fall back to sqlite restore."""
+    target = preferred
+    if target.startswith("postgresql"):
+        target = _RESTORE_URL
+    rebind_engine(target)
+    init_db(retries=1, delay_seconds=0)
 
 
 @pytest.fixture
@@ -63,6 +83,4 @@ def db_session(tmp_path: Path) -> Iterator[Session]:
         yield session
     finally:
         session.close()
-        rebind_engine(previous_url)
-        # Keep process-default schema intact for module-level TestClient suites.
-        init_db(retries=1, delay_seconds=0)
+        _safe_restore_engine(previous_url)

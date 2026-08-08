@@ -378,13 +378,17 @@ def full_cbrs_meas_report() -> dict[str, Any]:
 
 
 def cat_a_install(
-    lat: float = 40.0,
-    lon: float = -105.27,
+    lat: float = 39.1,
+    lon: float = -94.58,
     *,
     indoor: bool = True,
     height: float = 3.0,
 ) -> dict[str, Any]:
-    """Category A installationParam with common AGL height + indoor flag."""
+    """Category A installationParam with common AGL height + indoor flag.
+
+    Default coordinates are in the US Midwest — outside NRQZ, Table Mountain
+    coordination distances, and FCC field-office radii (not a harness fixture).
+    """
     return {
         "latitude": lat,
         "longitude": lon,

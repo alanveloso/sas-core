@@ -145,25 +145,42 @@ def test_ppa_rejects_multi_point_grid():
 
 
 def test_dpa_adds_clutter_and_activity_loss():
+    from services.propagation.rel1ext_dpa import calc_p2108_clutter_db, compose_dpa_pathloss_db
+
+    cbsd = _cbsd()
+    dpa = {
+        "latitude": 38.0,
+        "longitude": -76.0,
+        "height": 50.0,
+        "heightType": "AGL",
+    }
     result = compute_propagation_and_antenna_model(
         {
             "modelType": "3",
             "reliabilityLevel": 0.5,
-            "cbsd": _cbsd(),
-            "dpaPoint": {
-                "latitude": 38.0,
-                "longitude": -76.0,
-                "height": 50.0,
-                "heightType": "AGL",
-            },
+            "cbsd": cbsd,
+            "dpaPoint": dpa,
         },
-        engines=_fake_engines(calc_itm=lambda *a, **k: _path_loss(80.0), calc_p2108=lambda *a, **k: 2.0),
+        engines=_fake_engines(
+            calc_itm=lambda *a, **k: _path_loss(80.0),
+            # Injected harness P.2108 must be ignored for Type-3 (UUT owns formula).
+            calc_p2108=lambda *a, **k: 2.0,
+        ),
     )
-    assert result["pathlossDb"] == pytest.approx(80.0 + 2.0 + 8.0)
+    clutter = calc_p2108_clutter_db(
+        cbsd["latitude"],
+        cbsd["longitude"],
+        cbsd["height"],
+        dpa["latitude"],
+        dpa["longitude"],
+    )
+    assert result["pathlossDb"] == pytest.approx(compose_dpa_pathloss_db(80.0, clutter))
     assert set(result) == {"pathlossDb"}
 
 
 def test_dpa_amsl_converts_via_terrain():
+    from services.propagation.rel1ext_dpa import calc_p2108_clutter_db, compose_dpa_pathloss_db
+
     seen: dict[str, float] = {}
 
     def itm(*args, **kwargs):
@@ -171,26 +188,39 @@ def test_dpa_amsl_converts_via_terrain():
         seen["rx_height"] = args[5]
         return _path_loss(70.0)
 
+    cbsd = _cbsd()
+    dpa = {
+        "latitude": 38.0,
+        "longitude": -76.0,
+        "height": 150.0,
+        "heightType": "AMSL",
+    }
+    def terrain(*_: object) -> float:
+        return 50.0
+
     result = compute_propagation_and_antenna_model(
         {
             "modelType": "3",
             "reliabilityLevel": 0.5,
-            "cbsd": _cbsd(),
-            "dpaPoint": {
-                "latitude": 38.0,
-                "longitude": -76.0,
-                "height": 150.0,
-                "heightType": "AMSL",
-            },
+            "cbsd": cbsd,
+            "dpaPoint": dpa,
         },
         engines=_fake_engines(
             calc_itm=itm,
-            terrain_elevation_m=lambda *_: 50.0,
+            terrain_elevation_m=terrain,
             calc_p2108=lambda *a, **k: 0.0,
         ),
     )
     assert seen["rx_height"] == pytest.approx(100.0)
-    assert result["pathlossDb"] == pytest.approx(78.0)
+    clutter = calc_p2108_clutter_db(
+        cbsd["latitude"],
+        cbsd["longitude"],
+        cbsd["height"],
+        dpa["latitude"],
+        dpa["longitude"],
+        terrain_elevation_m=terrain,
+    )
+    assert result["pathlossDb"] == pytest.approx(compose_dpa_pathloss_db(70.0, clutter))
 
 
 def test_invalid_reliability_rejected():

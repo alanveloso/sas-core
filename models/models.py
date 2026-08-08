@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -20,6 +19,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base
+from models.types import UtcDateTime
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class FccIdRecord(Base):
@@ -99,9 +103,9 @@ class Cbsd(Base):
         String(32), default="REGISTERED", nullable=False, index=True
     )
     registration_json: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        UtcDateTime, default=_utc_now, onupdate=_utc_now
     )
     grants: Mapped[list[Grant]] = relationship(
         "Grant", back_populates="cbsd", cascade="all, delete-orphan"
@@ -119,9 +123,11 @@ class Grant(Base):
     low_frequency: Mapped[int] = mapped_column(BigInteger, default=0)
     high_frequency: Mapped[int] = mapped_column(BigInteger, default=0)
     max_eirp: Mapped[float | None] = mapped_column(Float, nullable=True)
-    grant_expire_time: Mapped[datetime] = mapped_column(DateTime)
+    grant_expire_time: Mapped[datetime] = mapped_column(UtcDateTime)
     heartbeat_interval: Mapped[int] = mapped_column(Integer, default=60)
-    transmit_expire_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    transmit_expire_time: Mapped[datetime | None] = mapped_column(
+        UtcDateTime, nullable=True
+    )
     authorized: Mapped[bool] = mapped_column(Boolean, default=False)
     meas_report_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     terminated: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -159,14 +165,14 @@ class AdminInjectedData(Base):
 
 
 class PeerSas(Base):
-    """Peer SAS authorized for SAS↔SAS (FAD) access."""
+    """Peer SAS authorized for SAS?SAS (FAD) access."""
 
     __tablename__ = "peer_sas"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     certificate_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     url: Mapped[str] = mapped_column(String(512))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utc_now)
     # Last successfully applied FullActivityDump.generationDateTime (P5-004).
     last_fad_generation: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
@@ -196,16 +202,16 @@ class PeerFadRecord(Base):
     record_type: Mapped[str] = mapped_column(String(32), index=True)
     record_id: Mapped[str] = mapped_column(String(256), index=True)
     data_json: Mapped[str] = mapped_column(Text)
-    imported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    imported_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utc_now)
 
 
 class FadDump(Base):
-    """Local Full Activity Dump generation (UUT as SAS↔SAS server).
+    """Local Full Activity Dump generation (UUT as SAS?SAS server).
 
     Semantics (P5-001):
 
     - ``ready``: snapshot generation completed; historical ready dumps may coexist.
-    - ``published``: exactly one current dump served via SAS↔SAS ``GET /dump``.
+    - ``published``: exactly one current dump served via SAS?SAS ``GET /dump``.
     """
 
     __tablename__ = "fad_dumps"

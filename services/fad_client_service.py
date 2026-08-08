@@ -252,6 +252,11 @@ def validate_manifest(manifest: dict[str, Any]) -> tuple[str, str, list[dict[str
             raise FadClientError("FAD file size must be an integer") from exc
         if size < 0:
             raise FadClientError("FAD file size must be non-negative")
+        max_bytes = int(get_settings().sas_fad_max_file_bytes)
+        if max_bytes > 0 and size > max_bytes:
+            raise FadClientError(
+                f"FAD file size {size} exceeds sas_fad_max_file_bytes={max_bytes}"
+            )
         checksum = str(entry["checksum"]).lower()
         if len(checksum) != 40 or any(c not in "0123456789abcdef" for c in checksum):
             raise FadClientError("FAD checksum must be 40-char lowercase hex SHA-1")
@@ -333,6 +338,11 @@ def fetch_peer_generation(
         file_url = entry["url"]
         assert_url_allowed_for_peer(file_url, base)
         content = _http_get_bytes(client, file_url)
+        max_bytes = int(get_settings().sas_fad_max_file_bytes)
+        if max_bytes > 0 and len(content) > max_bytes:
+            raise FadClientError(
+                f"FAD file body {len(content)} exceeds sas_fad_max_file_bytes={max_bytes}"
+            )
         digest = _sha1_hex(content)
         if digest != entry["checksum"]:
             raise FadClientError(

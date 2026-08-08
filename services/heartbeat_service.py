@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from models.models import Grant
 from services.blacklist_service import is_cbsd_blacklisted
+from services.dpa_neighborhood import compute_transmit_expire_time
 from services.grant_service import HEARTBEAT_INTERVAL_SEC
 from services.meas_report import (
     FLAG_MEAS_HBT,
@@ -32,24 +33,34 @@ TERMINATED_GRANT = 500
 SUSPENDED_GRANT = 501
 UNSYNC_OP_PARAM = 502
 
-# Prefer a short window so HBT.5 finishes quickly; must be ≤ 240 s (WINNF).
-TRANSMIT_EXPIRE_SEC = 60
-
 
 def _fmt(dt: datetime) -> str:
-    return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from services.clock import ensure_utc
+
+    return ensure_utc(dt).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _past_tx() -> datetime:
-    return datetime.utcnow().replace(microsecond=0) - timedelta(seconds=1)
+    from services.clock import utc_now
+
+    return utc_now().replace(microsecond=0) - timedelta(seconds=1)
 
 
-def _future_tx(grant_expire: datetime) -> datetime:
-    tx = datetime.utcnow().replace(microsecond=0) + timedelta(seconds=TRANSMIT_EXPIRE_SEC)
-    # transmitExpireTime must be ≤ grantExpireTime.
-    if tx > grant_expire.replace(microsecond=0):
-        tx = grant_expire.replace(microsecond=0)
-    return tx
+def _future_tx(
+    db: Session,
+    cbsd,
+    grant: Grant,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    return compute_transmit_expire_time(
+        db,
+        cbsd,
+        grant.grant_expire_time,
+        low_hz=int(grant.low_frequency),
+        high_hz=int(grant.high_frequency),
+        now=now,
+    )
 
 
 def _base(
@@ -89,21 +100,34 @@ def _grant_overlaps_wisp(db: Session, grant: Grant) -> bool:
 
 
 def _grant_overlaps_active_dpa(db: Session, grant: Grant) -> bool:
+    from services.dpa_protection import (
+        ProtectionReason,
+        grant_frequency_overlaps_protected,
+        grant_on_any_movelist,
+        list_protected_dpa_channels,
+    )
     from services.dpa_service import (
         grant_overlaps_active_dpa,
         grant_overlaps_esc_monitored_catalogue,
     )
-    from services.esc_admin_service import is_esc_disconnected
+    from services.esc_admin_service import is_esc_absent, is_esc_disconnected
+
+    if grant_on_any_movelist(db, grant.grant_id):
+        return True
 
     low, high = grant.low_frequency, grant.high_frequency
     if grant_overlaps_active_dpa(db, low, high):
         return True
-    # Lost ESC-DE: protect all ESC-monitored catalogue channels (IPR disconnect).
-    if is_esc_disconnected(db) and grant_overlaps_esc_monitored_catalogue(
+    # Lost ESC-DE or no ESC present: protect all ESC-monitored catalogue channels.
+    if (is_esc_disconnected(db) or is_esc_absent(db)) and grant_overlaps_esc_monitored_catalogue(
         db, low, high
     ):
         return True
-    return False
+    # Always-on / inland DPAs (escMonitored=false) require continuous protection.
+    protected = grant_frequency_overlaps_protected(
+        list_protected_dpa_channels(db), low, high
+    )
+    return any(p.reason == ProtectionReason.ALWAYS_ON for p in protected)
 
 
 def process_heartbeat(
@@ -232,7 +256,9 @@ def process_heartbeat(
                     )
                     continue
 
-                if grant.grant_expire_time.replace(microsecond=0) <= datetime.utcnow().replace(
+                from services.clock import ensure_utc, utc_now
+
+                if ensure_utc(grant.grant_expire_time).replace(microsecond=0) <= utc_now().replace(
                     microsecond=0
                 ):
                     apply_grant_event(
@@ -313,7 +339,7 @@ def process_heartbeat(
                         )
                         continue
 
-                tx = _future_tx(grant.grant_expire_time)
+                tx = _future_tx(db, cbsd, grant)
                 grant.transmit_expire_time = tx
                 apply_grant_event(
                     grant,

@@ -34,19 +34,28 @@ from services.error_handlers import (
     http_exception_handler,
     request_validation_exception_handler,
 )
+from services.logging_redaction import configure_safe_logging
 from services.mtls_auth import (
     ECC_CIPHERS,
     RSA_CIPHERS,
     create_mtls_ssl_context,
     patch_uvicorn_for_client_cert,
 )
+from services.observability_middleware import ObservabilityMiddleware
+from services.rate_limit import RateLimitMiddleware
+from services.request_limits import RequestSizeLimitMiddleware
 
 # Must run before uvicorn binds so RequestResponseCycle exposes the TLS transport.
 patch_uvicorn_for_client_cert()
+configure_safe_logging()
 
 app = FastAPI(title="SAS Agent", version="0.1.0")
 app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+# Last added = outermost. Size/rate wrap observability.
+app.add_middleware(ObservabilityMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
 app.include_router(admin_router)
 app.include_router(cbsd_router)
 # Version catch-alls after concrete /v1.2 routes so supported version keeps priority.

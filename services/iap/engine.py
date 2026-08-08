@@ -26,9 +26,11 @@ from services.iap.models import (
     FrequencyChannel,
     GrantChannelContribution,
     GrantRfInfo,
+    IapAction,
     IapGrantDecision,
     IapPointResult,
     IapRunResult,
+    ProtectedEntityKind,
     ProtectionPoint,
 )
 
@@ -45,6 +47,63 @@ class IapEngineConfig:
     max_iterations: int = 10_000
 
 
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    import math
+
+    r_earth_km = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * r_earth_km * math.asin(min(1.0, math.sqrt(a)))
+
+
+# ESC neighborhood (km) — WINNF-TS-0112 / interference.py Cat A/B.
+_ESC_NEIGHBORHOOD_KM_A = 40.0
+_ESC_NEIGHBORHOOD_KM_B = 80.0
+
+
+def esc_neighborhood_km_for_category(category: str | None) -> float:
+    """ESC IAP neighborhood by frozen category: A→40, B→80; else→80 (conservative)."""
+    if category is None:
+        return _ESC_NEIGHBORHOOD_KM_B
+    cat = str(category).strip().upper()
+    if cat == "A":
+        return _ESC_NEIGHBORHOOD_KM_A
+    if cat == "B":
+        return _ESC_NEIGHBORHOOD_KM_B
+    return _ESC_NEIGHBORHOOD_KM_B
+
+
+def grants_in_neighborhood(
+    point: ProtectionPoint, grants: list[GrantRfInfo]
+) -> list[GrantRfInfo]:
+    """Keep grants overlapping the point band and inside neighborhood (if set).
+
+    ESC uses per-grant Cat A/B distances (40/80 km) from frozen ``cbsd_category``.
+    Other entity kinds use ``point.neighborhood_km`` when set.
+    """
+    out: list[GrantRfInfo] = []
+    for g in grants:
+        if not (g.low_hz < point.high_hz and g.high_hz > point.low_hz):
+            continue
+        if point.entity_kind is ProtectedEntityKind.ESC:
+            radius: float | None = esc_neighborhood_km_for_category(g.cbsd_category)
+        else:
+            radius = point.neighborhood_km
+        if radius is not None:
+            dist = _haversine_km(
+                g.latitude, g.longitude, point.latitude, point.longitude
+            )
+            if dist > float(radius):
+                continue
+        out.append(g)
+    return out
+
+
 def run_iap_for_point(
     point: ProtectionPoint,
     grants: list[GrantRfInfo],
@@ -55,11 +114,9 @@ def run_iap_for_point(
     """Run IAP at one protection point; return aggregates + per-grant decisions."""
     cfg = config or IapEngineConfig()
     channels = overlapping_iap_channels(point.low_hz, point.high_hz)
-    neighbors = [
-        g for g in grants if g.low_hz < point.high_hz and g.high_hz > point.low_hz
-    ]
+    neighbors = grants_in_neighborhood(point, grants)
     if not channels or not neighbors:
-        decisions = tuple(
+        early = tuple(
             IapGrantDecision(
                 grant_id=g.grant_id,
                 cbsd_id=g.cbsd_id,
@@ -73,7 +130,7 @@ def run_iap_for_point(
             if g.is_managing_sas
         )
         return IapPointResult(
-            point=point, channels=tuple(channels), aggregates=(), decisions=decisions
+            point=point, channels=tuple(channels), aggregates=(), decisions=early
         )
 
     threshold_dbm = apply_pre_iap_margin_db(point.threshold_dbm, point.pre_iap_margin_db)
@@ -125,11 +182,11 @@ def run_iap_for_point(
             for ch_idx, channel in enumerate(channels):
                 if not grant_overlaps_channel(grant, channel):
                     continue
-                interf = locked_interf.get((g_idx, ch_idx))
-                if interf is None:
-                    interf = float(coupling(grant, point, channel, eirp[g_idx]))
-                    locked_interf[(g_idx, ch_idx)] = interf
-                iap_threshold_ch[ch_idx] = iap_threshold_ch[ch_idx] - interf
+                locked = locked_interf.get((g_idx, ch_idx))
+                if locked is None:
+                    locked = float(coupling(grant, point, channel, eirp[g_idx]))
+                    locked_interf[(g_idx, ch_idx)] = locked
+                iap_threshold_ch[ch_idx] = iap_threshold_ch[ch_idx] - locked
                 unsat_count_ch[ch_idx] = max(0, unsat_count_ch[ch_idx] - 1)
                 if unsat_count_ch[ch_idx] > 0:
                     fairshare_ch[ch_idx] = iap_threshold_ch[ch_idx] / float(
@@ -208,6 +265,7 @@ def run_iap_for_point(
             continue
         initial = g.max_eirp_dbm_mhz
         final = eirp[g_idx]
+        action: IapAction
         if hit_floor[g_idx] or (
             not any((g_idx, c) in locked_interf for c in range(len(channels)))
             and removed[g_idx]

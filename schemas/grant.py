@@ -42,6 +42,7 @@ class GrantResponseItem(BaseModel):
     cbsdId: str | None = None
     grantId: str | None = None
     grantExpireTime: str | None = None
+    transmitExpireTime: str | None = None
     heartbeatInterval: int | None = None
     channelType: ChannelType | None = None
     response: ResponseObject

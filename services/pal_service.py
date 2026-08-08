@@ -58,7 +58,9 @@ def pal_record_to_dict(row: PalRecord) -> dict[str, Any]:
     return data
 
 
-def upsert_pal_record(db: Session, record: dict[str, Any]) -> PalRecord | None:
+def upsert_pal_record(
+    db: Session, record: dict[str, Any], *, commit: bool = False
+) -> PalRecord | None:
     """Insert or update a PAL record keyed by palId."""
     pal_id = record.get("palId")
     if not pal_id:
@@ -83,10 +85,14 @@ def upsert_pal_record(db: Session, record: dict[str, Any]) -> PalRecord | None:
     row.license_status = license_status
     row.license_expiration = license_exp
     row.record_json = json.dumps(record)
+    if commit:
+        db.commit()
     return row
 
 
-def upsert_pal_records(db: Session, payload: Any) -> int:
+def upsert_pal_records(
+    db: Session, payload: Any, *, commit: bool = True
+) -> int:
     """Persist one or many PAL records; returns count of upserted rows."""
     if payload is None:
         return 0
@@ -95,11 +101,63 @@ def upsert_pal_records(db: Session, payload: Any) -> int:
     for rec in records:
         if not isinstance(rec, dict):
             continue
-        if upsert_pal_record(db, rec) is not None:
+        if upsert_pal_record(db, rec, commit=False) is not None:
             count += 1
-    if count:
+    if count and commit:
         db.commit()
     return count
+
+
+def replace_pal_records(
+    db: Session, payload: Any, *, commit: bool = True
+) -> int:
+    """Full-replace PAL table from a feed (insert/update + remove absent ids).
+
+    Records present in the feed are upserted. Existing rows whose ``palId`` is
+    absent from the feed are deleted (normative removal/expiration path).
+    Invalid feed entries are skipped; an empty list clears all PALs.
+    """
+    if payload is None:
+        raise ValueError("pal_payload_required")
+    records = payload if isinstance(payload, list) else [payload]
+    if not isinstance(records, list):
+        raise ValueError("pal_payload_must_be_list_or_object")
+
+    keep_ids: set[str] = set()
+    count = 0
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        row = upsert_pal_record(db, rec, commit=False)
+        if row is None:
+            continue
+        keep_ids.add(row.pal_id)
+        count += 1
+
+    for row in list(db.query(PalRecord).all()):
+        if row.pal_id not in keep_ids:
+            db.delete(row)
+
+    from services.data_injection_service import bump_injection_generation
+
+    bump_injection_generation(db, "pal")
+    if commit:
+        db.commit()
+    return count
+
+
+def revoke_pal_record(db: Session, pal_id: str, *, commit: bool = True) -> bool:
+    """Mark a PAL inactive or delete it; returns True when a row was affected."""
+    row = db.query(PalRecord).filter_by(pal_id=pal_id).first()
+    if row is None:
+        return False
+    db.delete(row)
+    from services.data_injection_service import bump_injection_generation
+
+    bump_injection_generation(db, "pal")
+    if commit:
+        db.commit()
+    return True
 
 
 def load_pal_records(db: Session, *, active_only: bool = False) -> list[dict[str, Any]]:

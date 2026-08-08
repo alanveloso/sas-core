@@ -65,6 +65,7 @@ def test_requirements_lock_pins_direct_dependencies():
         "fastapi": "0.141.1",
         "uvicorn": "0.52.1",
         "SQLAlchemy": "2.0.51",
+        "alembic": "1.16.4",
         "pydantic": "2.13.4",
         "pydantic-settings": "2.14.2",
         "psycopg2-binary": "2.9.12",

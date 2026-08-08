@@ -92,7 +92,21 @@ def _git_rev(cwd: Path) -> str | None:
 
 
 def prepare_artifact_dir(artifacts_root: Path, stamp: str | None = None) -> RunArtifacts:
-    directory = artifacts_root / (stamp or _utc_stamp())
+    """Create a unique artifact directory for one harness run.
+
+    Same-second collisions (parallel/manual re-runs) get a numeric suffix instead
+    of raising ``FileExistsError``.
+    """
+    base = stamp or _utc_stamp()
+    directory = artifacts_root / base
+    if directory.exists():
+        n = 1
+        while True:
+            candidate = artifacts_root / f"{base}_{n}"
+            if not candidate.exists():
+                directory = candidate
+                break
+            n += 1
     directory.mkdir(parents=True, exist_ok=False)
     return RunArtifacts(
         directory=directory,
@@ -586,6 +600,13 @@ def run(cfg: RunnerConfig) -> int:
             log_path=artifacts.harness_log_path,
         )
         parsed = parse_unittest_output(output)
+        from tools.winnforum.failure_dump import write_failure_dumps
+
+        write_failure_dumps(
+            artifacts.directory,
+            parsed,
+            harness_log_text=output,
+        )
         results = {
             **parsed.to_dict(),
             "status": "completed",

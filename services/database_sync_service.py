@@ -1,4 +1,14 @@
-"""Pull external PAL / CPI / FSS databases injected via /admin/injectdata/database_url."""
+"""Pull external PAL / CPI / FSS databases injected via /admin/injectdata/database_url.
+
+Sync semantics (C5 / WDB / FDB):
+* validate checksum when provided (fail that URL; no partial publish);
+* PAL full-replace (insert/update/remove absent);
+* CPI ACTIVE upsert + revoke absent/inactive;
+* SCHEDULED_DPA materializes activations via existing DPA domain;
+* bump generation then mark CPAS reevaluation required (N+1 for next pipeline);
+* per-URL failures are isolated; successful URLs remain committed only after
+  their own validate→persist→generation→reeval mark completes.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +29,9 @@ from models.models import AdminInjectedData, CpiUser
 
 logger = logging.getLogger(__name__)
 
+class DatabaseSyncError(RuntimeError):
+    """Raised when a single database_url sync fails validation or apply."""
+
 
 def _ssl_context() -> ssl.SSLContext:
     settings = get_settings()
@@ -33,16 +46,35 @@ def _ssl_context() -> ssl.SSLContext:
 
 
 def _http_get(url: str, *, auth: bool = False) -> bytes:
+    """Fetch URL without following redirects (SSRF / open-redirect control)."""
+    from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
+
+    try:
+        assert_https_egress_url_allowed(
+            url, allow_lab_private=allow_lab_private_egress()
+        )
+    except SsrfError as exc:
+        raise DatabaseSyncError(f"ssrf_blocked:{exc}") from exc
+
     settings = get_settings()
     kwargs: dict[str, Any] = {
         "verify": _ssl_context(),
         "timeout": settings.http_timeout_seconds,
+        "follow_redirects": False,
     }
     if auth:
-        kwargs["auth"] = settings.db_sync_basic_auth
+        user, password = settings.db_sync_basic_auth
+        if not user or not password:
+            raise DatabaseSyncError("db_sync_credentials_not_configured")
+        kwargs["auth"] = (user, password)
     with httpx.Client(**kwargs) as client:
         resp = client.get(url)
+        if resp.is_redirect:
+            raise DatabaseSyncError(f"redirect_refused:{url}")
         resp.raise_for_status()
+        max_bytes = int(settings.sas_max_request_body_bytes)
+        if max_bytes > 0 and len(resp.content) > max_bytes:
+            raise DatabaseSyncError("response_body_too_large")
         return resp.content
 
 
@@ -55,13 +87,45 @@ def _store_injection(db: Session, kind: str, payload: Any) -> None:
     )
 
 
-def sync_injected_database_urls(db: Session) -> None:
-    """Fetch every injected database_url during CPAS / daily activities."""
+def _verify_checksum(body: bytes, checksum: Any, *, label: str) -> None:
+    from services.data_injection_service import verify_optional_checksum
+
+    if checksum is None or checksum == "":
+        # Optional by Admin contract; document in evidence (not fail-closed).
+        return
+    if not verify_optional_checksum(body, checksum):
+        raise DatabaseSyncError(f"checksum_mismatch:{label}")
+
+
+def _mark_reeval(db: Session, reason: str) -> None:
+    from services.cpas_reevaluation import mark_cpas_reevaluation_required
+    from services.data_injection_service import get_injection_generations
+    from services.federal_db_service import get_sync_meta
+
+    mark_cpas_reevaluation_required(
+        db,
+        reason=reason,
+        generation={
+            "federal": get_sync_meta(db),
+            "injection": get_injection_generations(db),
+        },
+    )
+
+
+def sync_injected_database_urls(db: Session) -> dict[str, Any]:
+    """Fetch every injected database_url during CPAS / daily activities.
+
+    Returns a report with ok/failed URL counts. Does not abort the whole CPAS
+    pipeline on a single URL failure (logged); successful syncs are durable.
+    """
     rows = list(db.query(AdminInjectedData).filter_by(kind="database_url").all())
+    report = {"ok": 0, "failed": 0, "errors": []}
     for row in rows:
         try:
             meta = json.loads(row.data_json or "{}")
         except json.JSONDecodeError:
+            report["failed"] += 1
+            report["errors"].append("invalid_database_url_json")
             continue
         db_type = (meta.get("type") or "").upper()
         url = meta.get("url") or ""
@@ -69,52 +133,45 @@ def sync_injected_database_urls(db: Session) -> None:
             continue
         try:
             if db_type == "PAL":
-                _sync_pal(db, url)
+                _sync_pal(db, url, checksum=meta.get("checksum"))
             elif db_type == "CPI":
-                _sync_cpi(db, url)
+                _sync_cpi(db, url, checksum=meta.get("checksum"))
             elif db_type == "EXCLUSION_ZONE":
                 body = _http_get(url, auth=False)
+                _verify_checksum(body, meta.get("checksum"), label="EXCLUSION_ZONE")
                 _apply_exclusion_zone_kml(db, body)
+                _mark_reeval(db, "exz_sync")
             elif db_type == "SCHEDULED_DPA":
                 body = _http_get(url, auth=False)
-                db.query(AdminInjectedData).filter_by(kind="scheduled_dpa").delete()
-                _store_injection(
-                    db,
-                    "scheduled_dpa",
-                    {"raw": body.decode("utf-8", errors="replace")},
-                )
-                from services.federal_db_service import bump_sync_meta
-
-                bump_sync_meta(db, "dpa")
+                _verify_checksum(body, meta.get("checksum"), label="SCHEDULED_DPA")
+                _apply_scheduled_dpa(db, body)
+                _mark_reeval(db, "scheduled_dpa_sync")
             elif db_type == "FSS":
                 body = _http_get(url, auth=True)
-                from services.data_injection_service import verify_optional_checksum
-
-                if not verify_optional_checksum(body, meta.get("checksum")):
-                    logger.error(
-                        "Checksum mismatch for database_url type=FSS url=%s", url
-                    )
-                    continue
+                _verify_checksum(body, meta.get("checksum"), label="FSS")
                 payload = json.loads(body.decode("utf-8"))
                 from services.federal_db_service import replace_fss_from_federal_payload
 
                 replace_fss_from_federal_payload(db, payload)
+                _mark_reeval(db, "fss_sync")
             elif db_type == "GWBL":
                 body = _http_get(url, auth=False)
-                from services.data_injection_service import verify_optional_checksum
-
-                if not verify_optional_checksum(body, meta.get("checksum")):
-                    logger.error(
-                        "Checksum mismatch for database_url type=GWBL url=%s", url
-                    )
-                    continue
+                _verify_checksum(body, meta.get("checksum"), label="GWBL")
                 from services.federal_db_service import replace_gwbl_from_zip
 
                 replace_gwbl_from_zip(db, body)
-        except Exception:
+                _mark_reeval(db, "gwbl_sync")
+            else:
+                continue
+            db.commit()
+            report["ok"] += 1
+        except Exception as exc:
+            db.rollback()
             logger.exception("Failed syncing database_url type=%s url=%s", db_type, url)
+            report["failed"] += 1
+            report["errors"].append(f"{db_type}:{type(exc).__name__}:{exc}")
 
-    db.commit()
+    return report
 
 
 def _parse_freq_range_mhz(text: str | None) -> list[dict[str, int]]:
@@ -200,28 +257,134 @@ def _apply_exclusion_zone_kml(db: Session, body: bytes) -> None:
     bump_sync_meta(db, "exz")
 
 
-def _sync_pal(db: Session, url: str) -> None:
-    from services.pal_service import upsert_pal_records
+def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
+    """Materialize portal scheduled DPA JSON into DPA activations + movelist.
+
+    Expected JSON shapes (any one):
+    * ``{"activations":[{"dpaId":...,"frequencyRange":{...}}, ...]}``
+    * ``[{"dpaId":...,"frequencyRange":{...}}, ...]``
+    * ``{"dpaId":...,"frequencyRange":{...}}``
+
+    Uses the existing DPA catalogue/activation domain (no second scheduler).
+    Unknown ``dpaId`` / channel-not-in-catalogue fail closed — same rules as
+    ``activate_dpa`` (no synthetic world geometry). Movelist refresh uses
+    ``refresh_or_fail_closed_movelists``.
+    """
+    from services import dpa_service as dpa_svc
+    from services.federal_db_service import bump_sync_meta
+
+    text = body.decode("utf-8")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise DatabaseSyncError("scheduled_dpa_invalid_json") from exc
+
+    if isinstance(payload, dict) and isinstance(payload.get("activations"), list):
+        activations = [a for a in payload["activations"] if isinstance(a, dict)]
+    elif isinstance(payload, list):
+        activations = [a for a in payload if isinstance(a, dict)]
+    elif isinstance(payload, dict) and payload.get("dpaId"):
+        activations = [payload]
+    else:
+        raise DatabaseSyncError("scheduled_dpa_missing_activations")
+    if not activations:
+        raise DatabaseSyncError("scheduled_dpa_empty_activations")
+
+    # Validate every request against the real catalogue before mutating state.
+    channels: list[tuple[str, dpa_svc.FrequencyRange]] = []
+    for act in activations:
+        dpa_id = str(act.get("dpaId") or "").strip()
+        fr = act.get("frequencyRange") or {}
+        try:
+            low = int(fr["lowFrequency"])
+            high = int(fr["highFrequency"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DatabaseSyncError("scheduled_dpa_invalid_frequency") from exc
+        if not dpa_id or low >= high:
+            raise DatabaseSyncError("scheduled_dpa_invalid_activation")
+        definition = dpa_svc.get_catalogue_definition(db, dpa_id)
+        if definition is None:
+            raise DatabaseSyncError(f"scheduled_dpa_unknown_dpaId:{dpa_id}")
+        freq = dpa_svc.FrequencyRange(low, high)
+        if not dpa_svc._channel_in_definition(definition, freq):
+            raise DatabaseSyncError(
+                f"scheduled_dpa_channel_not_in_catalogue:{dpa_id}"
+            )
+        channels.append((dpa_id, freq))
+
+    db.query(AdminInjectedData).filter_by(kind="scheduled_dpa").delete()
+    _store_injection(
+        db,
+        "scheduled_dpa",
+        {"raw": text, "activations": activations},
+    )
+
+    # Drop previous scheduled activations only (retain non-scheduled).
+    for row in list(
+        db.query(AdminInjectedData).filter_by(kind=dpa_svc.FLAG_DPA_ACTIVE).all()
+    ):
+        try:
+            data = json.loads(row.data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if data.get("source") == "scheduled_dpa":
+            db.delete(row)
+
+    for dpa_id, freq in channels:
+        dpa_svc._upsert_activation(
+            db,
+            dpa_id=dpa_id,
+            freq=freq,
+            movelist=[],
+            source="scheduled_dpa",
+        )
+
+    dpa_svc.refresh_or_fail_closed_movelists(db, channels)
+
+    bump_sync_meta(db, "dpa")
+
+
+def _sync_pal(db: Session, url: str, *, checksum: Any = None) -> None:
+    from services.pal_service import replace_pal_records
 
     body = _http_get(url, auth=False)
-    records = json.loads(body.decode("utf-8"))
-    upsert_pal_records(db, records)
+    _verify_checksum(body, checksum, label="PAL")
+    try:
+        records = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise DatabaseSyncError("pal_invalid_json") from exc
+    replace_pal_records(db, records, commit=False)
+    _mark_reeval(db, "pal_sync")
 
 
-def _sync_cpi(db: Session, index_url: str) -> None:
-    raw = _http_get(index_url, auth=False).decode("utf-8")
+def _sync_cpi(db: Session, index_url: str, *, checksum: Any = None) -> None:
+    from services.data_injection_service import bump_injection_generation
+
+    body = _http_get(index_url, auth=False)
+    _verify_checksum(body, checksum, label="CPI")
+    raw = body.decode("utf-8")
     reader = csv.DictReader(io.StringIO(raw))
+    seen_active: set[str] = set()
     for row in reader:
         cpi_id = (row.get("cpiId") or "").strip()
         status = (row.get("status") or "").strip().upper()
         key_url = (row.get("publicKeyIdentifier") or "").strip()
-        if not cpi_id or status != "ACTIVE" or not key_url:
+        if not cpi_id:
             continue
+        if status != "ACTIVE":
+            # Revoke / skip inactive — delete local key material.
+            existing = db.query(CpiUser).filter_by(cpi_id=cpi_id).first()
+            if existing:
+                db.delete(existing)
+            continue
+        if not key_url:
+            raise DatabaseSyncError(f"cpi_missing_public_key:{cpi_id}")
         try:
             public_key = _http_get(key_url, auth=False).decode("utf-8")
-        except Exception:
-            logger.exception("Failed fetching CPI public key %s", key_url)
-            continue
+        except Exception as exc:
+            raise DatabaseSyncError(f"cpi_key_fetch_failed:{cpi_id}") from exc
+        if not public_key.strip():
+            raise DatabaseSyncError(f"cpi_empty_public_key:{cpi_id}")
         existing = db.query(CpiUser).filter_by(cpi_id=cpi_id).first()
         if existing:
             existing.cpi_public_key = public_key
@@ -234,3 +397,12 @@ def _sync_cpi(db: Session, index_url: str) -> None:
                     cpi_public_key=public_key,
                 )
             )
+        seen_active.add(cpi_id)
+
+    # Remove CPI users absent from the ACTIVE feed (full reconcile).
+    for row in list(db.query(CpiUser).all()):
+        if row.cpi_id not in seen_active:
+            db.delete(row)
+
+    bump_injection_generation(db, "cpi")
+    _mark_reeval(db, "cpi_sync")
