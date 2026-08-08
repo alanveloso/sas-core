@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 from models.models import PalRecord
+from services.clock import ensure_utc
 from services.grant_renewal import (
     AUTH_CONTEXT_KEY,
     apply_renewal,
@@ -42,7 +43,9 @@ def test_gaa_renewal_extends_by_default_duration(db_session):
 
     result = apply_renewal(db_session, grant, now=now)
     assert result.ok
-    assert result.new_expire == now + timedelta(seconds=DEFAULT_GRANT_DURATION_SEC)
+    assert result.new_expire == ensure_utc(now) + timedelta(
+        seconds=DEFAULT_GRANT_DURATION_SEC
+    )
     assert grant.grant_expire_time == result.new_expire
 
 
@@ -74,8 +77,8 @@ def test_pal_renewal_capped_by_license_expiration(db_session):
     result = apply_renewal(db_session, grant, now=now)
     assert result.ok
     # Default duration is 900s; license cap is 600s → must use cap.
-    assert result.new_expire == license_exp
-    assert grant.grant_expire_time == license_exp
+    assert result.new_expire == ensure_utc(license_exp)
+    assert grant.grant_expire_time == ensure_utc(license_exp)
 
 
 def test_pal_renewal_uses_live_pal_record_over_stale_context(db_session):
@@ -99,10 +102,10 @@ def test_pal_renewal_uses_live_pal_record_over_stale_context(db_session):
     )
     db_session.commit()
 
-    assert resolve_pal_license_cap(db_session, grant) == live
+    assert resolve_pal_license_cap(db_session, grant) == ensure_utc(live)
     result = apply_renewal(db_session, grant, now=now)
     assert result.ok
-    assert result.new_expire == live
+    assert result.new_expire == ensure_utc(live)
 
 
 def test_cannot_renew_terminated_or_expired_grant(db_session):
@@ -235,7 +238,7 @@ def test_heartbeat_grant_renew_respects_pal_cap(db_session):
     assert resp[0]["response"]["responseCode"] == 0
     assert "grantExpireTime" in resp[0]
     db_session.refresh(grant)
-    assert grant.grant_expire_time == license_exp
+    assert grant.grant_expire_time == ensure_utc(license_exp)
     assert load_auth_context(grant)["channelType"] == "PAL"
 
 

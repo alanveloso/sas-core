@@ -383,7 +383,9 @@ def test_transmit_expire_time_clipped_to_grant_expire_time(db_session):
     resp = _heartbeat(db_session, cbsd, grant)
     assert resp[0]["response"]["responseCode"] == SUCCESS
     tx = datetime.strptime(resp[0]["transmitExpireTime"], "%Y-%m-%dT%H:%M:%SZ")
-    assert tx == grant.grant_expire_time.replace(microsecond=0)
+    from services.clock import ensure_utc
+
+    assert ensure_utc(tx) == ensure_utc(grant.grant_expire_time).replace(microsecond=0)
 
 
 # --- SUSPENDED grant lifecycle state served through heartbeat_operation_allowed

@@ -30,9 +30,9 @@ def test_init_db_on_empty_sqlite_creates_admin_and_blacklist_tables(tmp_path: Pa
         assert "admin_injected_data" in database.Base.metadata.tables
         assert "blacklisted_fcc_id_serials" in database.Base.metadata.tables
     finally:
-        database.rebind_engine(previous_url)
-        # Process-default engine must keep a usable schema for module-level TestClients.
-        database.init_db(retries=1, delay_seconds=0)
+        from tests.conftest import _safe_restore_engine
+
+        _safe_restore_engine(previous_url)
 
 
 def test_load_all_models_registers_required_metadata_without_engine():

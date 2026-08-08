@@ -335,11 +335,13 @@ def compute_transmit_expire_time(
     high_hz: int,
     now: datetime | None = None,
 ) -> datetime:
-    """UTC-naive wall time (DB convention) for transmitExpireTime."""
-    wall = (now or datetime.utcnow()).replace(microsecond=0)
+    """Timezone-aware UTC wall time for transmitExpireTime."""
+    from services.clock import ensure_utc, utc_now
+
+    wall = ensure_utc(now or utc_now()).replace(microsecond=0)
     horizon = transmit_expire_horizon_sec(db, cbsd, low_hz=low_hz, high_hz=high_hz)
     tx = wall + timedelta(seconds=horizon)
-    ge = grant_expire.replace(microsecond=0)
+    ge = ensure_utc(grant_expire).replace(microsecond=0)
     if tx > ge:
         tx = ge
     return tx

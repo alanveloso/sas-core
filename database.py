@@ -1,4 +1,9 @@
-"""SQLAlchemy engine and session helpers (PostgreSQL in production, SQLite locally)."""
+"""SQLAlchemy engine and session helpers (PostgreSQL in production, SQLite locally).
+
+Transactional isolation (P8-002): sessions are non-autocommit; ``get_db`` rolls
+back on error. Schema changes go through Alembic (``services.migrations``).
+See ``services/migrations.py`` module docstring for isolation notes.
+"""
 
 from __future__ import annotations
 
@@ -86,7 +91,7 @@ def get_db():
 
 
 def _assert_required_tables(bind) -> None:
-    """Fail fast when create_all did not materialize mandatory tables."""
+    """Fail fast when schema init did not materialize mandatory tables."""
     from models.registry import REQUIRED_TABLES
 
     present = set(inspect(bind).get_table_names())
@@ -99,8 +104,9 @@ def _assert_required_tables(bind) -> None:
 
 
 def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
-    """Create tables, retrying briefly while PostgreSQL becomes ready."""
+    """Apply Alembic migrations (head), retrying while PostgreSQL becomes ready."""
     from models.registry import load_all_models
+    from services.migrations import apply_schema
 
     load_all_models()
 
@@ -108,7 +114,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
         last_exc: Exception | None = None
         for attempt in range(1, retries + 1):
             try:
-                Base.metadata.create_all(bind=engine)
+                apply_schema(engine)
                 _ensure_lifecycle_columns(engine)
                 _ensure_fad_published_column(engine)
                 _ensure_peer_sas_fad_generation_column(engine)
@@ -117,7 +123,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
             except OperationalError as exc:
                 last_exc = exc
                 message = str(exc).lower()
-                # Concurrent create_all can race on SQLite ("table already exists").
+                # Concurrent schema create can race on SQLite ("table already exists").
                 if "already exists" in message:
                     _ensure_lifecycle_columns(engine)
                     _ensure_fad_published_column(engine)
@@ -134,7 +140,7 @@ def init_db(*, retries: int = 10, delay_seconds: float = 2.0) -> None:
 
 
 def _ensure_lifecycle_columns(bind) -> None:
-    """Add lifecycle_state columns on existing DBs (create_all does not ALTER)."""
+    """Add lifecycle_state columns on legacy DBs stamped without them."""
     from sqlalchemy import text
 
     inspector = inspect(bind)
@@ -162,7 +168,7 @@ def _ensure_lifecycle_columns(bind) -> None:
 
 
 def _ensure_fad_published_column(bind) -> None:
-    """Add FadDump.published + unique partial index; backfill from legacy ready."""
+    """Add FadDump.published + unique partial index on legacy DBs."""
     from sqlalchemy import text
 
     inspector = inspect(bind)
@@ -181,7 +187,6 @@ def _ensure_fad_published_column(bind) -> None:
                 "DEFAULT FALSE NOT NULL"
             )
         else:
-            # SQLite: ADD COLUMN with DEFAULT; NOT NULL applied via default for new rows.
             statements.append(
                 "ALTER TABLE fad_dumps ADD COLUMN published BOOLEAN DEFAULT 0 NOT NULL"
             )
@@ -203,16 +208,12 @@ def _ensure_fad_published_column(bind) -> None:
         with bind.begin() as conn:
             for stmt in statements:
                 conn.execute(text(stmt))
-            # Legacy: ready meant current/published. Historical rows with files are
-            # complete snapshots (ready=true); only former ready=true stay published.
             if "published" not in cols:
                 conn.execute(
                     text(
                         "UPDATE fad_dumps SET published = TRUE WHERE ready = TRUE"
                     )
                 )
-                # Rows that were superseded (ready=false) but still have files remain
-                # as historical complete dumps.
                 if "fad_files" in tables:
                     conn.execute(
                         text(
@@ -224,7 +225,7 @@ def _ensure_fad_published_column(bind) -> None:
 
 
 def _ensure_peer_sas_fad_generation_column(bind) -> None:
-    """Add PeerSas.last_fad_generation for idempotent multi-SAS sync (P5-004)."""
+    """Add PeerSas.last_fad_generation on legacy DBs."""
     from sqlalchemy import text
 
     inspector = inspect(bind)
@@ -242,10 +243,14 @@ def _ensure_peer_sas_fad_generation_column(bind) -> None:
 def reset_db() -> None:
     """Drop and recreate all tables (admin/reset)."""
     from models.registry import load_all_models
+    from services.migrations import apply_schema
 
     load_all_models()
 
     with _init_lock:
         Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        # Drop alembic_version if present so schema apply recreates from scratch.
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+        apply_schema(engine)
         _assert_required_tables(engine)

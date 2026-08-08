@@ -133,8 +133,10 @@ def _far_cbsd(db_session):
 
 
 def _tx_delta_sec(iso_tx: str) -> float:
-    tx = datetime.strptime(iso_tx, "%Y-%m-%dT%H:%M:%SZ")
-    return (tx - datetime.utcnow().replace(microsecond=0)).total_seconds()
+    from services.clock import ensure_utc, utc_now
+
+    tx = ensure_utc(datetime.strptime(iso_tx, "%Y-%m-%dT%H:%M:%SZ"))
+    return (tx - utc_now().replace(microsecond=0)).total_seconds()
 
 
 def _heartbeat_tx(db_session, cbsd, *, low: int, high: int, monkeypatch, default_sec=3600):

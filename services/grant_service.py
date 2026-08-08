@@ -210,11 +210,13 @@ def _resolve_channel(
 
 
 def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
-    default = datetime.utcnow() + timedelta(seconds=DEFAULT_GRANT_DURATION_SEC)
+    from services.clock import ensure_utc, utc_now
+
+    default = utc_now() + timedelta(seconds=DEFAULT_GRANT_DURATION_SEC)
     if pal_license_exp is None:
         return default
     # Must be ≤ PAL licenseExpiration (GRA.13).
-    return min(default, pal_license_exp)
+    return min(default, ensure_utc(pal_license_exp))
 
 
 def process_grant(

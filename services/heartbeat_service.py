@@ -35,11 +35,15 @@ UNSYNC_OP_PARAM = 502
 
 
 def _fmt(dt: datetime) -> str:
-    return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from services.clock import ensure_utc
+
+    return ensure_utc(dt).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _past_tx() -> datetime:
-    return datetime.utcnow().replace(microsecond=0) - timedelta(seconds=1)
+    from services.clock import utc_now
+
+    return utc_now().replace(microsecond=0) - timedelta(seconds=1)
 
 
 def _future_tx(
@@ -252,7 +256,9 @@ def process_heartbeat(
                     )
                     continue
 
-                if grant.grant_expire_time.replace(microsecond=0) <= datetime.utcnow().replace(
+                from services.clock import ensure_utc, utc_now
+
+                if ensure_utc(grant.grant_expire_time).replace(microsecond=0) <= utc_now().replace(
                     microsecond=0
                 ):
                     apply_grant_event(

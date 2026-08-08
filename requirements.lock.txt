@@ -33,6 +33,9 @@ python-dotenv==1.2.2
 PyYAML==6.0.3
 six==1.17.0
 SQLAlchemy==2.0.51
+alembic==1.16.4
+Mako==1.4.1
+MarkupSafe==3.0.3
 starlette==1.4.1
 typing_extensions==4.16.0
 typing-inspection==0.4.2

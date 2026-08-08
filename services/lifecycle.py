@@ -240,11 +240,13 @@ def resolve_cbsd_state(cbsd: Cbsd | None) -> CbsdState:
 
 
 def _grant_expired(grant: Grant, *, now: datetime | None = None) -> bool:
-    wall = now or datetime.utcnow()
+    from services.clock import ensure_utc, utc_now
+
+    wall = ensure_utc(now or utc_now()).replace(microsecond=0)
     expire = grant.grant_expire_time
     if expire is None:
         return False
-    return expire.replace(microsecond=0) <= wall.replace(microsecond=0)
+    return ensure_utc(expire).replace(microsecond=0) <= wall
 
 
 def resolve_grant_state(
