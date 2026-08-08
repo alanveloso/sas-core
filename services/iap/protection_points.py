@@ -276,45 +276,128 @@ def protection_point_from_esc_sensor_record(
     )
 
 
+def build_protection_points_from_payloads(
+    *,
+    fss_payloads: list[dict[str, Any]] | None = None,
+    wisp_payloads: list[dict[str, Any]] | None = None,
+    zone_payloads: list[dict[str, Any]] | None = None,
+    esc_records: list[tuple[str, dict[str, Any]]] | None = None,
+    profile: IapThresholdProfile | None = None,
+) -> list[ProtectionPoint]:
+    """Build IAP points from already-loaded payloads (frozen or live)."""
+    thr = profile or IapThresholdProfile()
+    points: list[ProtectionPoint] = []
+
+    for payload in fss_payloads or []:
+        pt = protection_point_from_fss_payload(payload, profile=thr)
+        if pt is not None:
+            points.append(pt)
+
+    for payload in wisp_payloads or []:
+        pt = protection_point_from_wisp_payload(payload, profile=thr)
+        if pt is not None:
+            points.append(pt)
+
+    for payload in zone_payloads or []:
+        pt = protection_point_from_zone_payload(payload, profile=thr)
+        if pt is not None:
+            points.append(pt)
+
+    for record_id, data in esc_records or []:
+        pt = protection_point_from_esc_sensor_record(
+            data, record_id=record_id, profile=thr
+        )
+        if pt is not None:
+            points.append(pt)
+
+    points.sort(key=lambda p: (p.entity_kind.value, p.point_id, p.low_hz, p.high_hz))
+    return points
+
+
+def build_protection_points_from_frozen(
+    protection_records: tuple[tuple[str, str, str], ...],
+    *,
+    profile: IapThresholdProfile | None = None,
+) -> list[ProtectionPoint]:
+    """Build IAP points from ``CpasSnapshot.protection_records`` generation N.
+
+    Each tuple is ``(kind, record_id, data_json)`` with kind in
+    ``{fss, wisp, zone, esc_sensor}``.
+    """
+    fss: list[dict[str, Any]] = []
+    wisp: list[dict[str, Any]] = []
+    zones: list[dict[str, Any]] = []
+    esc: list[tuple[str, dict[str, Any]]] = []
+    for kind, record_id, data_json in protection_records:
+        try:
+            data = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if kind == KIND_FSS:
+            fss.append(data)
+        elif kind == KIND_WISP:
+            wisp.append(data)
+        elif kind == KIND_ZONE:
+            zones.append(data)
+        elif kind == "esc_sensor":
+            esc.append((record_id, data))
+    return build_protection_points_from_payloads(
+        fss_payloads=fss,
+        wisp_payloads=wisp,
+        zone_payloads=zones,
+        esc_records=esc,
+        profile=profile,
+    )
+
+
 def build_protection_points_from_db(
     db: Session,
     *,
     profile: IapThresholdProfile | None = None,
 ) -> list[ProtectionPoint]:
     """Collect IAP points from injected FSS / WISP / PPA zones and ESC sensors."""
-    thr = profile or IapThresholdProfile()
-    points: list[ProtectionPoint] = []
-
-    for payload in load_injected(db, KIND_FSS):
-        pt = protection_point_from_fss_payload(payload, profile=thr)
-        if pt is not None:
-            points.append(pt)
-
-    for payload in load_injected(db, KIND_WISP):
-        pt = protection_point_from_wisp_payload(payload, profile=thr)
-        if pt is not None:
-            points.append(pt)
-
-    for payload in load_injected(db, KIND_ZONE):
-        pt = protection_point_from_zone_payload(payload, profile=thr)
-        if pt is not None:
-            points.append(pt)
-
     from models.models import EscSensor
 
+    esc_records: list[tuple[str, dict[str, Any]]] = []
     for row in db.query(EscSensor).order_by(EscSensor.id).all():
         try:
             data = json.loads(row.data_json or "{}")
         except json.JSONDecodeError:
             continue
-        if not isinstance(data, dict):
-            continue
-        pt = protection_point_from_esc_sensor_record(
-            data, record_id=row.record_id, profile=thr
-        )
-        if pt is not None:
-            points.append(pt)
+        if isinstance(data, dict):
+            esc_records.append((row.record_id, data))
 
-    points.sort(key=lambda p: (p.entity_kind.value, p.point_id, p.low_hz, p.high_hz))
+    points = build_protection_points_from_payloads(
+        fss_payloads=load_injected(db, KIND_FSS),
+        wisp_payloads=load_injected(db, KIND_WISP),
+        zone_payloads=load_injected(db, KIND_ZONE),
+        esc_records=esc_records,
+        profile=profile,
+    )
     logger.debug("Built %d IAP protection points from injections", len(points))
     return points
+
+
+def capture_protection_records_for_freeze(db: Session) -> tuple[tuple[str, str, str], ...]:
+    """Snapshot protection entity payloads for CPAS generation N."""
+    from models.models import EscSensor
+
+    rows: list[tuple[str, str, str]] = []
+    for kind in (KIND_FSS, KIND_WISP, KIND_ZONE):
+        for idx, payload in enumerate(load_injected(db, kind)):
+            record_id = ""
+            if isinstance(payload, dict):
+                record = payload.get("record") if isinstance(payload.get("record"), dict) else payload
+                if isinstance(record, dict):
+                    record_id = str(record.get("id") or "")
+            if not record_id:
+                record_id = f"{kind}:{idx}"
+            rows.append((kind, record_id, json.dumps(payload, sort_keys=True, default=str)))
+
+    for row in db.query(EscSensor).order_by(EscSensor.id).all():
+        rows.append(("esc_sensor", str(row.record_id), row.data_json or "{}"))
+
+    rows.sort(key=lambda t: (t[0], t[1]))
+    return tuple(rows)

@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from models.models import Cbsd, EscSensor, Grant
-from services.cpas_service import CpasSnapshot, evaluate_cpas_protections
+from services.cpas_service import CpasSnapshot, evaluate_cpas_protections, freeze_cpas_snapshot
 from services.data_injection_service import upsert_fss_record
 from services.dpa_protection import DpaPathLossModel, make_path_loss_fn
 from services.dpa_service import activate_dpa, clear_activations, load_dpas
@@ -174,19 +174,19 @@ def test_zone_without_ppa_markers_is_not_iap_point():
     assert ppa.entity_kind == ProtectedEntityKind.PPA
 
 
-def test_default_cpas_does_not_auto_build_iap_without_coupling(
+def test_default_cpas_without_entities_skips_iap_legitimately(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ):
-    """Injections alone must not imply IAP ran when coupling is absent."""
-    calls: list[int] = []
+    """No protection entities → IAP does not run (case A); no coupling probe."""
+    from services.iap import coupling as coupling_mod
+
+    calls: list[str] = []
 
     def _boom(*_a, **_k):
-        calls.append(1)
-        raise AssertionError("must not auto-build IAP points without coupling")
+        calls.append("coupling")
+        raise AssertionError("must not build coupling without IAP entities")
 
-    monkeypatch.setattr(
-        "services.iap.protection_points.build_protection_points_from_db", _boom
-    )
+    monkeypatch.setattr(coupling_mod, "make_production_iap_coupling", _boom)
     grant = _add_cbsd_grant(
         db_session,
         cbsd_id="cbsd-mcp-nobuild",
@@ -199,14 +199,12 @@ def test_default_cpas_does_not_auto_build_iap_without_coupling(
         channel_type="GAA",
     )
     db_session.commit()
-    decisions = evaluate_cpas_protections(
-        db_session,
-        CpasSnapshot(frozen_at="t", active_grant_pks=(grant.id,)),
-        iap_coupling=None,
-        build_iap_points_from_db=True,
-    )
+    snap = freeze_cpas_snapshot(db_session)
+    assert snap.protection_records == ()
+    decisions = evaluate_cpas_protections(db_session, snap)
     assert calls == []
     assert all(d.reason != "iap" for d in decisions)
+    assert grant.id in snap.active_grant_pks
 
 
 def test_build_points_from_fss_and_esc(db_session: Session):
@@ -432,9 +430,14 @@ def test_mcp_dpa_uses_post_iap_eirp_not_pre_iap(
     assert eirp_map["grant-mcp-joint"] < 37.0
 
 
-def test_iap_points_without_coupling_skips_iap_keeps_dpa(
-    db_session: Session, synth_dpa_kml: Path
+def test_iap_points_without_coupling_fail_closed(
+    db_session: Session, synth_dpa_kml: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    """Explicit points without coupling and unavailable production backend → error."""
+    from services.cpas_service import CpasRfEvaluationError
+    from services.iap import coupling as coupling_mod
+    from services.propagation.errors import PropagationUnavailableError
+
     load_dpas(db_session, kml_paths=[synth_dpa_kml])
     clear_activations(db_session)
     activate_dpa(
@@ -469,15 +472,19 @@ def test_iap_points_without_coupling_skips_iap_keeps_dpa(
         entity_kind=ProtectedEntityKind.ESC,
         pre_iap_margin_db=0.0,
     )
-    decisions = evaluate_cpas_protections(
-        db_session,
-        CpasSnapshot(frozen_at="t", active_grant_pks=(grant.id,)),
-        iap_points=[point],
-        iap_coupling=None,
-        path_loss_fn=_stub_itm_fn(80.0),
-    )
-    assert all(d.reason != "iap" for d in decisions)
-    assert any(d.reason == "dpa_movelist" for d in decisions)
+
+    def _no_coupling():
+        raise PropagationUnavailableError("ITM missing")
+
+    monkeypatch.setattr(coupling_mod, "make_production_iap_coupling", _no_coupling)
+    with pytest.raises(CpasRfEvaluationError, match="coupling unavailable"):
+        evaluate_cpas_protections(
+            db_session,
+            CpasSnapshot(frozen_at="t", active_grant_pks=(grant.id,)),
+            iap_points=[point],
+            iap_coupling=None,
+            path_loss_fn=_stub_itm_fn(80.0),
+        )
 
 
 def test_merge_terminate_overrides_reduce():

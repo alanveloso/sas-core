@@ -212,7 +212,7 @@ cases:
       - tests/unit/test_cpas_pipeline.py
       - tests/unit/test_multi_sas.py
     evidence: compliance/evidence/P5_GATE_FINAL.md
-    notes: "P5 CPAS/scheduler local+FAD.2 OK. P6-004 IAP engine+peer FAD hook PASS_LOCAL. P7-005 CPAS auto-builds IAP points from injections only when coupling is provided (no silent IAP skip). Official FDB.1–6/8 BLOCKED_BY_ENV. Not claimed PASS."
+    notes: "P5 CPAS/scheduler local+FAD.2 OK. P6-004 IAP engine. C2: execute_cpas_pipeline builds ProtectionPoints from frozen protection_records + production ITM coupling (fail-closed if entities present and coupling unavailable). Official FDB.1–6/8 still BLOCKED_BY_ENV / incomplete residual features. Not claimed PASS."
 
   - id: FAMILY.SCS
     family: SCS
@@ -333,6 +333,7 @@ cases:
     implementation:
       - services/mcp_protection.py
       - services/iap/protection_points.py
+      - services/iap/coupling.py
       - services/cpas_service.py
       - services/dpa_protection.py
       - services/iap/engine.py
@@ -340,8 +341,9 @@ cases:
       - tests/unit/test_mcp_iap_dpa.py
       - tests/unit/test_iap_service.py
       - tests/unit/test_cpas_pipeline.py
-    evidence: compliance/evidence/P7-005_mcp.md
-    notes: "P7-005 local MCP.1 domain (IAP+DPA joint CPAS; frozen snapshot for DPA/IAP; GAA/PAL mix). Official Rel1Ext MCP.1 still open / BLOCKED_BY_ENV. Not claimed PASS."
+      - tests/unit/test_c2_cpas_iap_wiring.py
+    evidence: compliance/evidence/C2_CPAS_IAP_PRODUCTION_WIRING.md
+    notes: "C2 production CPAS→IAP wiring (frozen protection_records + make_production_iap_coupling; test kwargs override). Official Rel1Ext MCP.1 still open / BLOCKED_BY_ENV. Not claimed PASS."
 
   # P5 gate final — FAD case-level evidence (family rollup stays non-passing).
   - id: WINNF.FT.S.FAD.1

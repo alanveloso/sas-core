@@ -79,6 +79,9 @@ class CpasSnapshot:
     peer_records: tuple[tuple[int, str, str, str], ...] = ()
     # Local RF/install params frozen with membership (generation N).
     local_grants: tuple[FrozenLocalGrantRf, ...] = ()
+    # Protection entity payloads at freeze time: (kind, record_id, data_json).
+    # IAP ProtectionPoints are built from this set (not live inject mid-run).
+    protection_records: tuple[tuple[str, str, str], ...] = ()
 
 
 class CpasRfEvaluationError(Exception):
@@ -356,6 +359,9 @@ def freeze_cpas_snapshot(
         (int(row.peer_sas_id), row.record_type, row.record_id, row.data_json)
         for row in peer_rows
     )
+    from services.iap.protection_points import capture_protection_records_for_freeze
+
+    protection_records = capture_protection_records_for_freeze(db)
     frozen_locals = tuple(local_grants)
     return CpasSnapshot(
         frozen_at=utc_now().replace(microsecond=0).isoformat(),
@@ -364,6 +370,7 @@ def freeze_cpas_snapshot(
         peer_record_count=len(peer_records),
         peer_records=peer_records,
         local_grants=frozen_locals,
+        protection_records=protection_records,
     )
 
 
@@ -412,24 +419,26 @@ def evaluate_cpas_protections(
 ) -> list[CpasDecision]:
     """Compute grant decisions against the frozen snapshot (no DB writes).
 
-    Boolean peer rules (same CBSD / PPA / ESC) terminate first. When IAP points
-    and coupling are available (explicit or built from injections — P7-005 MCP),
-    IAP runs next; DPA movelists are then refreshed with effective EIRPs so IAP
-    and DPA constraints are jointly satisfied. Without IAP inputs, DPA-only
-    evaluation matches the Rel1Ext IPR path.
+    Boolean peer rules (same CBSD / PPA / ESC) terminate first. IAP runs when
+    frozen protection entities yield ProtectionPoints and production (or
+    override) coupling is available. DPA movelists then use effective EIRPs.
+
+    Precedence for IAP inputs:
+    * explicit ``iap_points`` / ``iap_coupling`` (tests) override production;
+    * otherwise points come from ``snapshot.protection_records`` and coupling
+      from ``make_production_iap_coupling``;
+    * entities present + coupling unavailable → ``CpasRfEvaluationError``.
 
     Local RF/install parameters come from ``snapshot.local_grants`` (generation N).
-    When ``local_grants`` is empty (legacy test fixtures), values are hydrated once
-    from the DB into an in-memory freeze for this call only.
     """
     if not snapshot.active_grant_pks and not snapshot.local_grants:
         return []
+    from services.iap.coupling import IapCouplingUnavailable
     from services.mcp_protection import (
         effective_eirp_by_grant_id,
         iap_terminated_grant_ids,
-        log_iap_skip_without_coupling,
         merge_constraint_decisions,
-        resolve_iap_points,
+        resolve_iap_context,
     )
 
     local_grants = list(snapshot.local_grants)
@@ -474,26 +483,31 @@ def evaluate_cpas_protections(
             )
             decided_pks.add(frozen.grant_pk)
 
-    # IAP runs only with coupling. Auto-build from injections is gated on coupling
-    # so default CPAS does not silently skip configured entities (fail-open).
+    # Production IAP: build points from frozen protection_records + production
+    # coupling unless explicit test overrides are provided.
     iap_decisions: list[CpasDecision] = []
-    if iap_coupling is not None:
-        resolved_points = resolve_iap_points(
-            db, iap_points, build_from_db=build_iap_points_from_db
+    try:
+        iap_ctx = resolve_iap_context(
+            db,
+            protection_records=snapshot.protection_records,
+            iap_points=iap_points,
+            iap_coupling=iap_coupling,
+            build_from_db=build_iap_points_from_db,
         )
-        if resolved_points:
-            iap_decisions = _evaluate_iap_decisions_from_frozen(
-                local_grants,
-                snapshot=snapshot,
-                decided_pks=decided_pks,
-                iap_points=resolved_points,
-                iap_coupling=iap_coupling,
-            )
-            for d in iap_decisions:
-                if d.action == "terminate" and d.grant_pk is not None:
-                    decided_pks.add(d.grant_pk)
-    elif iap_points:
-        log_iap_skip_without_coupling(len(iap_points))
+    except IapCouplingUnavailable as exc:
+        raise CpasRfEvaluationError(str(exc)) from exc
+
+    if iap_ctx.coupling is not None and iap_ctx.points:
+        iap_decisions = _evaluate_iap_decisions_from_frozen(
+            local_grants,
+            snapshot=snapshot,
+            decided_pks=decided_pks,
+            iap_points=list(iap_ctx.points),
+            iap_coupling=iap_ctx.coupling,
+        )
+        for d in iap_decisions:
+            if d.action == "terminate" and d.grant_pk is not None:
+                decided_pks.add(d.grant_pk)
 
     eirp_map = effective_eirp_by_grant_id(iap_decisions)
     exclude_ids = iap_terminated_grant_ids(iap_decisions)

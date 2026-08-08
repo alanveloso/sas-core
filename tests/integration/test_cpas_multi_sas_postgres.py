@@ -683,3 +683,99 @@ def test_postgres_rf_snapshot_n_vs_n1_registration_mutation(pg_session):
     assert snap_n1.local_grants[0].cbsd_category == "B"
     assert snap_n1.local_grants[0].indoor is True
     assert snap_n1.local_grants[0].max_eirp_dbm_mhz == pytest.approx(32.0)
+
+
+def test_postgres_iap_protection_records_freeze_n_vs_n1(pg_session, monkeypatch):
+    """C2: frozen protection_records drive IAP; mid-run inject is N+1 only."""
+    from services.cpas_service import evaluate_cpas_protections
+    from services.data_injection_service import upsert_fss_record
+    from services.iap import coupling as coupling_mod
+    from services.iap.aggregate import dbm_to_mw
+    from services.iap.protection_points import build_protection_points_from_frozen
+
+    assert upsert_fss_record(
+        pg_session,
+        {
+            "record": {
+                "id": "fss/pg-c2-n",
+                "type": "FSS",
+                "deploymentParam": [
+                    {
+                        "installationParam": {"latitude": 39.0, "longitude": -77.0},
+                        "operationParam": {
+                            "operationFrequencyRange": {
+                                "lowFrequency": 3620000000,
+                                "highFrequency": 3625000000,
+                            }
+                        },
+                    }
+                ],
+            }
+        },
+    )
+    grant = _seed_conflict_grant(
+        pg_session, fcc="fcc-c2-iap", serial="sn-c2-iap", grant_id="G-C2-IAP"
+    )
+    # Align grant freq with FSS band for IAP overlap.
+    grant.low_frequency = 3620000000
+    grant.high_frequency = 3625000000
+    grant.max_eirp = 37.0
+    cbsd = pg_session.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).one()
+    reg = json.loads(cbsd.registration_json)
+    reg["installationParam"]["latitude"] = 39.001
+    reg["installationParam"]["longitude"] = -77.001
+    cbsd.registration_json = json.dumps(reg)
+    pg_session.commit()
+
+    snap_n = freeze_cpas_snapshot(pg_session)
+    assert any(rid == "fss/pg-c2-n" for _k, rid, _d in snap_n.protection_records)
+
+    assert upsert_fss_record(
+        pg_session,
+        {
+            "record": {
+                "id": "fss/pg-c2-n1",
+                "type": "FSS",
+                "deploymentParam": [
+                    {
+                        "installationParam": {"latitude": 10.0, "longitude": 10.0},
+                        "operationParam": {
+                            "operationFrequencyRange": {
+                                "lowFrequency": 3620000000,
+                                "highFrequency": 3625000000,
+                            }
+                        },
+                    }
+                ],
+            }
+        },
+    )
+    pg_session.commit()
+
+    def _coupling(**_k):
+        def _fn(grant, point, channel, eirp_dbm_mhz):
+            return dbm_to_mw(eirp_dbm_mhz) * 1.0
+
+        return _fn
+
+    monkeypatch.setattr(coupling_mod, "make_production_iap_coupling", _coupling)
+    seen: list[str] = []
+    real = __import__(
+        "services.cpas_service", fromlist=["_evaluate_iap_decisions_from_frozen"]
+    )._evaluate_iap_decisions_from_frozen
+
+    def _spy(local_grants, **kwargs):
+        for p in kwargs.get("iap_points") or []:
+            seen.append(p.point_id)
+        return real(local_grants, **kwargs)
+
+    monkeypatch.setattr("services.cpas_service._evaluate_iap_decisions_from_frozen", _spy)
+    evaluate_cpas_protections(pg_session, snap_n)
+    assert seen == ["fss:fss/pg-c2-n"]
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    ids = [
+        p.point_id
+        for p in build_protection_points_from_frozen(snap_n1.protection_records)
+    ]
+    assert "fss:fss/pg-c2-n1" in ids

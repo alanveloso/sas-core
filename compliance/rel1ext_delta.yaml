@@ -438,11 +438,12 @@ cases:
   - tests/unit/test_mcp_iap_dpa.py
   - tests/unit/test_iap_service.py
   - tests/unit/test_cpas_pipeline.py
-  evidence: compliance/evidence/P7-005_mcp.md
+  - tests/unit/test_c2_cpas_iap_wiring.py
+  evidence: compliance/evidence/C2_CPAS_IAP_PRODUCTION_WIRING.md
   status: failing
-  notes: 'P7-005 local multi-constraint domain (frozen CpasSnapshot for IAP+DPA;
-    injections only with coupling; joint EIRP overlay). Official Rel1Ext MCP.1
-    harness still open — not claimed PASS. IAP coupling injectable/ENV.'
+  notes: 'C2: production CPAS wires ProtectionPoints + ITM coupling without test
+    kwargs; fail-closed when entities present and coupling unavailable. Official
+    Rel1Ext MCP.1 harness still open — not claimed PASS.'
 - id: WINNF.REL1Ext.FT.S.BPR.1
   family: BPR
   relation: modifies

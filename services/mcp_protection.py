@@ -1,16 +1,23 @@
-"""Multi-constraint IAP + DPA protection orchestration (P7-005 MCP.1).
+"""Multi-constraint IAP + DPA protection orchestration (P7-005 MCP.1 / C2).
 
-When IAP points and coupling are available, CPAS evaluates IAP first, then
-recomputes DPA movelists with effective EIRPs so outcomes jointly satisfy both
-constraint families. Without IAP inputs, behaviour matches peer + DPA only.
+CPAS evaluates peer boolean rules first, then IAP (when applicable entities
+exist), then DPA movelists with effective EIRPs.
 
-CPAS/MCP always shares one frozen generation (``CpasSnapshot``) for local
-grants, peer FAD, IAP and DPA.
+Production path (C2): ProtectionPoints are built from frozen snapshot
+protection records; coupling is built via ``make_production_iap_coupling``.
+Explicit test kwargs override production builders but share the same IAP engine.
+
+Failure policy:
+* No applicable IAP entities → IAP skipped (legitimate).
+* Applicable entities + coupling unavailable → ``CpasRfEvaluationError``
+  (fail-closed; never silent skip).
+* ``sas_iap_enabled=false`` → IAP skipped by explicit configuration.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 from sqlalchemy.orm import Session
@@ -18,20 +25,96 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class IapResolveResult:
+    """Resolved IAP inputs for one CPAS evaluation."""
+
+    points: tuple[Any, ...]
+    coupling: Any | None
+    source: str  # "none" | "production" | "override" | "disabled"
+
+
 def resolve_iap_points(
     db: Session,
     iap_points: Sequence[Any] | None,
     *,
     build_from_db: bool = True,
+    protection_records: tuple[tuple[str, str, str], ...] | None = None,
 ) -> list[Any]:
-    """Return explicit points, or build from injected entities when enabled."""
+    """Return explicit points, or build from frozen/live entities when enabled."""
     if iap_points is not None:
         return list(iap_points)
     if not build_from_db:
         return []
+    if protection_records is not None:
+        from services.iap.protection_points import build_protection_points_from_frozen
+
+        return list(build_protection_points_from_frozen(protection_records))
     from services.iap.protection_points import build_protection_points_from_db
 
     return list(build_protection_points_from_db(db))
+
+
+def resolve_iap_context(
+    db: Session,
+    *,
+    protection_records: tuple[tuple[str, str, str], ...] = (),
+    iap_points: Sequence[Any] | None = None,
+    iap_coupling: Any | None = None,
+    build_from_db: bool = True,
+    coupling_factory: Any | None = None,
+) -> IapResolveResult:
+    """Resolve ProtectionPoints + coupling for production or test override.
+
+    Precedence:
+    1. Explicit ``iap_points`` / ``iap_coupling`` kwargs (test/override).
+    2. Production builders from frozen ``protection_records`` (or live DB).
+    3. If points exist and coupling still missing → raise
+       ``IapCouplingUnavailable`` (unless IAP disabled).
+    """
+    from services.iap.coupling import (
+        IapCouplingUnavailable,
+        iap_enabled,
+        make_production_iap_coupling,
+    )
+    from services.propagation.errors import PropagationUnavailableError
+
+    if not iap_enabled():
+        return IapResolveResult(points=(), coupling=None, source="disabled")
+
+    points = resolve_iap_points(
+        db,
+        iap_points,
+        build_from_db=build_from_db,
+        protection_records=protection_records if iap_points is None else None,
+    )
+    if not points:
+        return IapResolveResult(points=(), coupling=None, source="none")
+
+    if iap_coupling is not None:
+        return IapResolveResult(
+            points=tuple(points), coupling=iap_coupling, source="override"
+        )
+
+    factory = coupling_factory or make_production_iap_coupling
+    try:
+        coupling = factory()
+    except PropagationUnavailableError as exc:
+        raise IapCouplingUnavailable(
+            f"IAP protection entities present but coupling unavailable: {exc}"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — surface as domain RF failure
+        raise IapCouplingUnavailable(
+            f"IAP protection entities present but coupling failed: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    if coupling is None:
+        raise IapCouplingUnavailable(
+            "IAP protection entities present but coupling provider returned None"
+        )
+    return IapResolveResult(
+        points=tuple(points), coupling=coupling, source="production"
+    )
 
 
 def effective_eirp_by_grant_id(
@@ -80,7 +163,6 @@ def merge_constraint_decisions(
             by_pk[pk_i] = decision
             order.append(pk_i)
             return
-        # terminate wins over reduce_power / keep
         if getattr(decision, "action", None) == "terminate":
             by_pk[pk_i] = decision
         elif (
@@ -93,12 +175,3 @@ def merge_constraint_decisions(
         for d in group:
             _consider(d)
     return [by_pk[pk] for pk in order]
-
-
-def log_iap_skip_without_coupling(point_count: int) -> None:
-    if point_count > 0:
-        logger.info(
-            "MCP: %d IAP protection point(s) present but no coupling; "
-            "skipping IAP (DPA/peer still apply)",
-            point_count,
-        )

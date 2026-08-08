@@ -117,6 +117,18 @@ class Settings(BaseSettings):
         default="itm",
         description="SAS_BPR_PATH_LOSS_MODEL=itm|free_space (free_space lab/test only).",
     )
+    # CPAS IAP production wiring (C2).
+    sas_iap_enabled: bool = Field(
+        default=True,
+        description=(
+            "When false, CPAS skips IAP even if protection entities exist "
+            "(explicit lab/profile opt-out). SAS_IAP_ENABLED."
+        ),
+    )
+    sas_iap_path_loss_model: Literal["itm", "free_space"] = Field(
+        default="itm",
+        description="SAS_IAP_PATH_LOSS_MODEL=itm|free_space (free_space lab/test only).",
+    )
 
     @field_validator("sas_execution_mode", mode="before")
     @classmethod
@@ -181,6 +193,29 @@ class Settings(BaseSettings):
                 return "free_space"
             return "itm"
         return value
+
+    @field_validator("sas_iap_path_loss_model", mode="before")
+    @classmethod
+    def _normalize_iap_path_loss_model(cls, value: object) -> object:
+        if value is None or value == "":
+            return "itm"
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("-", "_")
+            if normalized in ("free_space", "fs", "freespace"):
+                return "free_space"
+            return "itm"
+        return value
+
+    @field_validator("sas_iap_enabled", mode="before")
+    @classmethod
+    def _coerce_iap_enabled(cls, value: object) -> object:
+        if value is None or value == "":
+            return True
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
 
     @field_validator(
         "ssl_certfile",
