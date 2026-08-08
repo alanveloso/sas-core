@@ -999,3 +999,60 @@ def test_postgres_c4_exz_esc_freeze_n_vs_n1(pg_session):
     exz_n = sum(1 for k, _r, _d in snap_n.protection_records if k == "exclusion_zone")
     exz_n1 = sum(1 for k, _r, _d in snap_n1.protection_records if k == "exclusion_zone")
     assert exz_n1 > exz_n
+
+
+def test_postgres_wdb_pal_freeze_n_vs_n1(pg_session):
+    """C5: WDB PAL replace publishes N+1; frozen CPAS snapshot stays on N."""
+    from services.data_injection_service import get_injection_generations
+    from services.iap.protection_points import capture_protection_records_for_freeze
+    from services.pal_service import load_pal_records, replace_pal_records
+
+    replace_pal_records(
+        pg_session,
+        [
+            {
+                "palId": "pal-pg-n",
+                "userId": "u-pg",
+                "licenseStatus": "VALID",
+                "channelAssignment": {
+                    "primaryAssignment": {
+                        "lowFrequency": 3550_000_000,
+                        "highFrequency": 3560_000_000,
+                    }
+                },
+            }
+        ],
+    )
+    gen_n = int(get_injection_generations(pg_session).get("pal") or 0)
+    frozen = capture_protection_records_for_freeze(pg_session)
+    pals_n = {rid for k, rid, _d in frozen if k == "pal"}
+    assert "pal-pg-n" in pals_n
+
+    # Ingest N+1 while frozen N is held (same session pattern as C2–C4).
+    replace_pal_records(
+        pg_session,
+        [
+            {
+                "palId": "pal-pg-n1",
+                "userId": "u-pg",
+                "licenseStatus": "VALID",
+                "channelAssignment": {
+                    "primaryAssignment": {
+                        "lowFrequency": 3560_000_000,
+                        "highFrequency": 3570_000_000,
+                    }
+                },
+            }
+        ],
+    )
+    gen_n1 = int(get_injection_generations(pg_session).get("pal") or 0)
+    assert gen_n1 == gen_n + 1
+    # Live store is N+1.
+    assert {p["palId"] for p in load_pal_records(pg_session)} == {"pal-pg-n1"}
+    # Frozen capture from before replace must not be mutated in-place.
+    assert "pal-pg-n" in pals_n
+    assert "pal-pg-n1" not in pals_n
+
+    frozen_next = capture_protection_records_for_freeze(pg_session)
+    pals_next = {rid for k, rid, _d in frozen_next if k == "pal"}
+    assert pals_next == {"pal-pg-n1"}

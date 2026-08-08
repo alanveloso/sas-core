@@ -6,6 +6,7 @@ Covered:
 * Injected / NTIA Exclusion Zones (geometry + frequency) → terminate
 * GWPZ geometry + frequency overlap → terminate
 * FSS with neighboring GWBL + grant on 3650–3700 MHz within 150 km → terminate
+* Quiet-zone / FCC / Table Mountain / configurable QPR areas → terminate
 
 TT&C FSS purge-list (full R2-SGN-29 algorithm) remains approximate here:
 when ``ttc=True`` and FSS high > 3700 MHz, grants inside the FSS blocking
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import json
 from typing import Any, Sequence
+
+from sqlalchemy.orm import Session
 
 from services.exclusion_zone_service import (
     EXZ_BUFFER_M,
@@ -34,6 +37,7 @@ from services.iap.protection_points import (
     ProtectionEntityError,
     parse_fss_ttc,
 )
+from services.quiet_zone_service import QuietZoneUnavailable, quiet_zone_blocks_location
 
 FSS_GWBL_LOW_HZ = 3_650_000_000
 FSS_GWBL_HIGH_HZ = 3_700_000_000
@@ -126,6 +130,8 @@ def _gwbl_points(payloads: list[dict[str, Any]]) -> list[tuple[float, float]]:
 def evaluate_pre_iap_exclusions(
     local_grants: Sequence[Any],
     protection_records: Sequence[tuple[str, str, str]],
+    *,
+    db: Session | None = None,
 ) -> list[tuple[Any, str]]:
     """Return ``(frozen_grant, reason)`` pairs that must terminate before IAP."""
     wisps = _payloads(protection_records, KIND_WISP)
@@ -158,6 +164,22 @@ def evaluate_pre_iap_exclusions(
                 reason = "exz_exclusion"
         except ExclusionZoneError as exc:
             raise ProtectionEntityError(f"EXZ evaluation failed: {exc}") from exc
+
+        if reason is None:
+            cat = str(getattr(frozen, "cbsd_category", "") or "A")
+            bw_mhz = (high - low) / 1_000_000.0 if high > low else None
+            try:
+                q_reason = quiet_zone_blocks_location(
+                    float(lat),
+                    float(lon),
+                    cbsd_category=cat or "A",
+                    bandwidth_mhz=bw_mhz,
+                    db=db,
+                )
+            except QuietZoneUnavailable as exc:
+                raise ProtectionEntityError(f"quiet-zone evaluation failed: {exc}") from exc
+            if q_reason is not None:
+                reason = f"quiet_zone_{q_reason}"
 
         for wisp in wisps:
             if reason is not None:

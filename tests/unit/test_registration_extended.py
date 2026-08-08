@@ -369,8 +369,8 @@ def test_cat_b_conditionals_alone_without_cpi_succeeds(db_session):
             "cbsdCategory": "B",
             "airInterface": {"radioTechnology": "E_UTRA"},
             "installationParam": {
-                "latitude": 40.0,
-                "longitude": -105.27,
+                "latitude": 39.1,
+                "longitude": -94.58,
                 "height": 5.0,
                 "heightType": "AGL",
                 "antennaAzimuth": 0,

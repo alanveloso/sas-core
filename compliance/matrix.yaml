@@ -197,9 +197,14 @@ cases:
     status: failing
     implementation:
       - services/quiet_zone_service.py
-    tests: []
-    evidence: null
-    notes: "CSV Parcial ~40%."
+      - services/registration_service.py
+      - services/grant_service.py
+      - services/iap/pre_iap_exclusions.py
+    tests:
+      - tests/unit/test_c5_qpr_wdb_pcr_fdb.py
+      - tests/unit/test_registration_extended.py
+    evidence: compliance/evidence/C5_QPR_WDB_PCR_FDB.md
+    notes: "C5: QPR.2 NRQZ + FCC Cat A 2.4/Cat B 4.8 + Table Mountain + configurable areas; reg/grant/CPAS pre-IAP. implemented + production wired; official validation pending (NOT_RUN)."
 
   - id: FAMILY.WDB
     family: WDB
@@ -208,9 +213,12 @@ cases:
     implementation:
       - services/database_sync_service.py
       - services/pal_service.py
-    tests: []
-    evidence: null
-    notes: "CSV Parcial ~35%."
+      - services/cpas_reevaluation.py
+    tests:
+      - tests/unit/test_c5_qpr_wdb_pcr_fdb.py
+      - tests/unit/test_data_injection.py
+    evidence: compliance/evidence/C5_QPR_WDB_PCR_FDB.md
+    notes: "C5: PAL full-replace + CPI reconcile + optional checksum + N/N+1 reevaluation flag. implemented + production wired; official validation pending (NOT_RUN)."
 
   - id: FAMILY.FDB
     family: FDB
@@ -226,7 +234,7 @@ cases:
       - tests/unit/test_cpas_pipeline.py
       - tests/unit/test_multi_sas.py
     evidence: compliance/evidence/P5_GATE_FINAL.md
-    notes: "P5 CPAS/scheduler local+FAD.2 OK. P6-004 IAP engine. C2: execute_cpas_pipeline builds ProtectionPoints from frozen protection_records + production ITM coupling (fail-closed if entities present and coupling unavailable). Official FDB.1–6/8 still BLOCKED_BY_ENV / incomplete residual features. Not claimed PASS."
+    notes: "P5 CPAS/scheduler local+FAD.2 OK. C2–C4 EXZ/FSS/GWBL/ESC on CPAS. C5: scheduled DPA materializes activations+movelist; freeze includes scheduled_dpa/dpa_activation; post-sync reevaluation flag. Official FDB.1–6/8 still NOT_RUN / BLOCKED_BY_ENV. Not claimed PASS."
 
   - id: FAMILY.SCS
     family: SCS
@@ -286,10 +294,16 @@ cases:
     status: failing
     implementation:
       - routes/admin_routes.py
+      - services/ppa_service.py
+      - services/ppa_rf_contour.py
       - services/pal_service.py
-    tests: []
-    evidence: null
-    notes: "CSV Stub ~15%; PPA creation incomplete."
+    tests:
+      - tests/unit/test_c5_qpr_wdb_pcr_fdb.py
+      - tests/unit/test_ppa_rf_contour.py
+      - tests/unit/test_ppa_creation.py
+      - tests/unit/test_geometry_overlap.py
+    evidence: compliance/evidence/C5_QPR_WDB_PCR_FDB.md
+    notes: "C5: RF maximum PPA contour (−96 dBm/10 MHz hybrid) + claimedBoundary ⊆ RF max + SA/census clip; no hull RF substitute. implemented + production wired; official validation pending (NOT_RUN). Harness ITM/shapely often BLOCKED_BY_ENV."
 
   - id: FAMILY.PAT
     family: PAT

@@ -1,18 +1,15 @@
-"""Admin PPA creation lifecycle (P4-003).
+"""Admin PPA creation lifecycle (P4-003 / C5 PCR).
 
 Implements TriggerPpaCreation / GetPpaCreationStatus semantics:
 
 - validate PALs (known + VALID + shared holder);
 - validate cluster CBSDs (registered, holder match);
-- build or accept geometry (providedContour or cluster convex hull);
+- build maximum contour: claimedBoundary / providedContour clipped to
+  PAL service-area (and census tracts when provisioned);
+- reject when a required clip dataset is configured but missing;
 - reject overlap with an existing PPA on the same PAL channel;
 - persist ZoneData for FAD export;
 - status progresses to completed with withError only after a real failure.
-
-Census-tract clip against official county polygons is deferred when PAL records
-lack an injectable service-area GeoJSON (full PCR.1 geometry fidelity → RF/data
-phases). When ``license.licenseArea`` / ``serviceArea`` GeoJSON is present on
-every PAL, CBSDs and the contour are checked against that union.
 """
 
 from __future__ import annotations
@@ -20,19 +17,37 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from models.models import AdminInjectedData, Cbsd
 from services.fad_service import rewrite_zone_id
-from services.geometry import geojson_areas_overlap, iter_geojson_rings, point_in_geojson
+from services.geometry import (
+    geojson_areas_overlap,
+    geojson_geometry_usable,
+    iter_geojson_rings,
+    point_in_geojson,
+)
 from services.meas_report import set_admin_flag
 from services.pal_service import load_pal_records
+from services.ppa_rf_contour import (
+    PpaRfContourError,
+    PpaRfEngines,
+    cbsd_orm_to_ppa_device,
+    load_default_ppa_rf_engines,
+    maximum_rf_ppa_contour,
+)
 
 KIND_STATUS = "ppa_creation_status"
 KIND_ZONE = "zone"
 KIND_AUDIT = "ppa_audit"
+KIND_CLUSTER_LIST = "cluster_list"
+KIND_PCR_CONFIG = "ppa_creation_config"
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CENSUS_DIR = _REPO_ROOT / "data" / "geo" / "census"
 
 
 class PpaCreationError(Exception):
@@ -210,6 +225,99 @@ def _union_service_areas(pals: list[dict[str, Any]]) -> dict[str, Any] | None:
     return {"type": "FeatureCollection", "features": features}
 
 
+def _as_feature_collection(geom: dict[str, Any]) -> dict[str, Any]:
+    if geom.get("type") == "FeatureCollection":
+        return geom
+    if geom.get("type") == "Feature":
+        return {"type": "FeatureCollection", "features": [geom]}
+    return {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "properties": {}, "geometry": geom}],
+    }
+
+
+def _pcr_config(db: Session) -> dict[str, Any]:
+    row = db.query(AdminInjectedData).filter_by(kind=KIND_PCR_CONFIG).first()
+    defaults = {"requireCensusClip": False, "requireServiceArea": False}
+    if not row:
+        return defaults
+    try:
+        data = json.loads(row.data_json or "{}")
+    except json.JSONDecodeError:
+        return defaults
+    if not isinstance(data, dict):
+        return defaults
+    return {
+        "requireCensusClip": bool(data.get("requireCensusClip", False)),
+        "requireServiceArea": bool(data.get("requireServiceArea", False)),
+    }
+
+
+def _load_census_geometry() -> dict[str, Any] | None:
+    if not _CENSUS_DIR.is_dir():
+        return None
+    features: list[dict[str, Any]] = []
+    for path in sorted(_CENSUS_DIR.glob("*.geojson")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("type") == "FeatureCollection":
+            features.extend(
+                f for f in (data.get("features") or []) if isinstance(f, dict)
+            )
+        elif data.get("type") == "Feature":
+            features.append(data)
+        elif geojson_geometry_usable(data):
+            features.append(
+                {"type": "Feature", "properties": {}, "geometry": data}
+            )
+    if not features:
+        return None
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _clip_contour_to_max(
+    contour: dict[str, Any], max_area: dict[str, Any]
+) -> dict[str, Any]:
+    """Enforce contour ⊆ max_area.
+
+    When the contour already lies inside ``max_area``, keep it. Otherwise the
+    normative operation is intersection (RF ∩ constraint). Without a polygon
+    clip library we only accept contours that are already within the max area;
+    never replace an RF contour with a larger service-area polygon.
+    """
+    if _contour_within_service_area(contour, max_area):
+        return contour
+    raise PpaCreationError("contour_outside_clip_area")
+
+
+def _cluster_ids_from_injection(db: Session, body: dict[str, Any]) -> list[str] | None:
+    cbsd_ids = body.get("cbsdIds")
+    if isinstance(cbsd_ids, list) and cbsd_ids:
+        return None
+    user_id = body.get("userId")
+    pal_ids = body.get("palIds") or []
+    for row in db.query(AdminInjectedData).filter_by(kind=KIND_CLUSTER_LIST).all():
+        try:
+            data = json.loads(row.data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if user_id and data.get("userId") == user_id:
+            ids = data.get("cbsdIds")
+            if isinstance(ids, list) and ids:
+                return [str(x) for x in ids]
+        if pal_ids and data.get("palId") in pal_ids:
+            ids = data.get("cbsdIds")
+            if isinstance(ids, list) and ids:
+                return [str(x) for x in ids]
+    return None
+
+
 def _points_within(zone: dict[str, Any], locations: list[tuple[float, float]]) -> bool:
     return all(point_in_geojson(lat, lon, zone) for lat, lon in locations)
 
@@ -273,7 +381,8 @@ def _validate_and_build(
 ) -> tuple[str, dict[str, Any]]:
     pal_ids = body.get("palIds")
     cbsd_ids = body.get("cbsdIds")
-    provided = body.get("providedContour")
+    provided = body.get("providedContour") or body.get("claimedBoundary")
+    cfg = _pcr_config(db)
 
     if not isinstance(pal_ids, list) or not pal_ids:
         raise PpaCreationError("missing_palIds")
@@ -282,6 +391,10 @@ def _validate_and_build(
     pal_ids = [p.strip() for p in pal_ids]
     if len(set(pal_ids)) != len(pal_ids):
         raise PpaCreationError("duplicate_palIds")
+
+    injected_cluster = _cluster_ids_from_injection(db, body)
+    if (not isinstance(cbsd_ids, list) or not cbsd_ids) and injected_cluster:
+        cbsd_ids = injected_cluster
 
     if not isinstance(cbsd_ids, list) or not cbsd_ids:
         raise PpaCreationError("missing_cbsdIds")
@@ -328,25 +441,62 @@ def _validate_and_build(
         locations.append(loc)
 
     service_area = _union_service_areas(selected)
+    if cfg.get("requireServiceArea") and service_area is None:
+        raise PpaCreationError("service_area_required")
     if service_area is not None and not _points_within(service_area, locations):
         raise PpaCreationError("cbsd_outside_service_area")
 
-    if provided is not None:
-        if not _is_valid_feature_collection(provided):
-            raise PpaCreationError("invalid_providedContour")
-        contour = provided
+    census = _load_census_geometry()
+    if cfg.get("requireCensusClip") and census is None:
+        raise PpaCreationError("census_dataset_missing")
+    if census is not None and not _points_within(census, locations):
+        raise PpaCreationError("cbsd_outside_census")
+
+    # --- Maximum / Largest Allowable PPA Contour (RF) ---
+    # Order (reference_models.ppa.ppa semantics + local clip):
+    #   per-CBSD RF (−96 dBm/10 MHz) → union → clip census → clip PAL service area
+    #   → optional claimedBoundary ⊆ result.
+    # Hull is never used as an RF substitute.
+    rf_engines = body.get("_rfEngines")
+    try:
+        engines: PpaRfEngines
+        if isinstance(rf_engines, PpaRfEngines):
+            engines = rf_engines
+        else:
+            engines = load_default_ppa_rf_engines()
+        devices = [cbsd_orm_to_ppa_device(c) for c in cbsds]
+        rf_max = maximum_rf_ppa_contour(devices, engines=engines)
+    except PpaRfContourError as exc:
+        raise PpaCreationError(f"rf_contour_unavailable:{exc}") from exc
+
+    contour = rf_max
+    if census is not None:
+        contour = _clip_contour_to_max(contour, census)
         if not _points_within(contour, locations):
+            raise PpaCreationError("contour_outside_census")
+    if service_area is not None:
+        contour = _clip_contour_to_max(contour, service_area)
+        if not _points_within(contour, locations):
+            raise PpaCreationError("cbsd_outside_max_contour")
+
+    if provided is not None:
+        if not (
+            _is_valid_feature_collection(provided)
+            or geojson_geometry_usable(provided)
+        ):
+            raise PpaCreationError("invalid_providedContour")
+        claimed = (
+            provided
+            if isinstance(provided, dict)
+            and provided.get("type") == "FeatureCollection"
+            else _as_feature_collection(provided)
+        )
+        if not _points_within(claimed, locations):
             raise PpaCreationError("cbsd_outside_providedContour")
-        if service_area is not None and not _contour_within_service_area(
-            contour, service_area
-        ):
-            raise PpaCreationError("contour_outside_service_area")
-    else:
-        contour = _geometry_from_cluster(locations)
-        if service_area is not None and not _contour_within_service_area(
-            contour, service_area
-        ):
-            raise PpaCreationError("contour_outside_service_area")
+        # Claimed must not exceed the RF maximum (after SA/census clip).
+        if not _contour_within_service_area(claimed, contour):
+            raise PpaCreationError("claimedBoundary_exceeds_rf_maximum")
+        contour = claimed
 
     selected_freqs = [_pal_freq(p) for p in selected]
     selected_freqs_ok = [f for f in selected_freqs if f is not None]

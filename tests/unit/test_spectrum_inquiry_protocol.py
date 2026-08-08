@@ -165,7 +165,7 @@ def test_fss_nearby_excludes_3650_to_3700(db_session):
                 "type": "FSS",
                 "deploymentParam": [
                     {
-                        "installationParam": {"latitude": 40.0, "longitude": -105.27},
+                        "installationParam": {"latitude": 39.1, "longitude": -94.58},
                         "operationParam": {
                             "operationFrequencyRange": {
                                 "lowFrequency": 3_700_000_000,

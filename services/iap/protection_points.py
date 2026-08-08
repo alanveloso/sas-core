@@ -697,6 +697,28 @@ def capture_protection_records_for_freeze(db: Session) -> tuple[tuple[str, str, 
     rows.extend(capture_exclusion_zone_records_for_freeze(db))
     rows.append(capture_esc_connectivity_for_freeze(db))
 
+    for idx, payload in enumerate(load_injected(db, "scheduled_dpa")):
+        rows.append(
+            (
+                "scheduled_dpa",
+                f"scheduled_dpa:{idx}",
+                json.dumps(payload, sort_keys=True, default=str),
+            )
+        )
+    from services.meas_report import FLAG_DPA_ACTIVE
+
+    for idx, payload in enumerate(load_injected(db, FLAG_DPA_ACTIVE)):
+        dpa_id = ""
+        if isinstance(payload, dict):
+            dpa_id = str(payload.get("dpaId") or "")
+        rows.append(
+            (
+                "dpa_activation",
+                dpa_id or f"dpa_activation:{idx}",
+                json.dumps(payload, sort_keys=True, default=str),
+            )
+        )
+
     for row in db.query(EscSensor).order_by(EscSensor.id).all():
         rows.append(("esc_sensor", str(row.record_id), row.data_json or "{}"))
 

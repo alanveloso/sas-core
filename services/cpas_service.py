@@ -503,7 +503,7 @@ def evaluate_cpas_protections(
 
     try:
         for frozen, reason in evaluate_pre_iap_exclusions(
-            local_grants, snapshot.protection_records
+            local_grants, snapshot.protection_records, db=db
         ):
             if frozen.grant_pk in decided_pks:
                 continue
@@ -890,6 +890,9 @@ def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
         )
 
         mark_scheduled_success_if_applicable(db)
+        from services.cpas_reevaluation import clear_cpas_reevaluation_required
+
+        clear_cpas_reevaluation_required(db)
         _append_cpas_audit(
             db,
             "cpas_completed",

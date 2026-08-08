@@ -320,6 +320,20 @@ def process_grant(
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
+            # QPR: quiet-zone / FCC / Table Mountain / configurable protected areas.
+            from services.quiet_zone_service import grant_blocked_by_quiet_zone
+
+            if grant_blocked_by_quiet_zone(
+                lat,
+                lon,
+                cbsd_category=cbsd.cbsd_category or (_cbsd_reg(cbsd).get("cbsdCategory")),
+                low_hz=low,
+                high_hz=high,
+                db=db,
+            ):
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
             # FDB.6: FSS with neighboring GWBL within 150 km → 400 on 3650–3700 MHz.
             from services.federal_db_service import grant_blocked_by_fss_gwbl
 
