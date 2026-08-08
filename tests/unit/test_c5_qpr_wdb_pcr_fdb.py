@@ -423,7 +423,40 @@ def test_pcr_inactive_pal_rejected(db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_fdb_scheduled_dpa_materializes_activation(db_session):
+def test_fdb_scheduled_dpa_materializes_activation(db_session, tmp_path):
+    """Known catalogue dpaId materializes; unknown ids are covered in test_fdb_scheduled_dpa."""
+    from pathlib import Path
+
+    from services.dpa_service import bulk_dpa_activation, list_active_activations, load_dpas
+
+    kml = tmp_path / "fdb-sched.kml"
+    kml.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>portal-dpa-1</name>
+      <ExtendedData>
+        <Data name="freqRangeMHz"><value>3550-3560</value></Data>
+      </ExtendedData>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -75.0,38.0,0 -75.1,38.0,0 -75.1,38.1,0 -75.0,38.1,0 -75.0,38.0,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
+""",
+        encoding="utf-8",
+    )
+    load_dpas(db_session, kml_paths=[Path(kml)])
+    bulk_dpa_activation(db_session, activate=False)
+    db_session.commit()
     body = json.dumps(
         {
             "activations": [
@@ -441,7 +474,6 @@ def test_fdb_scheduled_dpa_materializes_activation(db_session):
     db_session.commit()
     meta = get_sync_meta(db_session)
     assert meta["dpa"] >= 1
-    from services.dpa_service import list_active_activations
 
     acts = list_active_activations(db_session)
     assert any(a.get("dpaId") == "portal-dpa-1" for a in acts)
@@ -454,3 +486,23 @@ def test_fdb_scheduled_dpa_materializes_activation(db_session):
 def test_fdb_scheduled_dpa_invalid_json_raises(db_session):
     with pytest.raises(DatabaseSyncError):
         _apply_scheduled_dpa(db_session, b"not-json")
+
+
+def test_fdb_scheduled_dpa_unknown_id_rejected(db_session):
+    with pytest.raises(DatabaseSyncError, match="unknown_dpaId"):
+        _apply_scheduled_dpa(
+            db_session,
+            json.dumps(
+                {
+                    "activations": [
+                        {
+                            "dpaId": "no-such-dpa",
+                            "frequencyRange": {
+                                "lowFrequency": 3550_000_000,
+                                "highFrequency": 3560_000_000,
+                            },
+                        }
+                    ]
+                }
+            ).encode(),
+        )

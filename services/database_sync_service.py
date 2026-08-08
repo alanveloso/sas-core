@@ -29,11 +29,6 @@ from models.models import AdminInjectedData, CpiUser
 
 logger = logging.getLogger(__name__)
 
-# Local aliases used by scheduled DPA catalogue synthesis.
-CBRS_LOW = 3_550_000_000
-CBRS_HIGH = 3_700_000_000
-
-
 class DatabaseSyncError(RuntimeError):
     """Raised when a single database_url sync fails validation or apply."""
 
@@ -256,18 +251,11 @@ def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
     * ``{"dpaId":...,"frequencyRange":{...}}``
 
     Uses the existing DPA catalogue/activation domain (no second scheduler).
-    Unknown ``dpaId`` values get a minimal catalogue entry so channel binding works.
+    Unknown ``dpaId`` / channel-not-in-catalogue fail closed — same rules as
+    ``activate_dpa`` (no synthetic world geometry). Movelist refresh uses
+    ``refresh_or_fail_closed_movelists``.
     """
-    from services.dpa_protection import refresh_activation_movelists
-    from services.dpa_service import (
-        FLAG_DPA_ACTIVE,
-        DpaDefinition,
-        FrequencyRange,
-        get_catalogue_definition,
-        list_catalogue,
-        persist_catalogue,
-        _upsert_activation,
-    )
+    from services import dpa_service as dpa_svc
     from services.federal_db_service import bump_sync_meta
 
     text = body.decode("utf-8")
@@ -287,22 +275,8 @@ def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
     if not activations:
         raise DatabaseSyncError("scheduled_dpa_empty_activations")
 
-    db.query(AdminInjectedData).filter_by(kind="scheduled_dpa").delete()
-    _store_injection(
-        db,
-        "scheduled_dpa",
-        {"raw": text, "activations": activations},
-    )
-
-    world_ring = [
-        [-180.0, -90.0],
-        [-180.0, 90.0],
-        [180.0, 90.0],
-        [180.0, -90.0],
-        [-180.0, -90.0],
-    ]
-
-    # Ensure catalogue coverage for each activation.
+    # Validate every request against the real catalogue before mutating state.
+    channels: list[tuple[str, dpa_svc.FrequencyRange]] = []
     for act in activations:
         dpa_id = str(act.get("dpaId") or "").strip()
         fr = act.get("frequencyRange") or {}
@@ -313,42 +287,27 @@ def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
             raise DatabaseSyncError("scheduled_dpa_invalid_frequency") from exc
         if not dpa_id or low >= high:
             raise DatabaseSyncError("scheduled_dpa_invalid_activation")
-        if get_catalogue_definition(db, dpa_id) is not None:
-            continue
-        existing_maps = [
-            item for item in list_catalogue(db) if isinstance(item, dict)
-        ]
-        defs: list[DpaDefinition] = []
-        for item in existing_maps:
-            fr0 = item.get("frequencyRange") or {}
-            try:
-                defs.append(
-                    DpaDefinition(
-                        dpa_id=str(item["dpaId"]),
-                        freq_low_hz=int(fr0.get("lowFrequency") or CBRS_LOW),
-                        freq_high_hz=int(fr0.get("highFrequency") or CBRS_HIGH),
-                        source=str(item.get("source") or "catalogue"),
-                        esc_monitored=bool(item.get("escMonitored", True)),
-                        geometry=item.get("geometry"),
-                    )
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
-        defs.append(
-            DpaDefinition(
-                dpa_id=dpa_id,
-                freq_low_hz=low,
-                freq_high_hz=high,
-                source="scheduled_dpa",
-                esc_monitored=False,
-                geometry={"type": "Polygon", "coordinates": [world_ring]},
+        definition = dpa_svc.get_catalogue_definition(db, dpa_id)
+        if definition is None:
+            raise DatabaseSyncError(f"scheduled_dpa_unknown_dpaId:{dpa_id}")
+        freq = dpa_svc.FrequencyRange(low, high)
+        if not dpa_svc._channel_in_definition(definition, freq):
+            raise DatabaseSyncError(
+                f"scheduled_dpa_channel_not_in_catalogue:{dpa_id}"
             )
-        )
-        persist_catalogue(db, defs, sources=["scheduled_dpa_sync"])
-        db.flush()
+        channels.append((dpa_id, freq))
 
-    # Drop previous scheduled activations only.
-    for row in list(db.query(AdminInjectedData).filter_by(kind=FLAG_DPA_ACTIVE).all()):
+    db.query(AdminInjectedData).filter_by(kind="scheduled_dpa").delete()
+    _store_injection(
+        db,
+        "scheduled_dpa",
+        {"raw": text, "activations": activations},
+    )
+
+    # Drop previous scheduled activations only (retain non-scheduled).
+    for row in list(
+        db.query(AdminInjectedData).filter_by(kind=dpa_svc.FLAG_DPA_ACTIVE).all()
+    ):
         try:
             data = json.loads(row.data_json or "{}")
         except json.JSONDecodeError:
@@ -356,39 +315,16 @@ def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
         if data.get("source") == "scheduled_dpa":
             db.delete(row)
 
-    for act in activations:
-        dpa_id = str(act["dpaId"]).strip()
-        fr = act["frequencyRange"]
-        freq = FrequencyRange(int(fr["lowFrequency"]), int(fr["highFrequency"]))
-        if get_catalogue_definition(db, dpa_id) is None:
-            raise DatabaseSyncError(f"scheduled_dpa_unknown_dpaId:{dpa_id}")
-        _upsert_activation(db, dpa_id=dpa_id, freq=freq, movelist=[])
+    for dpa_id, freq in channels:
+        dpa_svc._upsert_activation(
+            db,
+            dpa_id=dpa_id,
+            freq=freq,
+            movelist=[],
+            source="scheduled_dpa",
+        )
 
-    try:
-        refresh_activation_movelists(db, commit=False)
-    except Exception:
-        logger.exception("scheduled DPA movelist refresh failed; activations retained")
-
-    # Tag source after movelist refresh (which may rewrite activation rows).
-    for act in activations:
-        dpa_id = str(act["dpaId"]).strip()
-        fr = act["frequencyRange"]
-        low = int(fr["lowFrequency"])
-        high = int(fr["highFrequency"])
-        for row in db.query(AdminInjectedData).filter_by(kind=FLAG_DPA_ACTIVE).all():
-            try:
-                data = json.loads(row.data_json or "{}")
-            except json.JSONDecodeError:
-                continue
-            fr_row = data.get("frequencyRange") or {}
-            if (
-                data.get("dpaId") == dpa_id
-                and int(fr_row.get("lowFrequency", -1)) == low
-                and int(fr_row.get("highFrequency", -1)) == high
-            ):
-                data["source"] = "scheduled_dpa"
-                row.data_json = json.dumps(data)
-                break
+    dpa_svc.refresh_or_fail_closed_movelists(db, channels)
 
     bump_sync_meta(db, "dpa")
 
