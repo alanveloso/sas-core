@@ -320,6 +320,8 @@ def _run_certification_cpas() -> None:
 
 
 def _append_cpas_audit(db: Session, event: str, detail: dict[str, Any]) -> None:
+    from services.request_context import context_as_dict
+
     db.add(
         AdminInjectedData(
             kind=KIND_CPAS_AUDIT,
@@ -327,6 +329,7 @@ def _append_cpas_audit(db: Session, event: str, detail: dict[str, Any]) -> None:
                 {
                     "event": event,
                     "at": utc_now().replace(microsecond=0).isoformat(),
+                    **context_as_dict(),
                     **detail,
                 },
                 default=str,

@@ -26,8 +26,10 @@ from services.error_handlers import (
 )
 from services.grant_service import process_grant
 from services.heartbeat_service import process_heartbeat
+from services.metrics import get_metrics
 from services.registration_service import process_registration
 from services.relinquishment_service import process_relinquishment
+from services.request_context import bind_batch, bind_item_index, get_request_id
 from services.spectrum_inquiry_service import process_spectrum_inquiry
 
 router = APIRouter(prefix="/v1.2", tags=["cbsd-sas"])
@@ -97,6 +99,7 @@ def _run_batch(
             )
         return _single_code_response(procedure, INVALID_VALUE)
 
+    bind_batch(batch_id=get_request_id())
     service_responses = (
         run_service(parsed.items_for_service, auth.certificate_hash)
         if parsed.items_for_service
@@ -113,6 +116,17 @@ def _run_batch(
         echo_fields=("cbsdId", "grantId"),
         cbsd_id_echo=cbsd_id_echo,
     )
+    metrics = get_metrics()
+    for index, item in enumerate(merged):
+        # itemIndex is bound for post-merge metrics only; domain services still
+        # process the full batch in one call (no per-item service re-entry).
+        bind_item_index(index)
+        if not isinstance(item, dict):
+            continue
+        resp = item.get("response") if isinstance(item.get("response"), dict) else item
+        code = resp.get("responseCode") if isinstance(resp, dict) else None
+        if isinstance(code, int):
+            metrics.record_protocol(procedure=procedure, response_code=code)
     return JSONResponse({response_key: merged})
 
 

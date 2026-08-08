@@ -60,17 +60,41 @@ async def _read_json_object(request: Request) -> dict[str, Any]:
 
 @router.post("/reset")
 def admin_reset():
+    # Do not open a DB session here: reset_db() drop_all/create_all on the
+    # process engine while a request-scoped Session is open is unsafe.
+    import logging
+
+    from services.request_context import get_request_id
+
+    logging.getLogger(__name__).info(
+        "admin_reset request_id=%s", get_request_id() or "-"
+    )
     reset_db()
     return _empty_ok()
 
 
+@router.get("/metrics")
+def admin_metrics():
+    """Operational metrics snapshot (latency/error counters). Admin mTLS only."""
+    from services.metrics import get_metrics
+
+    return JSONResponse(get_metrics().snapshot())
+
+
 @router.post("/injectdata/fcc_id")
 def inject_fcc_id(body: InjectFccIdRequest, db: Session = Depends(get_db)):
+    from services.audit_log import append_admin_audit
+
     existing = db.query(FccIdRecord).filter_by(fcc_id=body.fccId).first()
     if existing:
         existing.fcc_max_eirp = body.fccMaxEirp
     else:
         db.add(FccIdRecord(fcc_id=body.fccId, fcc_max_eirp=body.fccMaxEirp))
+    append_admin_audit(
+        db,
+        "inject_fcc_id",
+        {"fccId": body.fccId, "fccMaxEirp": body.fccMaxEirp},
+    )
     db.commit()
     return _empty_ok()
 
@@ -285,6 +309,12 @@ def trigger_create_full_activity_dump(db: Session = Depends(get_db)):
 @router.post("/trigger/daily_activities_immediately")
 def trigger_daily_activities_immediately(db: Session = Depends(get_db)):
     """Start CPAS: pull peer FADs and apply conflict resolution."""
+    from services.audit_log import append_admin_audit
+
+    # Commit audit before dispatch: trigger_daily_activities commits the
+    # running flag via set_admin_flag; avoid a trailing commit racing the
+    # certification worker session.
+    append_admin_audit(db, "trigger_daily_activities", {}, commit=True)
     trigger_daily_activities(db)
     return _empty_ok()
 
