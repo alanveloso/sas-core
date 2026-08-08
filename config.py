@@ -54,6 +54,38 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 30.0
     max_batch_size: int = 100
 
+    # P8-003 operational security
+    sas_max_request_body_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        description="Reject HTTP bodies larger than this (Content-Length). 0 disables.",
+    )
+    sas_rate_limit_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable per-client token-bucket rate limiting. Forced off when "
+            "SAS_EXECUTION_MODE=certification."
+        ),
+    )
+    sas_rate_limit_per_second: float = Field(
+        default=50.0,
+        description="Steady-state requests/second per client when rate limiting is on.",
+    )
+    sas_rate_limit_burst: float = Field(
+        default=200.0,
+        description="Burst capacity per client when rate limiting is on.",
+    )
+    sas_ssl_ocsp_mode: Literal["disabled", "soft", "strict"] = Field(
+        default="disabled",
+        description=(
+            "OCSP mode. WInnForum CRL-based target keeps disabled; soft/strict "
+            "reserved for deployments that provision OCSP responders."
+        ),
+    )
+    sas_fad_max_file_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        description="Absolute cap on a single peer FAD activity file body.",
+    )
+
     # API listeners
     api_host: str = "0.0.0.0"
     rsa_port: int = 9000
@@ -86,9 +118,11 @@ class Settings(BaseSettings):
         description="SAS_ADMIN_CERT_SHA1 comma-separated admin client fingerprints.",
     )
 
-    # External federal / marketplace DB basic auth
-    db_sync_username: str = "username"
-    db_sync_password: str = "password"
+    # External federal / marketplace DB basic auth.
+    # Production: inject via environment / secret mounts — never commit real values.
+    # Empty password disables basic-auth until configured (see db_sync_basic_auth).
+    db_sync_username: str = ""
+    db_sync_password: str = ""
 
     # USGS NED 1″ GridFloat directory for Cat A outdoor HAAT (SAS_TERRAIN_DIR).
     sas_terrain_dir: Optional[Path] = Field(
@@ -137,6 +171,29 @@ class Settings(BaseSettings):
             return "production"
         if isinstance(value, str):
             return value.strip().lower()
+        return value
+
+    @field_validator("sas_rate_limit_enabled", mode="before")
+    @classmethod
+    def _coerce_rate_limit_enabled(cls, value: object) -> object:
+        if value is None or value == "":
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
+
+    @field_validator("sas_ssl_ocsp_mode", mode="before")
+    @classmethod
+    def _normalize_ocsp_mode(cls, value: object) -> object:
+        if value is None or value == "":
+            return "disabled"
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("soft", "strict", "disabled"):
+                return normalized
+            return "disabled"
         return value
 
     @field_validator("sas_fad_client_check_hostname", mode="before")

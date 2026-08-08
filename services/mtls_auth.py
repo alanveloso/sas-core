@@ -16,15 +16,16 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.models import PeerSas
+from services import winnf_role_oids
+
+# Canonical WInnForum role OIDs (re-exported for existing importers).
+OID_ROLE_SAS = winnf_role_oids.OID_ROLE_SAS
+OID_ROLE_INSTALLER = winnf_role_oids.OID_ROLE_INSTALLER
+OID_ROLE_CBSD = winnf_role_oids.OID_ROLE_CBSD
+OID_ROLE_DOMAIN_PROXY = winnf_role_oids.OID_ROLE_DOMAIN_PROXY
+OID_ZONE = winnf_role_oids.OID_ZONE
 
 logger = logging.getLogger(__name__)
-
-# WInnForum certificate policy OIDs (WINNF-TS-0022 / cert/openssl.cnf)
-OID_ROLE_SAS = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.1")
-OID_ROLE_INSTALLER = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.2")
-OID_ROLE_CBSD = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.3")
-OID_ROLE_DOMAIN_PROXY = ObjectIdentifier("1.3.6.1.4.1.46609.1.1.4")
-OID_ZONE = ObjectIdentifier("1.3.6.1.4.1.46609.1.2")
 
 # Ciphers allowed on the SAS↔SAS / CBSD interface (mirrors Fake SAS).
 # ECDHE-RSA-AES256-GCM-SHA384 is intentionally excluded (SSS_14).

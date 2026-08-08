@@ -16,13 +16,16 @@ Raw harness logs may live under gitignored `artifacts/winnforum/`.
 Intermediate `*_GATE_VERIFY_*` mid-phase notes for P5/P6 were superseded by the
 `*_GATE_FINAL.md` files and removed during repository hardening (2026-08-07).
 
-## Task evidence (P4–P6)
+## Task evidence (P4–P8)
 
 One task evidence file per plan id (no agent review notes in this tree).
 
 - P4: `P4-001_*` … `P4-005_*`
 - P5: `P5-001_*` … `P5-004_*`
 - P6: `P6-001_*` … `P6-004_*`
+- P7: `P7-004_*`, `P7-005_*`, `P7_FINAL_AUDIT.md` (Rel1Ext official gate still open)
+- P8: `P8-001_observability.md`, `P8-002_migrations.md`, `P8-003_security.md`
+- Pre-P8 product close: `FEATURE_COMPLETE_AUDIT.md`
 
 ## Matrix
 

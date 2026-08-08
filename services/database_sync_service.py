@@ -47,6 +47,13 @@ def _ssl_context() -> ssl.SSLContext:
 
 def _http_get(url: str, *, auth: bool = False) -> bytes:
     """Fetch URL without following redirects (SSRF / open-redirect control)."""
+    from services.ssrf import SsrfError, assert_https_egress_url_allowed
+
+    try:
+        assert_https_egress_url_allowed(url, allow_lab_private=True)
+    except SsrfError as exc:
+        raise DatabaseSyncError(f"ssrf_blocked:{exc}") from exc
+
     settings = get_settings()
     kwargs: dict[str, Any] = {
         "verify": _ssl_context(),
@@ -54,12 +61,18 @@ def _http_get(url: str, *, auth: bool = False) -> bytes:
         "follow_redirects": False,
     }
     if auth:
-        kwargs["auth"] = settings.db_sync_basic_auth
+        user, password = settings.db_sync_basic_auth
+        if not user or not password:
+            raise DatabaseSyncError("db_sync_credentials_not_configured")
+        kwargs["auth"] = (user, password)
     with httpx.Client(**kwargs) as client:
         resp = client.get(url)
         if resp.is_redirect:
             raise DatabaseSyncError(f"redirect_refused:{url}")
         resp.raise_for_status()
+        max_bytes = int(settings.sas_max_request_body_bytes)
+        if max_bytes > 0 and len(resp.content) > max_bytes:
+            raise DatabaseSyncError("response_body_too_large")
         return resp.content
 
 

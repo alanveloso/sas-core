@@ -258,6 +258,8 @@ def trigger_enable_ntia_15_517(db: Session = Depends(get_db)):
 @router.post("/injectdata/peer_sas")
 async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     """Persist peer SAS certificateHash + url for SAS↔SAS authorization."""
+    from services.ssrf import SsrfError, assert_https_egress_url_allowed
+
     body: dict[str, Any] = {}
     try:
         body = await request.json()
@@ -266,6 +268,12 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     cert_hash = (body.get("certificateHash") or "").strip()
     url = (body.get("url") or "").strip()
     if cert_hash:
+        if url:
+            try:
+                assert_https_egress_url_allowed(url, allow_lab_private=True)
+            except SsrfError:
+                # Admin contract: invalid peer URL is ignored (no row poison).
+                return _empty_ok()
         existing = db.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
         if existing:
             existing.url = url
@@ -273,6 +281,22 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
             db.add(PeerSas(certificate_hash=cert_hash, url=url))
         db.commit()
     return _empty_ok()
+
+
+@router.get("/security/trust_material")
+def security_trust_material():
+    """Inspect on-disk CA/CRL material (Admin mTLS)."""
+    from services.trust_reload import trust_material_status
+
+    return trust_material_status()
+
+
+@router.post("/security/reload_trust_material")
+def security_reload_trust_material():
+    """Re-read CA/CRL from disk for app-layer validators (Admin mTLS)."""
+    from services.trust_reload import reload_trust_material
+
+    return reload_trust_material()
 
 
 @router.post("/injectdata/esc_sensor")
