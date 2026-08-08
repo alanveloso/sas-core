@@ -435,11 +435,14 @@ cases:
 
     '
   local_tests:
+  - tests/unit/test_mcp_iap_dpa.py
   - tests/unit/test_iap_service.py
   - tests/unit/test_cpas_pipeline.py
-  evidence: null
+  evidence: compliance/evidence/P7-005_mcp.md
   status: failing
-  notes: P7-005. Baseline MCP.1 deprecated for Rel1Ext.
+  notes: 'P7-005 local multi-constraint domain (frozen CpasSnapshot for IAP+DPA;
+    injections only with coupling; joint EIRP overlay). Official Rel1Ext MCP.1
+    harness still open — not claimed PASS. IAP coupling injectable/ENV.'
 - id: WINNF.REL1Ext.FT.S.BPR.1
   family: BPR
   relation: modifies

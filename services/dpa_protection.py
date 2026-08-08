@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -87,6 +87,8 @@ class DpaGrantRf:
     low_hz: int
     high_hz: int
     max_eirp_dbm_mhz: float
+    # False for peer FAD contributions (aggregate only; never local mutate).
+    is_managing_sas: bool = True
 
 
 @dataclass(frozen=True)
@@ -621,23 +623,105 @@ def evaluate_protected_channel(
     return contribs, moved, agg_dbm, ok
 
 
-def collect_active_dpa_grants(db: Session) -> list[DpaGrantRf]:
+def collect_active_dpa_grants(
+    db: Session,
+    *,
+    grant_pks: Sequence[int] | None = None,
+    eirp_by_grant_id: Mapping[str, float] | None = None,
+    exclude_grant_ids: set[str] | None = None,
+) -> list[DpaGrantRf]:
+    """Collect local managing-SAS grants for DPA evaluation.
+
+    When ``grant_pks`` is provided (CPAS/MCP frozen snapshot), only those PKs
+    are loaded — mid-run inserts are invisible. When ``grant_pks`` is ``None``
+    (activate/grant path), scan live active grants.
+    """
     from models.models import Cbsd as CbsdModel
 
+    exclude = exclude_grant_ids or set()
+    frozen_pks: Sequence[int] | None = grant_pks
+    if frozen_pks is not None and not frozen_pks:
+        return []
+    query = db.query(Grant)
+    if frozen_pks is not None:
+        query = query.filter(Grant.id.in_(list(frozen_pks)))
     out: list[DpaGrantRf] = []
-    for grant in db.query(Grant).all():
-        if bool(getattr(grant, "terminated", False)):
-            continue
-        life = str(getattr(grant, "lifecycle_state", "") or "").upper()
-        if life in {"RELINQUISHED", "EXPIRED"}:
+    for grant in query.order_by(Grant.id).all():
+        if frozen_pks is None:
+            if bool(getattr(grant, "terminated", False)):
+                continue
+            life = str(getattr(grant, "lifecycle_state", "") or "").upper()
+            if life in {"RELINQUISHED", "EXPIRED"}:
+                continue
+        if grant.grant_id in exclude:
             continue
         cbsd = db.query(CbsdModel).filter_by(cbsd_id=grant.cbsd_id).first()
         if not cbsd:
             continue
         rf = dpa_grant_rf_from_cbsd_grant(cbsd, grant)
-        if rf is not None:
-            out.append(rf)
+        if rf is None:
+            continue
+        if eirp_by_grant_id and grant.grant_id in eirp_by_grant_id:
+            from dataclasses import replace
+
+            rf = replace(
+                rf, max_eirp_dbm_mhz=float(eirp_by_grant_id[grant.grant_id])
+            )
+        out.append(rf)
     return out
+
+
+def dpa_grants_from_frozen_peer_cbsds(
+    peer_cbsd_rows: Sequence[tuple[int, dict[str, Any]]],
+) -> list[DpaGrantRf]:
+    """Peer FAD grants as DPA RF contributors (frozen generation; not mutable)."""
+    from services.iap.peer_fad import grant_rf_infos_from_frozen_peer_cbsds
+
+    out: list[DpaGrantRf] = []
+    for info in grant_rf_infos_from_frozen_peer_cbsds(list(peer_cbsd_rows)):
+        out.append(
+            DpaGrantRf(
+                grant_id=info.grant_id,
+                cbsd_id=info.cbsd_id,
+                latitude=info.latitude,
+                longitude=info.longitude,
+                height_m=info.height_m,
+                height_is_agl=info.height_is_agl,
+                indoor=info.indoor,
+                low_hz=info.low_hz,
+                high_hz=info.high_hz,
+                max_eirp_dbm_mhz=info.max_eirp_dbm_mhz,
+                is_managing_sas=False,
+            )
+        )
+    return out
+
+
+def rf_inside_protected_neighborhood(
+    grant: DpaGrantRf,
+    protected: ProtectedDpaChannel,
+    *,
+    category: str = "A",
+) -> bool | None:
+    """Neighborhood test from RF coordinates (peers / frozen RF without CBSD row)."""
+    from services.dpa_neighborhood import neighborhood_radius_km_for_cbsd
+
+    if protected.geometry is None:
+        return None
+    cat = category.upper() if category in {"A", "B", "a", "b"} else "A"
+    height_agl = float(grant.height_m) if grant.height_is_agl else float(grant.height_m)
+    radius_km = neighborhood_radius_km_for_cbsd(
+        protected.neighborhood_km,
+        category=cat,
+        indoor=bool(grant.indoor),
+        height_agl_m=height_agl,
+    )
+    buffer_m = 0.0 if radius_km is None else radius_km * 1000.0
+    return bool(
+        within_geojson_buffer_m(
+            grant.latitude, grant.longitude, protected.geometry, buffer_m
+        )
+    )
 
 
 def filter_grants_in_neighborhood(
@@ -651,6 +735,12 @@ def filter_grants_in_neighborhood(
     by_cbsd: dict[str, Cbsd] = {}
     out: list[DpaGrantRf] = []
     for grant in grants:
+        if not grant.is_managing_sas:
+            inside = rf_inside_protected_neighborhood(grant, protected)
+            if inside is False:
+                continue
+            out.append(grant)
+            continue
         cbsd = by_cbsd.get(grant.cbsd_id)
         if cbsd is None:
             cbsd = db.query(CbsdModel).filter_by(cbsd_id=grant.cbsd_id).first()
@@ -669,12 +759,29 @@ def refresh_activation_movelists(
     db: Session,
     *,
     path_loss_fn: PathLossFn | None = None,
+    grant_pks: Sequence[int] | None = None,
+    peer_grants: Sequence[DpaGrantRf] | None = None,
+    eirp_by_grant_id: Mapping[str, float] | None = None,
+    exclude_grant_ids: set[str] | None = None,
     commit: bool = True,
 ) -> dict[str, Any]:
-    """Recompute movelist on each active DPA activation row (neighborhood-scoped)."""
+    """Recompute movelist on each active DPA activation row (neighborhood-scoped).
+
+    CPAS/MCP must pass ``grant_pks`` from ``CpasSnapshot.active_grant_pks`` and
+    optional frozen ``peer_grants`` so the DPA view matches IAP's generation.
+    """
     from services.dpa_service import FrequencyRange, list_active_activations, _upsert_activation
 
-    grants = collect_active_dpa_grants(db)
+    grants = list(
+        collect_active_dpa_grants(
+            db,
+            grant_pks=grant_pks,
+            eirp_by_grant_id=eirp_by_grant_id,
+            exclude_grant_ids=exclude_grant_ids,
+        )
+    )
+    if peer_grants:
+        grants.extend(peer_grants)
     protected = [
         p for p in list_protected_dpa_channels(db) if p.reason == ProtectionReason.ACTIVE
     ]
@@ -695,11 +802,14 @@ def refresh_activation_movelists(
         _, moved, _, _ = evaluate_protected_channel(
             channel, neighborhood_grants, path_loss_fn=path_loss_fn
         )
+        # Persist only managing-SAS grant ids (peers contribute to I_agg, never mutate).
+        managing_ids = {g.grant_id for g in neighborhood_grants if g.is_managing_sas}
+        moved_local = [gid for gid in moved if gid in managing_ids]
         _upsert_activation(
             db,
             dpa_id=dpa_id,
             freq=FrequencyRange(low, high),
-            movelist=moved,
+            movelist=moved_local,
         )
         updated += 1
     if commit:

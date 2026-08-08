@@ -212,7 +212,7 @@ cases:
       - tests/unit/test_cpas_pipeline.py
       - tests/unit/test_multi_sas.py
     evidence: compliance/evidence/P5_GATE_FINAL.md
-    notes: "P5 CPAS/scheduler local+FAD.2 OK. P6-004 IAP engine+peer FAD hook PASS_LOCAL. Official FDB.1–6/8 BLOCKED_BY_ENV/P7 (EXZ/DPA/FSS/GWBL RF campaign; default CPAS does not yet inject protection points/coupling). Not claimed PASS."
+    notes: "P5 CPAS/scheduler local+FAD.2 OK. P6-004 IAP engine+peer FAD hook PASS_LOCAL. P7-005 CPAS auto-builds IAP points from injections only when coupling is provided (no silent IAP skip). Official FDB.1–6/8 BLOCKED_BY_ENV. Not claimed PASS."
 
   - id: FAMILY.SCS
     family: SCS
@@ -329,11 +329,19 @@ cases:
   - id: FAMILY.MCP
     family: MCP
     case_scope: family
-    status: untested
-    implementation: []
-    tests: []
-    evidence: null
-    notes: "CSV Ausente ~5%. Rel1Ext MCP.1 mapped in compliance/rel1ext_delta.yaml (P7-001); implement P7-005."
+    status: failing
+    implementation:
+      - services/mcp_protection.py
+      - services/iap/protection_points.py
+      - services/cpas_service.py
+      - services/dpa_protection.py
+      - services/iap/engine.py
+    tests:
+      - tests/unit/test_mcp_iap_dpa.py
+      - tests/unit/test_iap_service.py
+      - tests/unit/test_cpas_pipeline.py
+    evidence: compliance/evidence/P7-005_mcp.md
+    notes: "P7-005 local MCP.1 domain (IAP+DPA joint CPAS; frozen snapshot for DPA/IAP; GAA/PAL mix). Official Rel1Ext MCP.1 still open / BLOCKED_BY_ENV. Not claimed PASS."
 
   # P5 gate final — FAD case-level evidence (family rollup stays non-passing).
   - id: WINNF.FT.S.FAD.1

@@ -602,3 +602,39 @@ def test_postgres_freeze_captures_peer_records(pg_session):
     snap = freeze_cpas_snapshot(pg_session)
     assert snap.peer_record_count >= 1
     assert any(rt == "cbsd" for _pid, rt, _rid, _data in snap.peer_records)
+
+
+def test_postgres_dpa_collect_uses_frozen_local_pks(pg_session):
+    """P7-005: DPA membership follows CpasSnapshot PKs on real PostgreSQL."""
+    from services.cpas_service import evaluate_cpas_protections
+    from services.dpa_protection import collect_active_dpa_grants
+
+    grant_a = _seed_conflict_grant(
+        pg_session, fcc="fcc-mcp-a", serial="sn-mcp-a", grant_id="G-MCP-A"
+    )
+    snap_n = freeze_cpas_snapshot(pg_session)
+    grant_b = _seed_conflict_grant(
+        pg_session, fcc="fcc-mcp-b", serial="sn-mcp-b", grant_id="G-MCP-B"
+    )
+    pg_session.commit()
+
+    frozen = collect_active_dpa_grants(pg_session, grant_pks=snap_n.active_grant_pks)
+    frozen_ids = {g.grant_id for g in frozen}
+    assert "G-MCP-A" in frozen_ids
+    assert "G-MCP-B" not in frozen_ids
+
+    live = collect_active_dpa_grants(pg_session, grant_pks=None)
+    live_ids = {g.grant_id for g in live}
+    assert "G-MCP-A" in live_ids and "G-MCP-B" in live_ids
+
+    decisions = evaluate_cpas_protections(pg_session, snap_n)
+    assert all(d.grant_pk != grant_b.id for d in decisions)
+    assert all(d.grant_id != "G-MCP-B" for d in decisions)
+
+    snap_n1 = freeze_cpas_snapshot(pg_session)
+    assert grant_a.id in snap_n1.active_grant_pks
+    assert grant_b.id in snap_n1.active_grant_pks
+    frozen_n1 = collect_active_dpa_grants(
+        pg_session, grant_pks=snap_n1.active_grant_pks
+    )
+    assert {g.grant_id for g in frozen_n1} >= {"G-MCP-A", "G-MCP-B"}

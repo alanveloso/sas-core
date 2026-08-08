@@ -232,18 +232,31 @@ def evaluate_cpas_protections(
     *,
     iap_points: list[Any] | None = None,
     iap_coupling: Any | None = None,
+    build_iap_points_from_db: bool = True,
+    path_loss_fn: Any | None = None,
 ) -> list[CpasDecision]:
     """Compute grant decisions against the frozen snapshot (no DB writes).
 
-    Boolean peer rules (same CBSD / PPA / ESC) still terminate. Optional IAP
-    points (P6-004) may keep, reduce_power, or terminate remaining grants.
+    Boolean peer rules (same CBSD / PPA / ESC) terminate first. When IAP points
+    and coupling are available (explicit or built from injections — P7-005 MCP),
+    IAP runs next; DPA movelists are then refreshed with effective EIRPs so IAP
+    and DPA constraints are jointly satisfied. Without IAP inputs, DPA-only
+    evaluation matches the Rel1Ext IPR path.
     """
     if not snapshot.active_grant_pks:
         return []
+    from services.mcp_protection import (
+        effective_eirp_by_grant_id,
+        iap_terminated_grant_ids,
+        log_iap_skip_without_coupling,
+        merge_constraint_decisions,
+        resolve_iap_points,
+    )
+
     peer_cbsd = _frozen_peer_records(snapshot, "cbsd")
     peer_zones = _frozen_peer_records(snapshot, "zone")
     peer_esc = _frozen_peer_records(snapshot, "esc_sensor")
-    decisions: list[CpasDecision] = []
+    peer_decisions: list[CpasDecision] = []
     decided_pks: set[int] = set()
     grants = (
         db.query(Grant)
@@ -265,7 +278,7 @@ def evaluate_cpas_protections(
         elif _grant_conflicts_peer_esc(db, cbsd, grant, peer_esc):
             reason = "peer_esc"
         if reason:
-            decisions.append(
+            peer_decisions.append(
                 CpasDecision(
                     grant_pk=grant.id,
                     grant_id=grant.grant_id,
@@ -277,18 +290,58 @@ def evaluate_cpas_protections(
             )
             decided_pks.add(grant.id)
 
-    # Rel1Ext IPR: refresh DPA move-lists and terminate grants still on them.
-    from services.dpa_protection import grant_on_any_movelist, refresh_activation_movelists
+    # IAP runs only with coupling. Auto-build from injections is gated on coupling
+    # so default CPAS does not silently skip configured entities (fail-open).
+    iap_decisions: list[CpasDecision] = []
+    if iap_coupling is not None:
+        resolved_points = resolve_iap_points(
+            db, iap_points, build_from_db=build_iap_points_from_db
+        )
+        if resolved_points:
+            iap_decisions = _evaluate_iap_decisions(
+                db,
+                grants,
+                snapshot=snapshot,
+                decided_pks=decided_pks,
+                iap_points=resolved_points,
+                iap_coupling=iap_coupling,
+            )
+            for d in iap_decisions:
+                if d.action == "terminate" and d.grant_pk is not None:
+                    decided_pks.add(d.grant_pk)
+    elif iap_points:
+        log_iap_skip_without_coupling(len(iap_points))
+
+    eirp_map = effective_eirp_by_grant_id(iap_decisions)
+    exclude_ids = iap_terminated_grant_ids(iap_decisions)
+
+    # Rel1Ext IPR / MCP: DPA uses the same frozen local PKs + peer FAD generation
+    # as IAP (never the live grant/peer tables for membership).
+    from services.dpa_protection import (
+        dpa_grants_from_frozen_peer_cbsds,
+        grant_on_any_movelist,
+        refresh_activation_movelists,
+    )
     from services.propagation.errors import PropagationUnavailableError
     from services.terrain.exceptions import TerrainError
 
+    peer_dpa_grants = dpa_grants_from_frozen_peer_cbsds(_frozen_peer_cbsd_rows(snapshot))
+    dpa_decisions: list[CpasDecision] = []
     try:
-        refresh_activation_movelists(db, commit=False)
+        refresh_activation_movelists(
+            db,
+            path_loss_fn=path_loss_fn,
+            grant_pks=snapshot.active_grant_pks,
+            peer_grants=peer_dpa_grants,
+            eirp_by_grant_id=eirp_map or None,
+            exclude_grant_ids=exclude_ids or None,
+            commit=False,
+        )
         for grant in grants:
-            if grant.id in decided_pks or grant.terminated:
+            if grant.id in decided_pks:
                 continue
             if grant_on_any_movelist(db, grant.grant_id):
-                decisions.append(
+                dpa_decisions.append(
                     CpasDecision(
                         grant_pk=grant.id,
                         grant_id=grant.grant_id,
@@ -303,18 +356,13 @@ def evaluate_cpas_protections(
         # Do not invent terminations; peer/IAP decisions above still apply.
         pass
 
-    if iap_points and iap_coupling is not None:
-        decisions.extend(
-            _evaluate_iap_decisions(
-                db,
-                grants,
-                snapshot=snapshot,
-                decided_pks=decided_pks,
-                iap_points=iap_points,
-                iap_coupling=iap_coupling,
-            )
-        )
-    return decisions
+    dpa_term_ids = {d.grant_id for d in dpa_decisions}
+    iap_kept = [
+        d
+        for d in iap_decisions
+        if not (d.grant_id in dpa_term_ids and d.action == "reduce_power")
+    ]
+    return merge_constraint_decisions(peer_decisions, iap_kept, dpa_decisions)
 
 
 def _local_grant_to_rf_info(db: Session, grant: Grant) -> Any | None:
