@@ -138,9 +138,7 @@ def parse_rel1ext_delta_document(data: Any) -> Rel1ExtDeltaMatrix:
             raise MatrixValidationError(f"duplicate case id {case_id!r}")
         seen.add(case_id)
         if not case_id.startswith("WINNF.REL1Ext.FT.S."):
-            raise MatrixValidationError(
-                f"{case_id}: id must start with WINNF.REL1Ext.FT.S."
-            )
+            raise MatrixValidationError(f"{case_id}: id must start with WINNF.REL1Ext.FT.S.")
 
         family = _require_nonempty_str(raw.get("family"), field="family", case_id=case_id)
         relation = raw.get("relation")
@@ -239,8 +237,7 @@ def assert_canonical_coverage(matrix: Rel1ExtDeltaMatrix) -> None:
     extra = present - CANONICAL_REL1EXT_CASE_IDS
     if missing or extra:
         raise MatrixValidationError(
-            "REL1Ext delta coverage mismatch: "
-            f"missing={sorted(missing)} extra={sorted(extra)}"
+            f"REL1Ext delta coverage mismatch: missing={sorted(missing)} extra={sorted(extra)}"
         )
 
 

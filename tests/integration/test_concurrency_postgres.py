@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
 import pytest
@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 import database
 from models.models import Cbsd, Grant
+from services.clock import ensure_utc
 from services.concurrency import (
     _supports_advisory_lock,
     _supports_row_lock,
@@ -219,7 +220,7 @@ def test_postgres_parallel_registration_no_duplicate(pg_session):
 def test_postgres_concurrent_renew_monotonic(pg_session):
     cbsd = make_cbsd(pg_session)
     grant = make_grant(pg_session, cbsd, authorized=True, lifecycle_state="AUTHORIZED")
-    base_expire = datetime.utcnow().replace(microsecond=0) + timedelta(minutes=5)
+    base_expire = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=5)
     grant.grant_expire_time = base_expire
     grant.grant_json = '{"auth_context":{"channelType":"GAA"}}'
     pg_session.commit()
@@ -243,7 +244,9 @@ def test_postgres_concurrent_renew_monotonic(pg_session):
                 assert outcome.ok
                 s.commit()
                 with lock:
-                    expires.append(row.grant_expire_time.replace(microsecond=0))
+                    expires.append(
+                        ensure_utc(row.grant_expire_time).replace(microsecond=0)
+                    )
         finally:
             s.close()
 
@@ -254,13 +257,14 @@ def test_postgres_concurrent_renew_monotonic(pg_session):
         t.join(timeout=15)
 
     assert len(expires) == 2
-    assert all(e >= base_expire for e in expires)
+    base = ensure_utc(base_expire)
+    assert all(e >= base for e in expires)
     verify = database.SessionLocal()
     try:
         row = verify.query(Grant).filter_by(grant_id=grant_id).one()
-        final = row.grant_expire_time.replace(microsecond=0)
+        final = ensure_utc(row.grant_expire_time).replace(microsecond=0)
         assert final >= max(expires)
-        assert final > base_expire
+        assert final > base
     finally:
         verify.close()
 
@@ -301,7 +305,7 @@ def test_postgres_hbt_rlq_serialized(pg_session):
     grant = make_grant(
         pg_session, cbsd, authorized=False, lifecycle_state="GRANTED"
     )
-    grant.grant_expire_time = datetime.utcnow() + timedelta(hours=1)
+    grant.grant_expire_time = datetime.now(timezone.utc) + timedelta(hours=1)
     pg_session.commit()
     cbsd_id = cbsd.cbsd_id
     grant_id = grant.grant_id
