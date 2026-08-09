@@ -3,13 +3,13 @@ requires = ["setuptools==75.8.2", "wheel==0.45.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sas-core"
+name = "spectrum-access-system"
 version = "0.1.0"
-description = "Spectrum Access System core for CBRS / WInnForum interoperability"
+description = "Spectrum Access System for CBRS / WInnForum interoperability"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "sas-core contributors" }]
+authors = [{ name = "spectrum-access-system contributors" }]
 dependencies = [
   "fastapi==0.141.1",
   "uvicorn[standard]==0.52.1",

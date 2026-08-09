@@ -1,12 +1,11 @@
-# Spectrum Access System Core (`sas-core`)
+# Spectrum Access System
 
-Runnable **Spectrum Access System (SAS)** for the CBRS band (3550–3700 MHz),
-evolved toward selected [WInnForum](https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness)
-certification suites (**WINNF-TS-0061** / related).
+Implementation of a **Spectrum Access System (SAS)** for the CBRS band
+(3550–3700 MHz), aimed at interoperability with
+[WInnForum](https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness)
+test harness suites (WINNF-TS-0061 and related).
 
-This repository is a lab / interoperability baseline — not a commercial RF product.
-Claimed WInnForum results require stored evidence under `compliance/evidence/`;
-do not treat README prose as an official PASS.
+Python ≥3.11 · FastAPI · SQLAlchemy · Pydantic · Celery · Uvicorn (mTLS)
 
 ---
 
@@ -18,50 +17,33 @@ do not treat README prose as an official PASS.
 | **SAS ↔ SAS** | `/v1.3` | mTLS (peer SAS) | Full Activity Dump (FAD) |
 | **Admin** | `/admin` | mTLS (harness / operator) | Injects, CPAS, sync, PAT query |
 
-TLS listeners (Uvicorn):
+TLS listeners:
 
 - `https://0.0.0.0:9000` — RSA
 - `https://0.0.0.0:9001` — ECDSA (SAS↔SAS ECC / SSS)
 
 ---
 
-## Layout
+## Repository layout
 
 | Path | Role |
 |------|------|
 | `routes/` | CBSD, SAS↔SAS, Admin HTTP |
 | `services/` | Domain logic (lifecycle, FAD, CPAS, IAP, propagation, terrain, …) |
-| `protection_data/` | Versioned RF/protection dataset manifests |
+| `protection_data/` | Versioned RF / protection dataset manifests |
 | `spectrum_profiles/` | Band plan / profile YAML |
-| `data/` | Dataset root (VERSION markers; large payloads often gitignored) |
-| `compliance/` | Matrix + versioned evidence |
-| `tools/` | doctor, certs, WInnForum runner |
-
-Stack: Python ≥3.11, FastAPI, SQLAlchemy, Pydantic, Celery, Uvicorn mTLS.
-
----
-
-## Current compliance posture (honest)
-
-Phases **P0–P6** product tasks are complete on branch work through
-`feat/p6-protection-models` (see `compliance/evidence/P6_GATE_FINAL.md`).
-
-| Area | Local status | Official harness |
-|------|--------------|------------------|
-| Protocol / Admin contract / CPAS / FAD | Strong local + PG tests | Case-level PASS only with evidence |
-| HAAT / NED packaging | PASS_LOCAL | Needs full DEM for campaigns |
-| Propagation Admin API | PASS_LOCAL (injectable engines) | PAT needs compiled ITM, NLCD, deps |
-| IAP engine + frozen peer FAD | PASS_LOCAL (optional CPAS hook) | IPR/FDB RF campaigns still open |
-
-**Not claimed here:** “all WINNF suites validated.” Use `compliance/matrix.yaml`.
+| `data/` | Dataset root (`VERSION` markers; large payloads often gitignored) |
+| `compliance/` | Compliance matrix and versioned evidence |
+| `tools/` | Doctor, certs, WInnForum runner, campaign helpers |
+| `alembic/` | Database migrations |
 
 ---
 
-## Install (fresh)
+## Install
 
 ```bash
-git clone <sas-core-repository-url>
-cd sas-core
+git clone git@github.com:alanveloso/spectrum-access-system.git
+cd spectrum-access-system
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -69,13 +51,12 @@ python -m pip install --upgrade 'pip==25.2'
 pip install -r requirements.lock.txt
 pip install -e .
 
-python -m tools.doctor   # expects CERTS_DIR or harness certs
+python -m tools.doctor
 ```
 
-Editable install includes `protection_data` and `spectrum_profiles` package data
-(YAML manifests / profiles).
+Editable install includes `protection_data` and `spectrum_profiles` package data.
 
-Dev tools:
+Development dependencies and tests:
 
 ```bash
 pip install -r requirements-dev.txt
@@ -86,27 +67,27 @@ pytest -q
 
 ## Certificates
 
-Canonical directory: **`./certs`** (`CERTS_DIR` override). Required:
+Canonical directory: **`./certs`** (override with `CERTS_DIR`). Required files:
 
 - `server.cert` / `server.key`
 - `server-ecc.cert` / `server-ecc.key`
 - `ca.cert`
 - `crl/` with at least one `*.crl.pem`
 
-Ephemeral lab certs:
+Generate ephemeral lab certificates:
 
 ```bash
 python -m tools.generate_dev_certs --out ./certs --force
 CERTS_DIR=./certs python -m tools.doctor
 ```
 
-Or copy from the WInnForum harness `generate_fake_certs.sh` output.
+Alternatively, copy output from the WInnForum harness `generate_fake_certs.sh`.
 
 ---
 
 ## Databases
 
-- Default local: SQLite (`DATABASE_URL=sqlite:///./sas_mvp.db`)
+- Local default: SQLite (`DATABASE_URL=sqlite:///./sas_mvp.db`)
 - Compose / CI: PostgreSQL 15 (`psycopg2`)
 
 PostgreSQL integration tests:
@@ -124,26 +105,27 @@ pytest -q tests/integration/test_startup.py::test_startup_postgres_integration \
 ## Docker Compose
 
 ```bash
-docker compose config          # no .env required
-# provision ./certs first
+# Provision ./certs first
+docker compose config
 docker compose up --build
 ```
 
-Image build context excludes `.git`, venvs, DBs, test trees, and bulky NED/DPA
-payloads (VERSION markers remain). See `.dockerignore`.
+The image build context excludes `.git`, virtualenvs, databases, test trees, and
+bulky NED/DPA payloads (`VERSION` markers remain). See `.dockerignore`.
 
 ---
 
 ## WInnForum harness
 
-Harness is **not** vendored. Prefer:
+The official harness is **not** vendored. Local dry-run:
 
 ```bash
 python -m tools.run_winnforum --dry-run --family REG
 ```
 
-Full runs need certs + harness checkout; artifacts under `artifacts/winnforum/`
-(gitignored). Official PASS requires versioned evidence — never invent results.
+Full campaigns need certificates and a harness checkout. Artifacts are written
+under `artifacts/winnforum/` (gitignored). Official PASS claims require stored
+evidence under `compliance/evidence/` — see `compliance/matrix.yaml`.
 
 ---
 
@@ -151,5 +133,5 @@ Full runs need certs + harness checkout; artifacts under `artifacts/winnforum/`
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
-WInnForum harness / reference models are separate works under Wireless Innovation
-Forum licensing.
+WInnForum harness and reference models are separate works under Wireless
+Innovation Forum licensing.
