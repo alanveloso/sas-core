@@ -292,15 +292,79 @@ def test_rate_limit_enforced_in_production(monkeypatch):
     assert codes.count(200) >= 1
 
 
-def test_peer_sas_rejects_ssrf_url(db_session, monkeypatch):
-    monkeypatch.setattr(
-        "services.ssrf.socket.getaddrinfo",
-        lambda *a, **k: (_ for _ in ()).throw(OSError("no")),
-    )
-    # http scheme fails before DNS
+def test_peer_sas_persists_identity_when_url_non_resolving(db_session, monkeypatch):
+    """A: inject contract registers certificateHash even if peer URL DNS fails.
+
+    SSS uses a placeholder peer URL that never resolves; inbound FAD auth only
+    needs the persisted peer identity, not a successful outbound connection.
+    """
+    import socket
+
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
+    clear_settings_cache()
+
+    def _dns_fail(*_a, **_k):
+        raise socket.gaierror(socket.EAI_NONAME, "name or service not known")
+
+    monkeypatch.setattr("services.ssrf.socket.getaddrinfo", _dns_fail)
+    cert_hash = "DE:AD:BE:EF:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10"
     resp = client.post(
         "/admin/injectdata/peer_sas",
-        json={"certificateHash": "AA:BB", "url": "http://evil.example/dump"},
+        json={
+            "certificateHash": cert_hash,
+            "url": "https://fake.sas.url.not.used/v1.2",
+        },
+    )
+    assert resp.status_code == 200
+
+    from models.models import PeerSas
+    import database
+
+    session = database.SessionLocal()
+    try:
+        peer = session.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
+        assert peer is not None
+        # Rejected URL must not be stored (no row poison for outbound pulls).
+        assert (peer.url or "") == ""
+    finally:
+        session.close()
+
+
+def test_peer_sas_ssrf_url_not_stored_but_outbound_still_blocked(
+    db_session, monkeypatch
+):
+    """B: disallowed inject URL is not persisted; egress SSRF remains fail-closed."""
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
+    clear_settings_cache()
+
+    cert_hash = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD"
+    resp = client.post(
+        "/admin/injectdata/peer_sas",
+        json={"certificateHash": cert_hash, "url": "http://evil.example/dump"},
+    )
+    assert resp.status_code == 200
+
+    from models.models import PeerSas
+    import database
+
+    session = database.SessionLocal()
+    try:
+        peer = session.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
+        assert peer is not None
+        assert (peer.url or "") == ""
+    finally:
+        session.close()
+
+    with pytest.raises(SsrfError):
+        assert_https_egress_url_allowed("http://evil.example/dump")
+    with pytest.raises(SsrfError):
+        assert_https_egress_url_allowed("https://127.0.0.1:8443/dump")
+
+
+def test_peer_sas_empty_certificate_hash_does_not_create_row(db_session):
+    resp = client.post(
+        "/admin/injectdata/peer_sas",
+        json={"certificateHash": "  ", "url": "https://example.com/v1.2"},
     )
     assert resp.status_code == 200
     from models.models import PeerSas
@@ -308,7 +372,7 @@ def test_peer_sas_rejects_ssrf_url(db_session, monkeypatch):
 
     session = database.SessionLocal()
     try:
-        assert session.query(PeerSas).filter_by(certificate_hash="AA:BB").first() is None
+        assert session.query(PeerSas).count() == 0
     finally:
         session.close()
 

@@ -257,7 +257,13 @@ def trigger_enable_ntia_15_517(db: Session = Depends(get_db)):
 
 @router.post("/injectdata/peer_sas")
 async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
-    """Persist peer SAS certificateHash + url for SAS↔SAS authorization."""
+    """Persist peer SAS certificateHash (+ URL when egress-safe).
+
+    ``certificateHash`` authorizes inbound SAS↔SAS (FAD) and does not require
+    network access to the peer URL. SSRF validation gates only the stored URL
+    used for later outbound pulls; a rejected URL must not drop peer identity.
+    Outbound fetch/sync paths still fail-closed on SSRF before connecting.
+    """
     from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
 
     body: dict[str, Any] = {}
@@ -267,21 +273,33 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
         pass
     cert_hash = (body.get("certificateHash") or "").strip()
     url = (body.get("url") or "").strip()
-    if cert_hash:
-        if url:
-            try:
-                assert_https_egress_url_allowed(
-                    url, allow_lab_private=allow_lab_private_egress()
-                )
-            except SsrfError:
-                # Admin contract: invalid peer URL is ignored (no row poison).
-                return _empty_ok()
-        existing = db.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
-        if existing:
+    if not cert_hash:
+        return _empty_ok()
+
+    url_allowed = False
+    if url:
+        try:
+            assert_https_egress_url_allowed(
+                url, allow_lab_private=allow_lab_private_egress()
+            )
+            url_allowed = True
+        except SsrfError:
+            # Do not poison PeerSas.url; still register identity for inbound auth.
+            url_allowed = False
+
+    existing = db.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
+    if existing:
+        if url_allowed:
             existing.url = url
-        else:
-            db.add(PeerSas(certificate_hash=cert_hash, url=url))
-        db.commit()
+        # Rejected/missing URL: leave any prior safe url untouched.
+    else:
+        db.add(
+            PeerSas(
+                certificate_hash=cert_hash,
+                url=url if url_allowed else "",
+            )
+        )
+    db.commit()
     return _empty_ok()
 
 
