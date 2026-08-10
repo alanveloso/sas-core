@@ -212,3 +212,21 @@ def test_set_active_profile_override(tmp_path: Path):
     assert get_active_profile().rule_applied == "test_override_rule"
     assert get_active_profile().band_plan.high_hz == 3_650_000_000
     clear_profile_override()
+
+
+def test_loaded_profile_models_are_frozen():
+    """G1-002: ProfileContext seed objects must be immutable at runtime (D4)."""
+    from pydantic import ValidationError
+
+    profile = load_profile("cbrs_winnforum")
+    with pytest.raises(ValidationError):
+        profile.id = "mutated"  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        profile.band_plan.low_hz = 3_600_000_000  # type: ignore[misc]
+    esc = profile.get_protection("peer_esc")
+    assert esc is not None
+    with pytest.raises(ValidationError):
+        esc.enabled = False  # type: ignore[misc]
+    # Default YAML observables frozen for extraction regressions.
+    assert esc.params["radius_m"] == 40_000
+    assert profile.get_protection("peer_ppa").params["buffer_m"] == 1_000
