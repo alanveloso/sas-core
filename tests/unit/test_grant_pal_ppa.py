@@ -253,6 +253,24 @@ def test_peer_sas_active_grant_returns_401(db_session):
     assert resp[0]["response"]["responseCode"] == GRANT_CONFLICT
 
 
+def test_peer_sas_row_without_fad_records_does_not_return_401(db_session):
+    """GRA_5 requires ingested peer FAD grants, not merely an InjectPeerSas row."""
+    cbsd = _located_cbsd(db_session)
+    db_session.add(
+        PeerSas(
+            certificate_hash="peer-cert-empty",
+            url="https://127.0.0.1:19002/v1.2",
+        )
+    )
+    db_session.commit()
+
+    resp = process_grant(
+        db_session,
+        [{"cbsdId": cbsd.cbsd_id, "operationParam": _op_param(max_eirp=20.0)}],
+    )
+    assert resp[0]["response"]["responseCode"] == SUCCESS
+
+
 # --- Blacklist / measReport / operationParam validation branches --------------
 
 

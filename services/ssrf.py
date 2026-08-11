@@ -1,7 +1,8 @@
 """Shared egress / SSRF guards for Admin-injected HTTP pulls (P8-003).
 
-FAD peer pulls keep their stricter same-origin checks in ``fad_client_service``.
-This module covers generic https URLs (federal DB sync, peer base URL inject).
+FAD peer pulls keep their same-origin / resolved-IP checks in
+``fad_client_service``. This module covers generic https URLs (federal DB sync)
+and structural peer-URL checks at ``InjectPeerSas`` time (no DNS at inject).
 """
 
 from __future__ import annotations
@@ -21,6 +22,25 @@ _BLOCKED_LITERAL_HOSTS = frozenset(
 
 class SsrfError(ValueError):
     """URL rejected by SSRF controls."""
+
+
+def assert_peer_sas_inject_url_structurally_allowed(url: str) -> None:
+    """Validate peer base URL shape for Admin InjectPeerSas (no DNS / no connect).
+
+    Peer identity registration must not depend on resolving the peer URL.
+    DNS and resolved-IP SSRF remain fail-closed on outbound FAD pulls
+    (``fad_client_service.assert_url_allowed_for_peer``).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise SsrfError(f"url must be https, got scheme={parsed.scheme!r}")
+    if parsed.username is not None or parsed.password is not None:
+        raise SsrfError("url must not include userinfo credentials")
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        raise SsrfError("url missing host")
+    if host in _BLOCKED_LITERAL_HOSTS:
+        raise SsrfError(f"host blocked: {host}")
 
 
 def _host_allows_loopback_or_private(host: str) -> bool:

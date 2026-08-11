@@ -293,10 +293,10 @@ def test_rate_limit_enforced_in_production(monkeypatch):
 
 
 def test_peer_sas_persists_identity_when_url_non_resolving(db_session, monkeypatch):
-    """A: inject contract registers certificateHash even if peer URL DNS fails.
+    """A: inject registers identity; structural https peer URL is kept for CPAS pulls.
 
-    SSS uses a placeholder peer URL that never resolves; inbound FAD auth only
-    needs the persisted peer identity, not a successful outbound connection.
+    SSS placeholders may not resolve; inbound FAD auth only needs the hash.
+    DNS/IP SSRF remains on outbound (see B and fad_client checks).
     """
     import socket
 
@@ -308,11 +308,12 @@ def test_peer_sas_persists_identity_when_url_non_resolving(db_session, monkeypat
 
     monkeypatch.setattr("services.ssrf.socket.getaddrinfo", _dns_fail)
     cert_hash = "DE:AD:BE:EF:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10"
+    peer_url = "https://fake.sas.url.not.used/v1.2"
     resp = client.post(
         "/admin/injectdata/peer_sas",
         json={
             "certificateHash": cert_hash,
-            "url": "https://fake.sas.url.not.used/v1.2",
+            "url": peer_url,
         },
     )
     assert resp.status_code == 200
@@ -324,16 +325,19 @@ def test_peer_sas_persists_identity_when_url_non_resolving(db_session, monkeypat
     try:
         peer = session.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
         assert peer is not None
-        # Rejected URL must not be stored (no row poison for outbound pulls).
-        assert (peer.url or "") == ""
+        assert peer.url == peer_url
     finally:
         session.close()
+
+    # Outbound generic egress still fail-closed on DNS.
+    with pytest.raises(SsrfError):
+        assert_https_egress_url_allowed(peer_url)
 
 
 def test_peer_sas_ssrf_url_not_stored_but_outbound_still_blocked(
     db_session, monkeypatch
 ):
-    """B: disallowed inject URL is not persisted; egress SSRF remains fail-closed."""
+    """B: malformed inject URL is not persisted; egress SSRF remains fail-closed."""
     monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
     clear_settings_cache()
 
@@ -361,6 +365,40 @@ def test_peer_sas_ssrf_url_not_stored_but_outbound_still_blocked(
         assert_https_egress_url_allowed("https://127.0.0.1:8443/dump")
 
 
+def test_peer_sas_persists_lab_loopback_url_without_certification_mode(
+    db_session, monkeypatch
+):
+    """GRA/FAD TH peers use https://127.0.0.1:<port>; inject must store that URL.
+
+    Outbound pulls still apply fad_client resolved-IP policy; generic production
+    egress SSRF remains fail-closed for non-peer paths.
+    """
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
+    clear_settings_cache()
+
+    cert_hash = "11:22:33:44:55:66:77:88:99:00:AA:BB:CC:DD:EE:FF:01:02:03:04"
+    peer_url = "https://127.0.0.1:19001/v1.2"
+    resp = client.post(
+        "/admin/injectdata/peer_sas",
+        json={"certificateHash": cert_hash, "url": peer_url},
+    )
+    assert resp.status_code == 200
+
+    from models.models import PeerSas
+    import database
+
+    session = database.SessionLocal()
+    try:
+        peer = session.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
+        assert peer is not None
+        assert peer.url == peer_url
+    finally:
+        session.close()
+
+    with pytest.raises(SsrfError):
+        assert_https_egress_url_allowed(peer_url, allow_lab_private=False)
+
+
 def test_peer_sas_empty_certificate_hash_does_not_create_row(db_session):
     resp = client.post(
         "/admin/injectdata/peer_sas",
@@ -376,6 +414,29 @@ def test_peer_sas_empty_certificate_hash_does_not_create_row(db_session):
     finally:
         session.close()
 
+
+def test_peer_sas_metadata_host_url_not_stored(db_session, monkeypatch):
+    monkeypatch.setenv("SAS_EXECUTION_MODE", "production")
+    clear_settings_cache()
+    cert_hash = "FE:ED:FE:ED:FE:ED:FE:ED:FE:ED:FE:ED:FE:ED:FE:ED:FE:ED:FE:ED"
+    resp = client.post(
+        "/admin/injectdata/peer_sas",
+        json={
+            "certificateHash": cert_hash,
+            "url": "https://metadata.google.internal/latest",
+        },
+    )
+    assert resp.status_code == 200
+    from models.models import PeerSas
+    import database
+
+    session = database.SessionLocal()
+    try:
+        peer = session.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
+        assert peer is not None
+        assert (peer.url or "") == ""
+    finally:
+        session.close()
 
 def test_trust_material_admin_endpoints():
     get_resp = client.get("/admin/security/trust_material")

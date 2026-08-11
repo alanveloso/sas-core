@@ -257,14 +257,15 @@ def trigger_enable_ntia_15_517(db: Session = Depends(get_db)):
 
 @router.post("/injectdata/peer_sas")
 async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
-    """Persist peer SAS certificateHash (+ URL when egress-safe).
+    """Persist peer SAS certificateHash and structurally valid peer base URL.
 
-    ``certificateHash`` authorizes inbound SAS↔SAS (FAD) and does not require
-    network access to the peer URL. SSRF validation gates only the stored URL
-    used for later outbound pulls; a rejected URL must not drop peer identity.
-    Outbound fetch/sync paths still fail-closed on SSRF before connecting.
+    ``certificateHash`` authorizes inbound SAS↔SAS (FAD). The peer ``url`` is
+    required for later CPAS FAD pulls (GRA_5/GRA_6/FAD_2 coordination) but must
+    not be gated on DNS at inject time — WInnForum TH placeholders and lab
+    loopback bases are registered here; outbound ``fad_client_service`` still
+    fail-closes on scheme/origin/resolved-IP SSRF before connecting.
     """
-    from services.ssrf import SsrfError, allow_lab_private_egress, assert_https_egress_url_allowed
+    from services.ssrf import SsrfError, assert_peer_sas_inject_url_structurally_allowed
 
     body: dict[str, Any] = {}
     try:
@@ -279,12 +280,10 @@ async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     url_allowed = False
     if url:
         try:
-            assert_https_egress_url_allowed(
-                url, allow_lab_private=allow_lab_private_egress()
-            )
+            assert_peer_sas_inject_url_structurally_allowed(url)
             url_allowed = True
         except SsrfError:
-            # Do not poison PeerSas.url; still register identity for inbound auth.
+            # Malformed / metadata peer URL: keep identity, do not store URL.
             url_allowed = False
 
     existing = db.query(PeerSas).filter_by(certificate_hash=cert_hash).first()

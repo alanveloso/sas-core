@@ -502,3 +502,212 @@ def test_concurrent_cpas_second_trigger_is_noop(monkeypatch):
     assert calls.count("set") == 1
     assert calls.count("exec") == 1
     clear_settings_cache()
+
+
+def test_sync_one_peer_skips_empty_url(db_session):
+    """Without a persisted peer URL, CPAS cannot ingest FAD coordination state."""
+    peer = PeerSas(certificate_hash="peer-empty-url", url="")
+    db_session.add(peer)
+    db_session.commit()
+    assert sync_one_peer(db_session, peer) is None
+
+
+def test_fad_client_allows_loopback_peer_origin_for_outbound(monkeypatch):
+    """Outbound peer pull may use lab loopback; generic egress SSRF stays fail-closed."""
+    from services.fad_client_service import assert_url_allowed_for_peer
+    from services.ssrf import SsrfError, assert_https_egress_url_allowed
+
+    base = "https://127.0.0.1:19003/v1.2"
+    dump = f"{base}/dump"
+
+    def _loopback(*_a, **_k):
+        return [(None, None, None, None, ("127.0.0.1", 0))]
+
+    monkeypatch.setattr("services.fad_client_service.socket.getaddrinfo", _loopback)
+    assert_url_allowed_for_peer(dump, base)
+
+    with pytest.raises(SsrfError):
+        assert_https_egress_url_allowed(dump, allow_lab_private=False)
+
+
+def test_peer_only_terminal_resolution_skips_unavailable_iap(
+    db_session, monkeypatch
+):
+    """A: every active grant terminally resolved by peer → CPAS completes.
+
+    RF coupling may be unavailable; no unresolved grant remains that requires it.
+    """
+    from services.iap.coupling import IapCouplingUnavailable
+    import services.mcp_protection as mcp
+
+    cbsd_esc, grant_esc = _add_cbsd_grant(
+        db_session, fcc="fcc-e2", serial="sn-e2", grant_id="GE2", lat=39.5, lon=-100.0
+    )
+    cbsd_ppa, grant_ppa = _add_cbsd_grant(
+        db_session, fcc="fcc-p2", serial="sn-p2", grant_id="GP2", lat=39.0, lon=-100.0
+    )
+    peer = PeerSas(certificate_hash="peer-fad2-iap", url=PEER_BASE)
+    db_session.add(peer)
+    db_session.flush()
+    db_session.add(
+        PeerFadRecord(
+            peer_sas_id=peer.id,
+            record_type="esc_sensor",
+            record_id="esc_sensor/peer/fad2",
+            data_json=json.dumps(
+                {
+                    "id": "esc_sensor/peer/fad2",
+                    "installationParam": {"latitude": 39.5, "longitude": -100.0},
+                }
+            ),
+        )
+    )
+    ring = [
+        [-100.1, 38.9],
+        [-99.9, 38.9],
+        [-99.9, 39.1],
+        [-100.1, 39.1],
+        [-100.1, 38.9],
+    ]
+    db_session.add(
+        PeerFadRecord(
+            peer_sas_id=peer.id,
+            record_type="zone",
+            record_id="zone/ppa/peer/fad2",
+            data_json=json.dumps(
+                {
+                    "id": "zone/ppa/peer/fad2",
+                    "usage": "PPA",
+                    "terminated": False,
+                    "ppaInfo": {"palId": ["PAL-FAD2"]},
+                    "zone": {"type": "Polygon", "coordinates": [ring]},
+                }
+            ),
+        )
+    )
+    db_session.add(
+        AdminInjectedData(
+            kind="pal",
+            data_json=json.dumps(
+                {
+                    "palId": "PAL-FAD2",
+                    "channelAssignment": {
+                        "primaryAssignment": {
+                            "lowFrequency": 3550000000,
+                            "highFrequency": 3560000000,
+                        }
+                    },
+                }
+            ),
+        )
+    )
+    grant_ppa.low_frequency = 3550000000
+    grant_ppa.high_frequency = 3555000000
+    grant_esc.low_frequency = 3620000000
+    grant_esc.high_frequency = 3630000000
+    db_session.commit()
+
+    def _boom(*_a, **_k):
+        raise IapCouplingUnavailable("forced unavailable for regression")
+
+    monkeypatch.setattr(mcp, "resolve_iap_context", _boom)
+    monkeypatch.setattr(
+        "services.cpas_service.run_peer_fad_sync",
+        lambda db, client=None: {"peers": 1, "ok": 1, "failed": 0, "errors": []},
+    )
+    result = execute_cpas_pipeline(db_session)
+    assert result["ok"] is True
+    db_session.refresh(grant_esc)
+    db_session.refresh(grant_ppa)
+    assert grant_esc.terminated is True
+    assert grant_ppa.terminated is True
+    reasons = {d["reason"] for d in result["decisions"]}
+    assert "peer_esc" in reasons
+    assert "peer_ppa" in reasons
+    audits = [
+        json.loads(r.data_json)
+        for r in db_session.query(AdminInjectedData)
+        .filter_by(kind="cpas_pipeline_audit")
+        .all()
+    ]
+    assert any(a.get("event") == "cpas_completed" for a in audits)
+    assert not any(a.get("event") == "cpas_failed" for a in audits)
+
+
+def test_mixed_peer_and_rf_unavailable_fails_closed_atomic(
+    db_session, monkeypatch
+):
+    """B: peer terminate on A + unresolved B needing IAP + RF down → atomic fail.
+
+    No grant mutations from the cycle; cpas_failed only (G1-003).
+    """
+    from services.cpas_service import CpasRfEvaluationError, KIND_CPAS_AUDIT
+    from services.iap.coupling import IapCouplingUnavailable
+    import services.mcp_protection as mcp
+
+    cbsd_a, grant_a = _add_cbsd_grant(
+        db_session, fcc="fcc-mix-a", serial="sn-mix-a", grant_id="G-MIX-A"
+    )
+    cbsd_b, grant_b = _add_cbsd_grant(
+        db_session,
+        fcc="fcc-mix-b",
+        serial="sn-mix-b",
+        grant_id="G-MIX-B",
+        lat=40.0,
+        lon=-105.0,
+    )
+    peer = PeerSas(certificate_hash="peer-mix", url=PEER_BASE)
+    db_session.add(peer)
+    db_session.flush()
+    # Peer same-CBSD conflict for A only.
+    rid = fad_cbsd_id(cbsd_a.fcc_id, cbsd_a.cbsd_serial_number)
+    db_session.add(
+        PeerFadRecord(
+            peer_sas_id=peer.id,
+            record_type="cbsd",
+            record_id=rid,
+            data_json=json.dumps(
+                {"id": rid, "grants": [{"id": "pg-a", "terminated": False}]}
+            ),
+        )
+    )
+    # Peer ESC far from B but still yields IAP ProtectionPoints (required RF).
+    db_session.add(
+        PeerFadRecord(
+            peer_sas_id=peer.id,
+            record_type="esc_sensor",
+            record_id="esc_sensor/peer/mix",
+            data_json=json.dumps(
+                {
+                    "id": "esc_sensor/peer/mix",
+                    "installationParam": {"latitude": 39.0, "longitude": -100.0},
+                }
+            ),
+        )
+    )
+    db_session.commit()
+
+    def _boom(*_a, **_k):
+        raise IapCouplingUnavailable("forced unavailable for mixed-case")
+
+    monkeypatch.setattr(mcp, "resolve_iap_context", _boom)
+    monkeypatch.setattr(
+        "services.cpas_service.run_peer_fad_sync",
+        lambda db, client=None: {"peers": 1, "ok": 1, "failed": 0, "errors": []},
+    )
+    with pytest.raises(CpasRfEvaluationError, match="forced unavailable"):
+        execute_cpas_pipeline(db_session)
+
+    db_session.expire_all()
+    db_session.refresh(grant_a)
+    db_session.refresh(grant_b)
+    assert grant_a.terminated is False
+    assert grant_b.terminated is False
+    audits = [
+        json.loads(r.data_json)
+        for r in db_session.query(AdminInjectedData)
+        .filter_by(kind=KIND_CPAS_AUDIT)
+        .all()
+    ]
+    assert any(a.get("event") == "cpas_failed" for a in audits)
+    assert not any(a.get("event") == "cpas_completed" for a in audits)

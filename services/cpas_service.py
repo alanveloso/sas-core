@@ -524,8 +524,21 @@ def evaluate_cpas_protections(
     except ProtectionEntityError as exc:
         raise CpasRfEvaluationError(f"pre-IAP exclusion failed: {exc}") from exc
 
+    # Grants already given a terminal peer/pre-IAP decision do not need later RF
+    # stages. If every active grant in this snapshot is terminally resolved here,
+    # skip IAP/DPA entirely (RF engine availability is irrelevant).
+    unresolved = [
+        frozen
+        for frozen in local_grants
+        if not frozen.terminated and frozen.grant_pk not in decided_pks
+    ]
+    if not unresolved:
+        return merge_constraint_decisions(peer_decisions, [], [])
+
     # Production IAP: build points from frozen protection_records + production
     # coupling unless explicit test overrides are provided.
+    # Any unresolved grant still subject to required RF → fail-closed on coupling
+    # unavailability (G1-003 INV-FAIL-01); no soft-success / partial apply.
     iap_decisions: list[CpasDecision] = []
     try:
         iap_ctx = resolve_iap_context(
@@ -581,6 +594,9 @@ def evaluate_cpas_protections(
 
     peer_dpa_grants = dpa_grants_from_frozen_peer_cbsds(_frozen_peer_cbsd_rows(snapshot))
     dpa_decisions: list[CpasDecision] = []
+    if not frozen_dpa and not peer_dpa_grants:
+        return merge_constraint_decisions(peer_decisions, iap_decisions, [])
+
     try:
         refresh_activation_movelists(
             db,
