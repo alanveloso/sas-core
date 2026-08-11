@@ -106,6 +106,7 @@ def _utc_now_iso() -> str:
 
 
 def _repo_root() -> Path:
+    """Filesystem repo root (sibling-harness discovery only; not the data root)."""
     return Path(__file__).resolve().parents[1]
 
 
@@ -114,6 +115,9 @@ def resolve_dpa_kml_paths(explicit: list[Path] | None = None) -> list[Path]:
 
     ``explicit=[]`` means “no paths” (does not fall back to defaults).
     ``explicit=None`` enables env/default discovery.
+
+    Default catalogue files resolve under ``protection_data.get_data_root()/ntia``
+    (same canonical root as NTIA EXZ), not via ad-hoc ``parents[N]`` paths.
     """
     if explicit is not None:
         return [p.expanduser().resolve() for p in explicit if p.is_file()]
@@ -123,8 +127,10 @@ def resolve_dpa_kml_paths(explicit: list[Path] | None = None) -> list[Path]:
         found = [Path(part).expanduser().resolve() for part in env.split(os.pathsep) if part]
         return [p for p in found if p.is_file()]
 
+    from protection_data.loader import get_data_root
+
     candidates: list[Path] = []
-    data_ntia = _repo_root() / "data" / "ntia"
+    data_ntia = get_data_root() / "ntia"
     for name in _DEFAULT_KML_NAMES:
         candidates.append(data_ntia / name)
 

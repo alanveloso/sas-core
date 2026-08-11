@@ -28,6 +28,25 @@ Extract these `.flt` files into this directory (Common-Data naming):
 - `usgs_ned_1_n39w098_gridfloat_std.flt` (device_c)
 - `usgs_ned_1_n40w101_gridfloat_std.flt` (device_g)
 
+## Expanded tiles (G1-004 ENV REMEDIATION 02)
+
+Additional tiles for SIQ/GRA/EXZ outdoor Cat-A HAAT and related fixtures
+(harness `ceil(lat)` / `floor(lon)` NW-corner encoding). Prefer
+`usgs_ned_1_*_gridfloat_std` when present on the Common-Data revision;
+otherwise `floatn*_1_std` from Common-Data `master` (same GridFloat payload;
+both names accepted by `NedTerrainProvider` / harness `TerrainDriver`).
+
+Provenance: Common-Data commit `f53c776f657b5965d1f5aa7d12ff786265ca91dd`
+(+ `master` floatn fallbacks). Hashes: `.cache/ned-download/PROVENANCE.txt`.
+
+- `usgs_ned_1_n40w097_gridfloat_std.flt` / `usgs_ned_1_n40w100_gridfloat_std.flt`
+- `floatn40w098_1_std.flt` (SIQ ~40°N/−97.87°)
+- `floatn41w098_1_std.flt`
+- `floatn42w106_1_std.flt` / `floatn43w100_1_std.flt` / `floatn43w101_1_std.flt`
+- `floatn43w106_1_std.flt` / `floatn43w111_1_std.flt`
+- `floatn34w107_1_std.flt` (EXZ_2 N1[2] Cat-A outdoor @ 33.85263°N/−106.57198°)
+- `usgs_ned_1_n31w090_gridfloat_std.flt` (EXZ_2 N2[1] Cat-A outdoor @ 30.69461°N/−89.82421°)
+
 ## Configuration
 
 - Default path: `data/geo/ned` (this directory)

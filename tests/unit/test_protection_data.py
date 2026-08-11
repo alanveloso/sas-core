@@ -176,9 +176,11 @@ def test_validate_default_bundle_non_strict_with_repo_markers():
         "cbrs_winnforum_protection", strict=False
     )
     assert report.ok is True
-    # Payload may be absent locally; soft gaps are allowed when not strict.
+    # Soft payload gaps are allowed when not strict; when NED/DPA files are
+    # provisioned locally, soft_payload_gap is empty and that is also OK.
     soft = [s for s in report.slots if s.soft_payload_gap]
-    assert soft  # NED/DPA payload slots exist in the default manifest
+    for s in soft:
+        assert s.slot_id in ("terrain_ned_payload", "dpa_payload")
     border = next(s for s in report.slots if s.slot_id == "us_canada_border")
     assert border.ok is True
     assert border.soft_payload_gap is False

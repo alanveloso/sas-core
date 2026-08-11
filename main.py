@@ -71,9 +71,11 @@ def on_startup():
         is_schedule_enabled,
     )
     from database import SessionLocal
-    from protection_data.loader import assert_protection_data_ready
+    from protection_data.loader import assert_protection_data_ready, set_data_root
 
     settings = get_settings()
+    # Align process-global data root with Settings (SAS_PROTECTION_DATA_ROOT).
+    set_data_root(settings.resolved_protection_data_root)
     assert_protection_data_ready(
         settings.sas_protection_data_bundle,
         data_root=settings.resolved_protection_data_root,
@@ -148,9 +150,14 @@ def _run_uvicorn(port: int, certfile: Path, keyfile: Path, ssl_factory) -> None:
 def main():
     settings = get_settings()
     from services.cert_layout import format_certificate_error, validate_certificate_layout
-    from protection_data.loader import DatasetValidationError, assert_protection_data_ready
+    from protection_data.loader import (
+        DatasetValidationError,
+        assert_protection_data_ready,
+        set_data_root,
+    )
 
     try:
+        set_data_root(settings.resolved_protection_data_root)
         assert_protection_data_ready(
             settings.sas_protection_data_bundle,
             data_root=settings.resolved_protection_data_root,

@@ -55,9 +55,14 @@ NTIA_COASTAL_NAMES = ("West Combined Contour", "East-Gulf Combined Contour")
 
 
 def _repo_ntia_kml() -> Path:
-    return (
-        Path(__file__).resolve().parents[2] / "data" / "ntia" / "protection_zones.kml"
-    )
+    """Resolve NTIA protection_zones.kml under the canonical protection-data root.
+
+    Uses ``protection_data.get_data_root()`` (``DEFAULT_DATA_ROOT`` / ``set_data_root`` /
+    startup ``SAS_PROTECTION_DATA_ROOT`` sync) — never repo-relative ``parents[N]``.
+    """
+    from protection_data.loader import get_data_root
+
+    return get_data_root() / "ntia" / "protection_zones.kml"
 
 
 def _parse_kml_coordinates(text: str | None) -> list[list[float]]:

@@ -1,27 +1,32 @@
-# NTIA DPA KML catalogue
+# NTIA DPA / protection-zone catalogue
 
-Provision ESC-monitored DPA definitions used by Admin `POST /admin/trigger/load_dpas`.
+Official WInnForum harness NTIA KML payloads for DPA load and NTIA TR 15-517
+coastal exclusion (EXZ_2).
 
-## Files expected
+## Provenance
+
+| Field | Value |
+|-------|--------|
+| Upstream repository | Wireless-Innovation-Forum/Spectrum-Access-System |
+| Pinned harness commit | `928c3150adf7b31e53a96b695bf1fbdd3284ecb2` |
+| Upstream path | `data/ntia/` |
+| Local copy | byte-for-byte from that pin (not regenerated) |
+
+## Files
 
 | File | Role |
 |------|------|
-| `E-DPAs.kml` | East / coastal ESC-monitored DPAs |
-| `P-DPAs.kml` | Portal DPAs |
+| `E-DPAs.kml` | East / coastal ESC-monitored DPAs (`load_dpas`) |
+| `P-DPAs.kml` | Portal DPAs (`load_dpas`) |
+| `protection_zones.kml` | NTIA TR 15-517 contours (`enable_ntia_15_517` / EXZ_2) |
+| `GB_Part90_EZ.kml` | Part 90 exclusion zones (reference catalogue) |
 
-Do **not** commit the full NTIA KML blobs unless intentionally vendored.
-Copy (or symlink) from the WInnForum harness tree:
+See `PROVENANCE_SHA256.txt` for content hashes.
+`VERSION` marks the package revision for protection-data readiness.
 
-```bash
-mkdir -p data/ntia
-cp ../winnforum-sas-harness/data/ntia/E-DPAs.kml data/ntia/
-cp ../winnforum-sas-harness/data/ntia/P-DPAs.kml data/ntia/
-```
+## Path resolution
 
-## Resolution order (`services.dpa_service.resolve_dpa_kml_paths`)
-
-1. `SAS_DPA_KML_PATHS` — `os.pathsep`-separated absolute/relative paths
-2. `data/ntia/E-DPAs.kml` and `data/ntia/P-DPAs.kml` under this repo
-3. Sibling checkout `../winnforum-sas-harness/data/ntia/{E,P}-DPAs.kml`
-
-No DPA names or fixture IDs are hard-coded in application code.
+UUT loaders resolve this directory via the canonical protection-data root
+(`protection_data.get_data_root()` → default `<repo>/data`, overridable by
+`set_data_root` / `SAS_PROTECTION_DATA_ROOT` at startup). Do not rely on
+external symlinks such as `~/Código/data/ntia`.
