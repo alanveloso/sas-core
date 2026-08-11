@@ -92,6 +92,24 @@ slots:
     presence: version_marker
     description: Border / quiet / exclusion reference geometry marker.
 
+  # Arrangement R US/Canada border KMZ (presence only; SHA-256 documented in
+  # data/fcc/README.md — DatasetSlot has no checksum field). Version id pins
+  # WInnForum SAS harness provenance; do not treat data/fcc/VERSION as this
+  # payload's identity (that marker is for the broader FCC quiet-zone package).
+  - id: us_canada_border
+    kind: zones
+    version: "winnforum_uscabdry_sampled_928c3150adf7b31e"
+    relative_path: fcc
+    required: true
+    presence: files_glob
+    file_glob: uscabdry_sampled.kmz
+    min_files: 1
+    payload_optional_unless_strict: false
+    description: >
+      WInnForum uscabdry_sampled.kmz for Arrangement R sharing-zone membership
+      (byte-copy of SAS harness data/fcc at 928c3150adf7b31e53a96b695bf1fbdd3284ecb2;
+      SHA-256 3e3c28dbcecde2b06886507bec8691e23a6a12e2a498b6ac575fe8c1f16b4ec1).
+
   - id: census_tracts
     kind: census
     version: "1.0.0"

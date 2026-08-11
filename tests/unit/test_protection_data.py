@@ -163,6 +163,12 @@ def test_default_bundle_loads_and_has_core_kinds():
         "census",
     ):
         assert kind in kinds
+    border = next(s for s in bundle.slots if s.id == "us_canada_border")
+    assert border.kind == "zones"
+    assert border.relative_path == "fcc"
+    assert border.file_glob == "uscabdry_sampled.kmz"
+    assert border.payload_optional_unless_strict is False
+    assert border.version == "winnforum_uscabdry_sampled_928c3150adf7b31e"
 
 
 def test_validate_default_bundle_non_strict_with_repo_markers():
@@ -173,6 +179,117 @@ def test_validate_default_bundle_non_strict_with_repo_markers():
     # Payload may be absent locally; soft gaps are allowed when not strict.
     soft = [s for s in report.slots if s.soft_payload_gap]
     assert soft  # NED/DPA payload slots exist in the default manifest
+    border = next(s for s in report.slots if s.slot_id == "us_canada_border")
+    assert border.ok is True
+    assert border.soft_payload_gap is False
+    assert_protection_data_ready("cbrs_winnforum_protection", strict=False)
+
+
+def _seed_production_markers(root: Path) -> None:
+    """VERSION markers matching cbrs_winnforum_protection.yaml (excl. border KMZ)."""
+    for rel, ver in [
+        ("models/itm", "1.0.0"),
+        ("geo/ned", "usgs_ned_1_gridfloat_v1"),
+        ("geo/nlcd", "1.0.0"),
+        ("models/antenna", "1.0.0"),
+        ("ntia", "1.0.0"),
+        ("federal/fss", "1.0.0"),
+        ("federal/gwbl", "1.0.0"),
+        ("geo/zones", "1.0.0"),
+        ("geo/census", "1.0.0"),
+        ("fcc", "1.0.0"),  # quiet-zone package marker; not the KMZ identity
+    ]:
+        d = root / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "VERSION").write_text(f"{ver}\n", encoding="utf-8")
+
+
+def test_us_canada_border_kmz_present_makes_default_bundle_ready():
+    """Repo-provisioned uscabdry_sampled.kmz satisfies the required border slot."""
+    report = validate_dataset_bundle("cbrs_winnforum_protection", strict=False)
+    assert report.ok is True
+    assert any(
+        s.slot_id == "us_canada_border" and s.ok for s in report.slots
+    )
+
+
+def test_missing_us_canada_border_kmz_fails_assert_even_non_strict(tmp_path: Path):
+    """Required border payload is not soft — missing KMZ fails normal startup."""
+    data = tmp_path / "data"
+    _seed_production_markers(data)
+    # fcc/VERSION present, but uscabdry_sampled.kmz deliberately absent.
+    assert not (data / "fcc" / "uscabdry_sampled.kmz").exists()
+    report = validate_dataset_bundle(
+        "cbrs_winnforum_protection", data_root=data, strict=False
+    )
+    assert report.ok is False
+    border = next(s for s in report.slots if s.slot_id == "us_canada_border")
+    assert border.ok is False
+    assert border.soft_payload_gap is False
+    with pytest.raises(DatasetValidationError, match="incomplete"):
+        assert_protection_data_ready(
+            "cbrs_winnforum_protection", data_root=data, strict=False
+        )
+
+
+def test_us_canada_border_relative_path_cannot_escape_data_root():
+    from pydantic import ValidationError
+
+    from protection_data.schema import DatasetSlot
+
+    with pytest.raises(ValidationError, match="relative_path"):
+        DatasetSlot(
+            id="us_canada_border",
+            kind="zones",
+            version="winnforum_uscabdry_sampled_928c3150adf7b31e",
+            relative_path="../fcc",
+            presence="files_glob",
+            file_glob="uscabdry_sampled.kmz",
+            min_files=1,
+            payload_optional_unless_strict=False,
+        )
+
+
+def test_corrupted_us_canada_border_kmz_fail_closed_at_provider(tmp_path: Path):
+    """Malformed KMZ remains fail-closed in border membership (not readiness hash)."""
+    import services.border_geometry as bg
+    from services.border_protection import (
+        BorderProtectionUnavailable,
+        evaluate_canadian_border_pfd,
+        violates_canadian_border_pfd,
+    )
+
+    bogus = tmp_path / "uscabdry_sampled.kmz"
+    bogus.write_bytes(b"not-a-zip")
+    bg.reset_border_geometry_cache()
+    original = bg._DEFAULT_KMZ
+    try:
+        bg._DEFAULT_KMZ = bogus
+        install = {
+            "latitude": 42.37477,
+            "longitude": -100.93139,
+            "height": 6.0,
+            "heightType": "AGL",
+            "indoorDeployment": False,
+            "antennaGain": 0.0,
+        }
+        with pytest.raises(BorderProtectionUnavailable):
+            evaluate_canadian_border_pfd(
+                install,
+                max_eirp=20.0,
+                low_hz=3_655_000_000,
+                high_hz=3_670_000_000,
+            )
+        # Interior Arrangement R site must not authorize when KMZ is unusable.
+        assert (
+            violates_canadian_border_pfd(
+                install, 20.0, 3_655_000_000, 3_670_000_000
+            )
+            is True
+        )
+    finally:
+        bg._DEFAULT_KMZ = original
+        bg.reset_border_geometry_cache()
 
 
 def test_missing_bundle_raises(tmp_path: Path):

@@ -686,7 +686,11 @@ def test_postgres_rf_snapshot_n_vs_n1_registration_mutation(pg_session):
 
 
 def test_postgres_iap_protection_records_freeze_n_vs_n1(pg_session, monkeypatch):
-    """C2: frozen protection_records drive IAP; mid-run inject is N+1 only."""
+    """C2: frozen protection_records drive IAP; mid-run inject is N+1 only.
+
+    Grant must remain unresolved after peer stage so IAP still runs (FIX-02B:
+    peer-terminal grants skip later RF stages).
+    """
     from services.cpas_service import evaluate_cpas_protections
     from services.data_injection_service import upsert_fss_record
     from services.iap import coupling as coupling_mod
@@ -714,18 +718,44 @@ def test_postgres_iap_protection_records_freeze_n_vs_n1(pg_session, monkeypatch)
             "ttc": False,
         },
     )
-    grant = _seed_conflict_grant(
-        pg_session, fcc="fcc-c2-iap", serial="sn-c2-iap", grant_id="G-C2-IAP"
+    # Local grant only — no peer FAD conflict — so evaluate reaches IAP.
+    cbsd = Cbsd(
+        cbsd_id="fcc-c2-iap/sn-c2-iap",
+        fcc_id="fcc-c2-iap",
+        cbsd_serial_number="sn-c2-iap",
+        user_id="u-pg",
+        registration_json=json.dumps(
+            {
+                "fccId": "fcc-c2-iap",
+                "cbsdSerialNumber": "sn-c2-iap",
+                "cbsdCategory": "A",
+                "airInterface": {"radioTechnology": "E_UTRA"},
+                "measCapability": [],
+                "installationParam": {
+                    "latitude": 39.001,
+                    "longitude": -77.001,
+                    "height": 10,
+                    "heightType": "AGL",
+                },
+            }
+        ),
     )
-    # Align grant freq with FSS band for IAP overlap.
-    grant.low_frequency = 3620000000
-    grant.high_frequency = 3625000000
-    grant.max_eirp = 37.0
-    cbsd = pg_session.query(Cbsd).filter_by(cbsd_id=grant.cbsd_id).one()
-    reg = json.loads(cbsd.registration_json)
-    reg["installationParam"]["latitude"] = 39.001
-    reg["installationParam"]["longitude"] = -77.001
-    cbsd.registration_json = json.dumps(reg)
+    pg_session.add(cbsd)
+    pg_session.flush()
+    expire = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+    grant = Grant(
+        grant_id="G-C2-IAP",
+        cbsd_pk=cbsd.id,
+        cbsd_id=cbsd.cbsd_id,
+        low_frequency=3620000000,
+        high_frequency=3625000000,
+        max_eirp=37.0,
+        channel_type="GAA",
+        grant_expire_time=expire.replace(tzinfo=None),
+        terminated=False,
+        grant_json="{}",
+    )
+    pg_session.add(grant)
     pg_session.commit()
 
     snap_n = freeze_cpas_snapshot(pg_session)

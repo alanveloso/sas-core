@@ -5,9 +5,12 @@ requested EIRP would produce PFD > -80 dBm/m²/MHz at the closest border point
 must be rejected with responseCode 400.
 
 Fail-closed policy:
-* When Arrangement R frequency overlap applies and the required RF model /
-  border geometry / dataset is unavailable, the grant is **not** authorized
-  (outcome UNAVAILABLE → decision layer denies).
+* When Arrangement R frequency overlap applies and the CBSD is inside the
+  border sharing zone, missing RF model / ITM / terrain → **not** authorized
+  (UNAVAILABLE or DENY).
+* When Arrangement R applies but the required US/Canada border KMZ is missing
+  or unusable, membership is indeterminate → UNAVAILABLE (deny).
+* CBSDs outside the sharing zone are allowed without loading ITM/numpy.
 * Free Space path loss is used only when ``sas_bpr_path_loss_model=free_space``
   is selected explicitly; it is never a silent ITM substitute.
 """
@@ -121,18 +124,21 @@ def evaluate_canadian_border_pfd(
 
     model = path_loss_model or _configured_bpr_path_loss_model()
 
-    try:
-        from reference_models.antenna import antenna
-        from reference_models.geo import utils
-    except ImportError:
-        return BorderPfdOutcome.UNAVAILABLE
+    # Membership uses product KMZ + stdlib (no numpy). Only CBSDs inside the
+    # sharing zone require reference_models / ITM for PFD; interior sites must
+    # not be fail-closed solely because RF backends are absent.
+    from services.border_geometry import (
+        BorderGeometryUnavailable,
+        check_cbsd_in_border_sharing_zone,
+    )
 
     try:
-        in_zone, border_lat, border_lon = utils.CheckCbsdInBorderSharingZone(
+        in_zone, border_lat, border_lon = check_cbsd_in_border_sharing_zone(
             lat, lon, ant_azi, ant_bw
         )
+    except BorderGeometryUnavailable as exc:
+        raise BorderProtectionUnavailable(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 — geometry / dataset backends
-        # Indeterminate zone membership while Arrangement R applies.
         raise BorderProtectionUnavailable(
             f"border sharing zone check failed: {exc}"
         ) from exc
@@ -157,12 +163,15 @@ def evaluate_canadian_border_pfd(
             # Without ITM incidence angles, use boresight / max gain bound.
             bearing = 0.0
             try:
+                from reference_models.antenna import antenna
+
                 ant_gain = antenna.GetStandardAntennaGains(
                     bearing, ant_azi, ant_bw, max_ant_gain
                 )
             except Exception:  # noqa: BLE001
                 ant_gain = max_ant_gain
         else:
+            from reference_models.antenna import antenna
             from reference_models.propagation import wf_itm
 
             propagation = wf_itm.CalcItmPropagationLoss(
@@ -206,7 +215,7 @@ def violates_canadian_border_pfd(
     """Return True when the grant must be rejected (responseCode 400).
 
     Fail-closed: ``UNAVAILABLE`` and ``DENY`` both reject. Does not authorize
-    when reference_models / required datasets are missing.
+    when border KMZ is missing or when a sharing-zone CBSD cannot be evaluated.
     """
     try:
         outcome = evaluate_canadian_border_pfd(
