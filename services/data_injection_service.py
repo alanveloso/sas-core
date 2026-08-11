@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 KIND_ZONE = "zone"
 KIND_FSS = "fss"
 KIND_WISP = "wisp"
+# Canonical GWBL point protectors (FCC ULS / admin InjectWisp PART_90 point).
+# Distinct from KIND_WISP, which holds GWPZ IncumbentProtectionData + GeoJSON zone.
+KIND_GWBL = "gwbl"
 KIND_DATABASE_URL = "database_url"
 KIND_ESC_ZONE = "esc_zone"
 KIND_CLUSTER_LIST = "cluster_list"
@@ -200,6 +203,7 @@ def _fss_has_required_fields(payload: dict[str, Any]) -> bool:
 
 
 def _wisp_has_required_fields(payload: dict[str, Any]) -> bool:
+    """True for GWPZ-shaped InjectWisp payloads (IncumbentProtectionData + zone)."""
     record = payload.get("record")
     zone = payload.get("zone")
     if not isinstance(record, dict) or not isinstance(zone, dict):
@@ -218,6 +222,46 @@ def _wisp_has_required_fields(payload: dict[str, Any]) -> bool:
     # GeoJSON FeatureCollection or Geometry.
     ztype = zone.get("type")
     return ztype in ("FeatureCollection", "Feature", "Polygon", "MultiPolygon")
+
+
+def _gwbl_point_from_wisp_body(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize admin InjectWisp PART_90 *point* (no GWPZ zone) to canonical GWBL.
+
+    WInnForum ``InjectWisp`` is the admin verb for both GWPZ (zone) and GWBL
+    (point) fixtures. FSS↔GWBL grant/pre-IAP protection consumes ``kind=gwbl``
+    records with flat ``latitude``/``longitude`` (same shape as FCC ULS sync).
+    """
+    # Explicit zone field → GWPZ path only; never dual-write as GWBL.
+    if payload.get("zone") is not None:
+        return None
+    record = payload.get("record")
+    if not isinstance(record, dict):
+        return None
+    record_id = record.get("id")
+    if record_id is None or record_id == "":
+        return None
+    rec_type = record.get("type")
+    if rec_type is not None and str(rec_type).upper() == "FSS":
+        return None
+    deps = record.get("deploymentParam")
+    if not isinstance(deps, list) or not deps:
+        return None
+    first = deps[0] if isinstance(deps[0], dict) else {}
+    if not first:
+        return None
+    inst = first.get("installationParam") or {}
+    if not isinstance(inst, dict):
+        return None
+    if not _lat_lon_ok(inst.get("latitude"), inst.get("longitude")):
+        return None
+    fr = (first.get("operationParam") or {}).get("operationFrequencyRange") or {}
+    if not isinstance(fr, dict) or not _freq_range_ok(fr):
+        return None
+    return {
+        "id": str(record_id),
+        "latitude": float(inst["latitude"]),
+        "longitude": float(inst["longitude"]),
+    }
 
 
 def _zone_record_acceptable(record: dict[str, Any]) -> bool:
@@ -267,12 +311,28 @@ def upsert_fss_record(
 def upsert_wisp_record(
     db: Session, body: dict[str, Any] | None, *, commit: bool = True
 ) -> bool:
-    if not isinstance(body, dict) or not _wisp_has_required_fields(body):
+    """Persist InjectWisp admin payloads.
+
+    - GWPZ (record + GeoJSON zone) → ``KIND_WISP`` for zone exclusion / IAP.
+    - GWBL point (PART_90 IncumbentProtectionData, no zone) → canonical
+      ``KIND_GWBL`` flat point consumed by FSS↔GWBL grant protection.
+    """
+    if not isinstance(body, dict):
         return False
-    payload = dict(body)
-    key = _natural_key(KIND_WISP, payload)
-    _upsert(db, KIND_WISP, payload, key=key)
-    bump_injection_generation(db, KIND_WISP)
+    if _wisp_has_required_fields(body):
+        payload = dict(body)
+        key = _natural_key(KIND_WISP, payload)
+        _upsert(db, KIND_WISP, payload, key=key)
+        bump_injection_generation(db, KIND_WISP)
+        _commit_if(db, commit=commit)
+        return True
+    gwbl = _gwbl_point_from_wisp_body(body)
+    if gwbl is None:
+        return False
+    key = _natural_key(KIND_GWBL, gwbl)
+    _upsert(db, KIND_GWBL, gwbl, key=key)
+    bump_sync_meta(db, "gwbl")
+    bump_injection_generation(db, KIND_GWBL)
     _commit_if(db, commit=commit)
     return True
 
