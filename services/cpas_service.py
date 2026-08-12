@@ -220,6 +220,9 @@ def frozen_to_iap_grant_rf(frozen: FrozenLocalGrantRf) -> Any | None:
         grant_pk=frozen.grant_pk,
         source_sas_id=None,
         cbsd_category=str(frozen.cbsd_category) if frozen.cbsd_category else None,
+        antenna_azimuth_deg=frozen.antenna_azimuth,
+        antenna_beamwidth_deg=frozen.antenna_beamwidth,
+        antenna_gain_dbi=frozen.antenna_gain,
     )
 
 @dataclass(frozen=True)

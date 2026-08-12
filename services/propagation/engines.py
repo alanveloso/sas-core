@@ -111,6 +111,7 @@ def _load_reference_engines_cached(
         activity_loss_factor=activity,
         antenna_standard_gains=antenna.GetStandardAntennaGains,
         antenna_fss_gains=antenna.GetFssAntennaGains,
+        antenna_pattern_gains=antenna.GetAntennaPatternGains,
         grid_polygon=geoutils.GridPolygon,
         region_nlcd_vote=drive.nlcd_driver.RegionNlcdVote,
         terrain_elevation_m=terrain_elevation_m,

@@ -260,6 +260,31 @@ def make_fss(
     return row
 
 
+def esc_installation_param(
+    latitude: float,
+    longitude: float,
+    *,
+    height: float = 3.0,
+    height_type: str = "AGL",
+    antenna_azimuth: float = 0.0,
+    pattern_gain_dbi: float = 30.0,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Minimal official-shaped ESC installationParam for unit tests."""
+    install: dict[str, Any] = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "height": height,
+        "heightType": height_type,
+        "antennaAzimuth": antenna_azimuth,
+        "azimuthRadiationPattern": [
+            {"angle": i, "gain": pattern_gain_dbi} for i in range(360)
+        ],
+    }
+    install.update(extra)
+    return install
+
+
 def make_esc_sensor(
     db: Session,
     *,
@@ -268,7 +293,10 @@ def make_esc_sensor(
     commit: bool = True,
 ) -> EscSensor:
     rid = record_id or _next_token("esc")
-    data = payload or {"id": rid}
+    data = payload or {
+        "id": rid,
+        "installationParam": esc_installation_param(39.0, -77.0),
+    }
     row = EscSensor(record_id=rid, data_json=json.dumps(data))
     db.add(row)
     if commit:

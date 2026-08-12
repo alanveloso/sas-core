@@ -50,6 +50,10 @@ class ProtectionPoint(BaseModel):
     pre_iap_margin_db: float = Field(default=1.0, ge=0.0)
     # WINNF-TS-0112 neighborhood (km). None = no distance filter (GENERIC/tests).
     neighborhood_km: float | None = Field(default=None, ge=0.0)
+    # ESC receiver antenna (WINNF computeInterferenceEsc). Optional for non-ESC.
+    receiver_height_m: float | None = None
+    receiver_antenna_azimuth_deg: float | None = None
+    receiver_antenna_gain_pattern_dbi: tuple[float, ...] | None = None
 
 
 class GrantRfInfo(BaseModel):
@@ -73,6 +77,10 @@ class GrantRfInfo(BaseModel):
     source_sas_id: str | None = None
     # Frozen CBSD category ("A"/"B"). Used for ESC neighborhood (40/80 km).
     cbsd_category: str | None = None
+    # Optional CBSD antenna fields for entity-specific coupling (ESC).
+    antenna_azimuth_deg: float | None = None
+    antenna_beamwidth_deg: float | None = None
+    antenna_gain_dbi: float | None = None
 
 
 class GrantChannelContribution(BaseModel):

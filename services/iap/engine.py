@@ -147,7 +147,7 @@ def run_iap_for_point(
     unsat_count_ch: list[int] = []
     fairshare_ch: list[float] = []
     for channel in channels:
-        n_ch = sum(1 for g in neighbors if grant_overlaps_channel(g, channel))
+        n_ch = sum(1 for g in neighbors if grant_overlaps_channel(g, channel, entity_kind=point.entity_kind))
         unsat_count_ch.append(n_ch)
         fairshare_ch.append((threshold_mw / float(n_ch)) if n_ch > 0 else 0.0)
 
@@ -162,7 +162,7 @@ def run_iap_for_point(
             grant_ok = True
             saw_overlap = False
             for ch_idx, channel in enumerate(channels):
-                if not grant_overlaps_channel(grant, channel):
+                if not grant_overlaps_channel(grant, channel, entity_kind=point.entity_kind):
                     continue
                 saw_overlap = True
                 interf = float(coupling(grant, point, channel, eirp[g_idx]))
@@ -180,7 +180,7 @@ def run_iap_for_point(
             if num_unsatisfied > 0:
                 num_unsatisfied -= 1
             for ch_idx, channel in enumerate(channels):
-                if not grant_overlaps_channel(grant, channel):
+                if not grant_overlaps_channel(grant, channel, entity_kind=point.entity_kind):
                     continue
                 locked = locked_interf.get((g_idx, ch_idx))
                 if locked is None:
@@ -211,7 +211,7 @@ def run_iap_for_point(
                 if num_unsatisfied > 0:
                     num_unsatisfied -= 1
                 for ch_idx, channel in enumerate(channels):
-                    if not grant_overlaps_channel(neighbors[g_idx], channel):
+                    if not grant_overlaps_channel(neighbors[g_idx], channel, entity_kind=point.entity_kind):
                         continue
                     unsat_count_ch[ch_idx] = max(0, unsat_count_ch[ch_idx] - 1)
                     if unsat_count_ch[ch_idx] > 0:
@@ -226,7 +226,7 @@ def run_iap_for_point(
         contribs: list[GrantChannelContribution] = []
         managing_mw = 0.0
         for g_idx, g in enumerate(neighbors):
-            if not grant_overlaps_channel(g, channel):
+            if not grant_overlaps_channel(g, channel, entity_kind=point.entity_kind):
                 continue
             if removed[g_idx] and (g_idx, ch_idx) not in locked_interf:
                 continue

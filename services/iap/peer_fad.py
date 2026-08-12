@@ -72,6 +72,18 @@ def grant_rf_infos_from_peer_cbsd_record(
     else:
         cat = str(raw_cat).strip().upper()
         category = cat if cat in {"A", "B"} else None
+
+    def _opt_ant(key: str) -> float | None:
+        if key not in install or install.get(key) is None:
+            return None
+        try:
+            return float(install[key])
+        except (TypeError, ValueError):
+            return None
+
+    ant_az = _opt_ant("antennaAzimuth")
+    ant_bw = _opt_ant("antennaBeamwidth")
+    ant_gain = _opt_ant("antennaGain")
     grants_raw = record.get("grants")
     if not isinstance(grants_raw, list):
         return []
@@ -113,6 +125,9 @@ def grant_rf_infos_from_peer_cbsd_record(
                 grant_pk=None,
                 source_sas_id=src,
                 cbsd_category=category,
+                antenna_azimuth_deg=ant_az,
+                antenna_beamwidth_deg=ant_bw,
+                antenna_gain_dbi=ant_gain,
             )
         )
     return out

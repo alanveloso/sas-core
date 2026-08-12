@@ -9,6 +9,7 @@ from services.iap.models import (
     FrequencyChannel,
     GrantChannelContribution,
     GrantRfInfo,
+    ProtectedEntityKind,
 )
 
 IAPBW_HZ = 5_000_000
@@ -18,6 +19,9 @@ EIRP_STEP_DB = 1.0
 # the IAP authorization floor: below this the managing SAS terminates rather
 # than authorize an out-of-protocol EIRP.
 DEFAULT_EIRP_FLOOR_DBM_MHZ = -137.0
+# WINNF interference.ESC_CAT_A_HIGH_FREQ_HZ — Cat A not considered for ESC
+# constraints at/above this edge (grant or channel low).
+ESC_CAT_A_HIGH_FREQ_HZ = 3_660_000_000
 
 
 def dbm_to_mw(dbm: float) -> float:
@@ -66,8 +70,23 @@ def overlapping_iap_channels(
     return channels
 
 
-def grant_overlaps_channel(grant: GrantRfInfo, channel: FrequencyChannel) -> bool:
-    return grant.low_hz < channel.high_hz and grant.high_hz > channel.low_hz
+def grant_overlaps_channel(
+    grant: GrantRfInfo,
+    channel: FrequencyChannel,
+    *,
+    entity_kind: ProtectedEntityKind | None = None,
+) -> bool:
+    """True when grant overlaps channel; applies ESC Cat-A 3660 MHz rule when kind is ESC."""
+    if not (grant.low_hz < channel.high_hz and grant.high_hz > channel.low_hz):
+        return False
+    if entity_kind is ProtectedEntityKind.ESC:
+        cat = (grant.cbsd_category or "").strip().upper()
+        if cat == "A" and (
+            grant.low_hz >= ESC_CAT_A_HIGH_FREQ_HZ
+            or channel.low_hz >= ESC_CAT_A_HIGH_FREQ_HZ
+        ):
+            return False
+    return True
 
 
 def aggregate_channel(

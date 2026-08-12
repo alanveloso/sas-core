@@ -410,7 +410,16 @@ def test_esc_peer_conflict_terminates_nearby_grant(db_session, monkeypatch):
             data_json=json.dumps(
                 {
                     "id": "esc_sensor/peer/1",
-                    "installationParam": {"latitude": 39.0, "longitude": -100.0},
+                    "installationParam": {
+                        "latitude": 39.0,
+                        "longitude": -100.0,
+                        "height": 3.0,
+                        "heightType": "AGL",
+                        "antennaAzimuth": 0.0,
+                        "azimuthRadiationPattern": [
+                            {"angle": i, "gain": 30.0} for i in range(360)
+                        ],
+                    },
                 }
             ),
         )
@@ -557,7 +566,16 @@ def test_peer_only_terminal_resolution_skips_unavailable_iap(
             data_json=json.dumps(
                 {
                     "id": "esc_sensor/peer/fad2",
-                    "installationParam": {"latitude": 39.5, "longitude": -100.0},
+                    "installationParam": {
+                        "latitude": 39.5,
+                        "longitude": -100.0,
+                        "height": 3.0,
+                        "heightType": "AGL",
+                        "antennaAzimuth": 0.0,
+                        "azimuthRadiationPattern": [
+                            {"angle": i, "gain": 30.0} for i in range(360)
+                        ],
+                    },
                 }
             ),
         )
@@ -680,7 +698,16 @@ def test_mixed_peer_and_rf_unavailable_fails_closed_atomic(
             data_json=json.dumps(
                 {
                     "id": "esc_sensor/peer/mix",
-                    "installationParam": {"latitude": 39.0, "longitude": -100.0},
+                    "installationParam": {
+                        "latitude": 39.0,
+                        "longitude": -100.0,
+                        "height": 3.0,
+                        "heightType": "AGL",
+                        "antennaAzimuth": 0.0,
+                        "azimuthRadiationPattern": [
+                            {"angle": i, "gain": 30.0} for i in range(360)
+                        ],
+                    },
                 }
             ),
         )

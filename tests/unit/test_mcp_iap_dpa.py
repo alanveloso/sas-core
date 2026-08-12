@@ -255,6 +255,12 @@ def test_build_points_from_fss_and_esc(db_session: Session):
                     "installationParam": {
                         "latitude": 39.1,
                         "longitude": -77.1,
+                        "height": 3.0,
+                        "heightType": "AGL",
+                        "antennaAzimuth": 0.0,
+                        "azimuthRadiationPattern": [
+                            {"angle": i, "gain": 30.0} for i in range(360)
+                        ],
                     },
                     "protectionFrequencyRange": {
                         "lowFrequency": 3_550_000_000,

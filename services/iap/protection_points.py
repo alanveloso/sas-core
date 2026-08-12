@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 # Fallback only when spectrum profile is unavailable (tests / early import).
 _DEFAULT_CBRS_LOW_HZ = 3_550_000_000
 _DEFAULT_CBRS_HIGH_HZ = 3_700_000_000
+
+# Normative ESC passband (WINNF interference.ESC_LOW/HIGH_FREQ_HZ).
+ESC_PASSBAND_LOW_HZ = 3_550_000_000
+ESC_PASSBAND_HIGH_HZ = 3_680_000_000
 
 # WINNF-TS-0112 / reference_models.interference (Hz).
 FSS_COEXIST_LOW_HZ = 3_600_000_000
@@ -417,6 +422,30 @@ def protection_point_from_zone_payload(
     )
 
 
+def _esc_gain_pattern_from_install(install: dict[str, Any]) -> tuple[float, ...]:
+    """Parse azimuthRadiationPattern into a 360-entry dBi tuple (angle index)."""
+    raw = install.get("azimuthRadiationPattern")
+    if not isinstance(raw, list) or not raw:
+        raise ProtectionEntityError("ESC azimuthRadiationPattern missing or empty")
+    gains = [float("nan")] * 360
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ProtectionEntityError("ESC azimuthRadiationPattern entry invalid")
+        try:
+            angle = int(entry["angle"])
+            gain = float(entry["gain"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProtectionEntityError(
+                "ESC azimuthRadiationPattern angle/gain invalid"
+            ) from exc
+        if angle < 0 or angle > 359:
+            raise ProtectionEntityError("ESC azimuthRadiationPattern angle out of range")
+        gains[angle] = gain
+    if any(math.isnan(g) for g in gains):
+        raise ProtectionEntityError("ESC azimuthRadiationPattern incomplete (need 0..359)")
+    return tuple(gains)
+
+
 def protection_point_from_esc_sensor_record(
     record: dict[str, Any],
     *,
@@ -425,14 +454,26 @@ def protection_point_from_esc_sensor_record(
 ) -> ProtectionPoint | None:
     if not isinstance(record, dict):
         raise ProtectionEntityError("ESC sensor record must be an object")
-    loc = _point_from_installation(record.get("installationParam"))
-    if loc is None:
+    install = record.get("installationParam")
+    if not isinstance(install, dict):
         deps = record.get("deploymentParam")
         if isinstance(deps, list) and deps and isinstance(deps[0], dict):
-            loc = _point_from_installation(deps[0].get("installationParam"))
-    if loc is None:
+            install = deps[0].get("installationParam")
+    if not isinstance(install, dict):
         # Incomplete sensor without coordinates: skip (not fail-open protection).
         return None
+    loc = _point_from_installation(install)
+    if loc is None:
+        return None
+
+    height = _as_float(install.get("height"))
+    azimuth = _as_float(install.get("antennaAzimuth"))
+    if height is None:
+        raise ProtectionEntityError(f"ESC {record_id} installation height missing")
+    if azimuth is None:
+        raise ProtectionEntityError(f"ESC {record_id} antennaAzimuth missing")
+    pattern = _esc_gain_pattern_from_install(install)
+
     fr = None
     saw_freq_blob = False
     for key in ("protectionFrequencyRange", "operationFrequencyRange"):
@@ -450,9 +491,8 @@ def protection_point_from_esc_sensor_record(
     if fr is None:
         if saw_freq_blob:
             raise ProtectionEntityError(f"ESC {record_id} frequency range invalid")
-        # Spectrum-profile default lower 100 MHz (class B config, not fixture).
-        band_low, band_high = cbrs_band_hz()
-        fr = (band_low, min(band_high, band_low + 100_000_000))
+        # Normative ESC passband (WINNF interference.ESC_LOW/HIGH_FREQ_HZ).
+        fr = (ESC_PASSBAND_LOW_HZ, ESC_PASSBAND_HIGH_HZ)
     clipped = clip_frequency_to_cbrs(fr[0], fr[1])
     if clipped is None:
         return None
@@ -467,6 +507,9 @@ def protection_point_from_esc_sensor_record(
         entity_kind=ProtectedEntityKind.ESC,
         pre_iap_margin_db=profile.pre_iap_margin_db,
         neighborhood_km=NEIGHBORHOOD_ESC_KM,
+        receiver_height_m=float(height),
+        receiver_antenna_azimuth_deg=float(azimuth),
+        receiver_antenna_gain_pattern_dbi=pattern,
     )
 
 

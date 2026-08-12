@@ -184,6 +184,10 @@ def _inject_esc(
                         "longitude": lon,
                         "height": 3.0,
                         "heightType": "AGL",
+                        "antennaAzimuth": 0.0,
+                        "azimuthRadiationPattern": [
+                            {"angle": i, "gain": 30.0} for i in range(360)
+                        ],
                     },
                     "protectionFrequencyRange": {
                         "lowFrequency": low_hz,
@@ -663,7 +667,15 @@ def test_epr_invalid_esc_freq_domain_error():
     with pytest.raises(ProtectionEntityError):
         protection_point_from_esc_sensor_record(
             {
-                "installationParam": {"latitude": 39.0, "longitude": -77.0},
+                "installationParam": {
+                    "latitude": 39.0,
+                    "longitude": -77.0,
+                    "height": 3.0,
+                    "antennaAzimuth": 0.0,
+                    "azimuthRadiationPattern": [
+                        {"angle": i, "gain": 30.0} for i in range(360)
+                    ],
+                },
                 "protectionFrequencyRange": {
                     "lowFrequency": 3_700_000_000,
                     "highFrequency": 3_550_000_000,

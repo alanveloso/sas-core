@@ -427,6 +427,10 @@ def test_j_deterministic_order(
                         "longitude": -77.01,
                         "height": 3.0,
                         "heightType": "AGL",
+                        "antennaAzimuth": 0.0,
+                        "azimuthRadiationPattern": [
+                            {"angle": i, "gain": 30.0} for i in range(360)
+                        ],
                     },
                     "protectionFrequencyRange": {
                         "lowFrequency": 3_620_000_000,

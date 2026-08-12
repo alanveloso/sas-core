@@ -54,6 +54,8 @@ class PropagationEngines:
     grid_polygon: Callable[..., list[tuple[float, float]]]
     region_nlcd_vote: Callable[..., str]
     terrain_elevation_m: Callable[[float, float], float]
+    # ESC azimuth pattern (WINNF GetAntennaPatternGains). Optional for older mocks.
+    antenna_pattern_gains: Callable[..., float] | None = None
 
 
 def _require_mapping(value: Any, *, name: str) -> MutableMapping[str, Any]:
