@@ -27,13 +27,16 @@ from models.models import Cbsd, Grant
 _registry_guard = threading.Lock()
 _locks: dict[str, threading.RLock] = {}
 
-# Distinct namespaces so CBSD, grant, FAD and CPAS advisory keys never collide.
+# Distinct namespaces so CBSD, grant, FAD, CPAS and IAP advisory keys never collide.
 _ADVISORY_NS_CBSD = b"cbsd\0"
 _ADVISORY_NS_GRANT = b"grant\0"
 _ADVISORY_NS_FAD = b"fad\0"
 _ADVISORY_NS_CPAS = b"cpas\0"
+_ADVISORY_NS_IAP = b"iap\0"
 _FAD_PUBLISH_LOCK_NAME = "publish"
 _CPAS_PIPELINE_LOCK_NAME = "pipeline"
+_IAP_ADMISSION_LOCK_NAME = "admission"
+_IAP_ADMISSION_PROCESS_KEY = "iap:admission"
 
 
 def _lock_for(key: str) -> threading.RLock:
@@ -57,6 +60,37 @@ def reset_resource_locks_for_tests() -> None:
     """Drop process-local locks (isolated unit tests only)."""
     with _registry_guard:
         _locks.clear()
+
+
+@contextmanager
+def exclusive_iap_admission() -> Iterator[None]:
+    """Serialize IAP grant-admission evaluate→persist across CBSDs (same process).
+
+    Held together with ``acquire_iap_admission_xact_lock`` so concurrent
+    proposals cannot both observe the same residual headroom.
+
+    Also held by authorization-baseline writers (peer FAD apply, IAP-relevant
+    protection injection, CPAS apply/stamp) so Grant admission cannot race them.
+    """
+    with _lock_for(_IAP_ADMISSION_PROCESS_KEY):
+        yield
+
+
+@contextmanager
+def iap_admission_critical(db: Session) -> Iterator[None]:
+    """Process IAP admission lock + PostgreSQL transaction advisory lock.
+
+    Canonical first lock in the IAP authorization-state domain. Callers that
+    also need CPAS / FAD / CBSD locks must acquire those *after* entering this
+    context (or after ``exclusive_iap_admission`` + ``acquire_iap_admission_xact_lock``).
+
+    Lock order (never invert)::
+
+        IAP admission → CPAS pipeline → FAD publish → CBSD
+    """
+    with exclusive_iap_admission():
+        acquire_iap_admission_xact_lock(db)
+        yield
 
 
 @contextmanager
@@ -135,6 +169,23 @@ def acquire_cpas_pipeline_xact_lock(db: Session) -> None:
         return
     key = _advisory_key(_ADVISORY_NS_CPAS, _CPAS_PIPELINE_LOCK_NAME)
     db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+
+
+def acquire_iap_admission_xact_lock(db: Session) -> None:
+    """Serialize IAP grant admission across PostgreSQL workers.
+
+    Transaction-scoped; released on commit/rollback. No-op on non-PostgreSQL.
+    Pair with ``exclusive_iap_admission`` for process-local coverage.
+    """
+    if not _supports_advisory_lock(db):
+        return
+    key = _advisory_key(_ADVISORY_NS_IAP, _IAP_ADMISSION_LOCK_NAME)
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+
+
+def iap_admission_advisory_key() -> int:
+    """Stable PG advisory key for IAP admission (tests / diagnostics)."""
+    return _advisory_key(_ADVISORY_NS_IAP, _IAP_ADMISSION_LOCK_NAME)
 
 
 def lock_cbsd_row(db: Session, cbsd_id: str) -> Cbsd | None:

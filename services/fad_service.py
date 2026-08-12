@@ -396,8 +396,14 @@ def _build_snapshot_payload(db: Session) -> _FadSnapshotPayload:
     )
 
 
-def _publish_snapshot(db: Session, payload: _FadSnapshotPayload) -> FadDump:
-    """Short critical section: advisory lock → persist complete dump → publish."""
+def _publish_snapshot(
+    db: Session, payload: _FadSnapshotPayload, *, commit: bool = True
+) -> FadDump:
+    """Short critical section: advisory lock → persist complete dump → publish.
+
+    When ``commit=False`` the dump is flushed only; the caller must commit while
+    still holding any outer authorization locks (CPAS apply+admission stamp).
+    """
     try:
         acquire_fad_publish_xact_lock(db)
 
@@ -432,10 +438,14 @@ def _publish_snapshot(db: Session, payload: _FadSnapshotPayload) -> FadDump:
 
         db.query(FadDump).filter_by(published=True).update({"published": False})
         dump.published = True
-        db.commit()
-        db.refresh(dump)
+        if commit:
+            db.commit()
+            db.refresh(dump)
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         logger.exception("FAD publication failed; rolled back")
         raise
 
@@ -448,18 +458,21 @@ def _publish_snapshot(db: Session, payload: _FadSnapshotPayload) -> FadDump:
     return dump
 
 
-def create_full_activity_dump(db: Session) -> FadDump:
+def create_full_activity_dump(db: Session, *, commit: bool = True) -> FadDump:
     """Generate a complete snapshot then publish it as the current FAD.
 
     Heavy serialization runs without holding DB advisory locks. Publication is
     coordinated with ``pg_advisory_xact_lock`` on PostgreSQL. SQLite keeps a
     process-local RLock around publish only (test aid; not multi-worker proof).
+
+    ``commit=False`` is for callers (CPAS) that must keep apply + FAD + admission
+    stamp in one transaction under IAP admission serialization.
     """
     payload = _build_snapshot_payload(db)
     if _dialect_name(db) == "sqlite":
         with _fad_publish_lock:
-            return _publish_snapshot(db, payload)
-    return _publish_snapshot(db, payload)
+            return _publish_snapshot(db, payload, commit=commit)
+    return _publish_snapshot(db, payload, commit=commit)
 
 
 def get_published_dump(db: Session) -> FadDump | None:

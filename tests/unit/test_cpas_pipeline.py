@@ -137,7 +137,7 @@ def test_fad_failure_rolls_back_grant_terminations(db_session, monkeypatch):
     )
     monkeypatch.setattr(
         "services.cpas_service.create_full_activity_dump",
-        lambda db: (_ for _ in ()).throw(RuntimeError("inject fad failure")),
+        lambda db, commit=True: (_ for _ in ()).throw(RuntimeError("inject fad failure")),
     )
     with pytest.raises(RuntimeError, match="inject fad failure"):
         execute_cpas_pipeline(db_session)

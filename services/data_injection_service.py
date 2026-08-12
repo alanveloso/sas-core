@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -134,6 +135,27 @@ def _upsert(
 
 def _commit_if(db: Session, *, commit: bool) -> None:
     if commit:
+        db.commit()
+
+
+@contextmanager
+def _iap_admission_write(db: Session, *, commit: bool):
+    """Hold IAP admission serialization across an IAP-relevant protection write.
+
+    When ``commit=False`` (batch), the caller must enter the same serialization
+    before the final commit. Lock order starts with IAP admission.
+    """
+    if not commit:
+        yield
+        return
+    from services.concurrency import (
+        acquire_iap_admission_xact_lock,
+        exclusive_iap_admission,
+    )
+
+    with exclusive_iap_admission():
+        acquire_iap_admission_xact_lock(db)
+        yield
         db.commit()
 
 
@@ -283,9 +305,9 @@ def persist_zone_data(
         record["id"] = zone_id
         payload["record"] = record
         if _zone_record_acceptable(record):
-            _upsert(db, KIND_ZONE, payload, key=zone_id)
-            bump_injection_generation(db, KIND_ZONE)
-            _commit_if(db, commit=commit)
+            with _iap_admission_write(db, commit=commit):
+                _upsert(db, KIND_ZONE, payload, key=zone_id)
+                bump_injection_generation(db, KIND_ZONE)
         return zone_id
     zone_id = rewrite_zone_id(None)
     return zone_id
@@ -301,10 +323,10 @@ def upsert_fss_record(
     record = dict(payload["record"])
     payload["record"] = record
     key = _natural_key(KIND_FSS, payload)
-    _upsert(db, KIND_FSS, payload, key=key)
-    bump_sync_meta(db, "fss")
-    bump_injection_generation(db, KIND_FSS)
-    _commit_if(db, commit=commit)
+    with _iap_admission_write(db, commit=commit):
+        _upsert(db, KIND_FSS, payload, key=key)
+        bump_sync_meta(db, "fss")
+        bump_injection_generation(db, KIND_FSS)
     return True
 
 
@@ -322,18 +344,18 @@ def upsert_wisp_record(
     if _wisp_has_required_fields(body):
         payload = dict(body)
         key = _natural_key(KIND_WISP, payload)
-        _upsert(db, KIND_WISP, payload, key=key)
-        bump_injection_generation(db, KIND_WISP)
-        _commit_if(db, commit=commit)
+        with _iap_admission_write(db, commit=commit):
+            _upsert(db, KIND_WISP, payload, key=key)
+            bump_injection_generation(db, KIND_WISP)
         return True
     gwbl = _gwbl_point_from_wisp_body(body)
     if gwbl is None:
         return False
     key = _natural_key(KIND_GWBL, gwbl)
-    _upsert(db, KIND_GWBL, gwbl, key=key)
-    bump_sync_meta(db, "gwbl")
-    bump_injection_generation(db, KIND_GWBL)
-    _commit_if(db, commit=commit)
+    with _iap_admission_write(db, commit=commit):
+        _upsert(db, KIND_GWBL, gwbl, key=key)
+        bump_sync_meta(db, "gwbl")
+        bump_injection_generation(db, KIND_GWBL)
     return True
 
 
@@ -385,9 +407,9 @@ def persist_esc_zone(
         return False
     payload = dict(body)
     key = _natural_key(KIND_ESC_ZONE, payload)
-    _upsert(db, KIND_ESC_ZONE, payload, key=key)
-    bump_injection_generation(db, KIND_ESC_ZONE)
-    _commit_if(db, commit=commit)
+    with _iap_admission_write(db, commit=commit):
+        _upsert(db, KIND_ESC_ZONE, payload, key=key)
+        bump_injection_generation(db, KIND_ESC_ZONE)
     return True
 
 
@@ -406,9 +428,9 @@ def persist_cluster_list(
         return False
     payload = dict(body)
     key = _natural_key(KIND_CLUSTER_LIST, payload)
-    _upsert(db, KIND_CLUSTER_LIST, payload, key=key)
-    bump_injection_generation(db, KIND_CLUSTER_LIST)
-    _commit_if(db, commit=commit)
+    with _iap_admission_write(db, commit=commit):
+        _upsert(db, KIND_CLUSTER_LIST, payload, key=key)
+        bump_injection_generation(db, KIND_CLUSTER_LIST)
     return True
 
 
@@ -439,6 +461,7 @@ def upsert_batch(
     """Validate every item then write without intermediate commits; one commit.
 
     ``writer`` must accept ``commit=False`` (all persist/upsert helpers do).
+    IAP-relevant kinds hold admission serialization across the final commit.
     """
     if not items:
         return 0
@@ -447,11 +470,32 @@ def upsert_batch(
             db.rollback()
             raise InjectionValidationError(f"invalid {kind} batch item")
     count = 0
+    iap_kinds = {
+        KIND_ZONE,
+        KIND_FSS,
+        KIND_WISP,
+        KIND_GWBL,
+        KIND_ESC_ZONE,
+        KIND_CLUSTER_LIST,
+    }
     try:
-        for item in items:
-            if writer(db, item, commit=False):
-                count += 1
-        db.commit()
+        if kind in iap_kinds:
+            from services.concurrency import (
+                acquire_iap_admission_xact_lock,
+                exclusive_iap_admission,
+            )
+
+            with exclusive_iap_admission():
+                acquire_iap_admission_xact_lock(db)
+                for item in items:
+                    if writer(db, item, commit=False):
+                        count += 1
+                db.commit()
+        else:
+            for item in items:
+                if writer(db, item, commit=False):
+                    count += 1
+            db.commit()
     except Exception:
         db.rollback()
         raise

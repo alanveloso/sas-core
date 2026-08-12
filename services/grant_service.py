@@ -377,90 +377,107 @@ def process_grant(
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
-        # Serialize grant creation per CBSD (process lock + row/advisory locks).
+        # Serialize IAP admission then per-CBSD create (fixed lock order).
         from services.concurrency import (
             acquire_cbsd_xact_lock,
+            acquire_iap_admission_xact_lock,
             exclusive_cbsd,
+            exclusive_iap_admission,
             lock_cbsd_row,
         )
         from services.cpas_service import peer_has_grant_for_cbsd
         from services.federal_db_service import grant_sync_stamp
         from services.grant_renewal import AUTH_CONTEXT_KEY, build_auth_context
+        from services.iap.admission import proposed_grant_violates_iap
         from services.lifecycle import GrantState
 
-        with exclusive_cbsd(cbsd_id):
-            try:
-                acquire_cbsd_xact_lock(db, cbsd_id)
-                cbsd = lock_cbsd_row(db, cbsd_id)
-                if not cbsd:
-                    responses.append(_resp(INVALID_PARAM))
-                    continue
-                if cbsd_certificate_mismatch(cbsd, certificate_hash):
-                    responses.append(_resp(INVALID_PARAM))
-                    continue
+        # IAP admission lock first, then CBSD — avoid deadlock with concurrent grants.
+        with exclusive_iap_admission():
+            with exclusive_cbsd(cbsd_id):
+                try:
+                    acquire_iap_admission_xact_lock(db)
+                    acquire_cbsd_xact_lock(db, cbsd_id)
+                    cbsd = lock_cbsd_row(db, cbsd_id)
+                    if not cbsd:
+                        responses.append(_resp(INVALID_PARAM))
+                        continue
+                    if cbsd_certificate_mismatch(cbsd, certificate_hash):
+                        responses.append(_resp(INVALID_PARAM))
+                        continue
 
-                existing = _active_grants(db, cbsd_id)
-                pending = pending_by_cbsd.get(cbsd_id, [])
-                if _has_freq_conflict(existing, low, high, also_pending=pending):
-                    responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
-                    continue
+                    existing = _active_grants(db, cbsd_id)
+                    pending = pending_by_cbsd.get(cbsd_id, [])
+                    if _has_freq_conflict(existing, low, high, also_pending=pending):
+                        responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+                        continue
 
-                # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
-                if peer_has_grant_for_cbsd(db, cbsd):
-                    responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
-                    continue
+                    # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
+                    if peer_has_grant_for_cbsd(db, cbsd):
+                        responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+                        continue
 
-                grant_id = f"grant/{uuid.uuid4().hex}"
-                expire = _grant_expire_time(pal_exp)
-                tx_expire = compute_transmit_expire_time(
-                    db,
-                    cbsd,
-                    expire,
-                    low_hz=int(low),
-                    high_hz=int(high),
-                )
+                    # FIX-12: post-CPAS IAP/ESC admission at requested maxEirp.
+                    if proposed_grant_violates_iap(
+                        db,
+                        cbsd,
+                        low_hz=int(low),
+                        high_hz=int(high),
+                        max_eirp_dbm_mhz=float(max_eirp),
+                    ):
+                        responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                        continue
 
-                stamp = grant_sync_stamp(db)
-                grant_payload = dict(req) if isinstance(req, dict) else {}
-                grant_payload["fss_gen"] = stamp.get("fss", 0)
-                grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
-                grant_payload["exz_gen"] = stamp.get("exz", 0)
-                grant_payload["dpa_gen"] = stamp.get("dpa", 0)
-
-                grant_payload[AUTH_CONTEXT_KEY] = build_auth_context(
-                    channel_type=channel_type or "GAA",
-                    pal_license_exp=pal_exp,
-                    pal_id=str(pal_id) if pal_id else None,
-                )
-                db.add(
-                    Grant(
-                        grant_id=grant_id,
-                        cbsd_pk=cbsd.id,
-                        cbsd_id=cbsd_id,
-                        channel_type=channel_type,
-                        low_frequency=low,
-                        high_frequency=high,
-                        max_eirp=max_eirp,
-                        grant_expire_time=expire,
-                        transmit_expire_time=tx_expire,
-                        heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
-                        lifecycle_state=GrantState.GRANTED.value,
-                        grant_json=json.dumps(grant_payload),
+                    grant_id = f"grant/{uuid.uuid4().hex}"
+                    expire = _grant_expire_time(pal_exp)
+                    tx_expire = compute_transmit_expire_time(
+                        db,
+                        cbsd,
+                        expire,
+                        low_hz=int(low),
+                        high_hz=int(high),
                     )
-                )
-                pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))
-                responses.append(
-                    {
-                        "cbsdId": cbsd_id,
-                        "grantId": grant_id,
-                        "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "transmitExpireTime": fmt_transmit_expire(tx_expire),
-                        "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
-                        "channelType": channel_type,
-                        "response": {"responseCode": SUCCESS},
-                    }
-                )
-            finally:
-                db.commit()
+
+                    stamp = grant_sync_stamp(db)
+                    grant_payload = dict(req) if isinstance(req, dict) else {}
+                    grant_payload["fss_gen"] = stamp.get("fss", 0)
+                    grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
+                    grant_payload["exz_gen"] = stamp.get("exz", 0)
+                    grant_payload["dpa_gen"] = stamp.get("dpa", 0)
+
+                    grant_payload[AUTH_CONTEXT_KEY] = build_auth_context(
+                        channel_type=channel_type or "GAA",
+                        pal_license_exp=pal_exp,
+                        pal_id=str(pal_id) if pal_id else None,
+                    )
+                    db.add(
+                        Grant(
+                            grant_id=grant_id,
+                            cbsd_pk=cbsd.id,
+                            cbsd_id=cbsd_id,
+                            channel_type=channel_type,
+                            low_frequency=low,
+                            high_frequency=high,
+                            max_eirp=max_eirp,
+                            grant_expire_time=expire,
+                            transmit_expire_time=tx_expire,
+                            heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
+                            lifecycle_state=GrantState.GRANTED.value,
+                            grant_json=json.dumps(grant_payload),
+                        )
+                    )
+                    pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))
+                    responses.append(
+                        {
+                            "cbsdId": cbsd_id,
+                            "grantId": grant_id,
+                            "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "transmitExpireTime": fmt_transmit_expire(tx_expire),
+                            "heartbeatInterval": HEARTBEAT_INTERVAL_SEC,
+                            "channelType": channel_type,
+                            "response": {"responseCode": SUCCESS},
+                        }
+                    )
+                finally:
+                    db.commit()
 
     return responses

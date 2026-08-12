@@ -22,7 +22,11 @@ from sqlalchemy.orm import Session
 
 from models.models import AdminInjectedData, Cbsd, Grant, PeerFadRecord
 from services.clock import utc_now
-from services.concurrency import acquire_cpas_pipeline_xact_lock
+from services.concurrency import (
+    acquire_cpas_pipeline_xact_lock,
+    acquire_iap_admission_xact_lock,
+    exclusive_iap_admission,
+)
 from services.fad_client_service import run_peer_fad_sync
 from services.fad_service import create_full_activity_dump, fad_cbsd_id
 from services.meas_report import clear_admin_flags, set_admin_flag
@@ -82,10 +86,20 @@ class CpasSnapshot:
     # Protection entity payloads at freeze time: (kind, record_id, data_json).
     # IAP ProtectionPoints are built from this set (not live inject mid-run).
     protection_records: tuple[tuple[str, str, str], ...] = ()
+    # Peer + injection generation fingerprint at freeze (stamped on success).
+    authorization_generation: dict[str, Any] = field(default_factory=dict)
 
 
 class CpasRfEvaluationError(Exception):
     """Required CPAS RF/DPA evaluation failed; pipeline must abort (no silent skip)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class CpasGenerationDriftError(Exception):
+    """Peer/protection generation changed after freeze; refuse stale apply/stamp."""
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -379,6 +393,9 @@ def freeze_cpas_snapshot(
     except (ExclusionZoneError, ExclusionZoneUnavailable) as exc:
         raise CpasRfEvaluationError(f"CPAS EXZ freeze failed: {exc}") from exc
 
+    from services.iap.admission import current_generation_fingerprint
+
+    auth_gen = current_generation_fingerprint(db)
     frozen_locals = tuple(local_grants)
     return CpasSnapshot(
         frozen_at=utc_now().replace(microsecond=0).isoformat(),
@@ -388,6 +405,10 @@ def freeze_cpas_snapshot(
         peer_records=peer_records,
         local_grants=frozen_locals,
         protection_records=protection_records,
+        authorization_generation={
+            "peer_generations": dict(auth_gen.get("peer_generations") or {}),
+            "injection_generations": dict(auth_gen.get("injection_generations") or {}),
+        },
     )
 
 
@@ -826,27 +847,115 @@ def _dialect_name(db: Session) -> str:
     return bind.dialect.name
 
 
+def _authorization_generation_matches(
+    frozen: dict[str, Any], live: dict[str, Any]
+) -> bool:
+    return (
+        frozen.get("peer_generations") == live.get("peer_generations")
+        and frozen.get("injection_generations") == live.get("injection_generations")
+    )
+
+
 def _run_pipeline_critical_section(
-    db: Session, snapshot: CpasSnapshot
-) -> tuple[int, int, list[CpasDecision]]:
-    """Re-evaluate under lock, apply decisions, publish FAD — one durable outcome."""
-    acquire_cpas_pipeline_xact_lock(db)
-    # Recompute under coordination so TOCTOU after freeze cannot widen the set;
-    # still constrained to snapshot.active_grant_pks.
-    decisions = evaluate_cpas_protections(db, snapshot)
-    terminated = apply_cpas_decisions(db, decisions)
-    dump = create_full_activity_dump(db)
-    return terminated, int(dump.id), decisions
+    db: Session,
+    snapshot: CpasSnapshot,
+    *,
+    stages_so_far: list[dict[str, Any]] | None = None,
+) -> tuple[int, int, list[CpasDecision], dict[str, Any]]:
+    """Revalidate generation, apply, publish FAD, stamp admission — one transaction.
+
+    Lock order: IAP admission → CPAS pipeline → FAD publish (inside create dump).
+    FAD is flushed without committing so grant decisions + dump + admission marker
+    share one commit under IAP serialization.
+    """
+    from services.cpas_reevaluation import (
+        clear_cpas_reevaluation_required,
+        mark_cpas_reevaluation_required,
+    )
+    from services.iap.admission import (
+        current_generation_fingerprint,
+        record_iap_admission_generation,
+    )
+
+    with exclusive_iap_admission():
+        acquire_iap_admission_xact_lock(db)
+        acquire_cpas_pipeline_xact_lock(db)
+
+        live = current_generation_fingerprint(db)
+        if not _authorization_generation_matches(
+            snapshot.authorization_generation, live
+        ):
+            mark_cpas_reevaluation_required(
+                db,
+                reason="generation_drift_before_cpas_apply",
+                generation={
+                    "frozen": snapshot.authorization_generation,
+                    "live": {
+                        "peer_generations": live.get("peer_generations"),
+                        "injection_generations": live.get("injection_generations"),
+                    },
+                },
+            )
+            db.commit()
+            raise CpasGenerationDriftError(
+                "CPAS refused stale apply: peer/protection generation drifted "
+                "after freeze"
+            )
+
+        # Recompute under coordination so TOCTOU after freeze cannot widen the set;
+        # still constrained to snapshot.active_grant_pks.
+        decisions = evaluate_cpas_protections(db, snapshot)
+        terminated = apply_cpas_decisions(db, decisions)
+        dump = create_full_activity_dump(db, commit=False)
+
+        from services.cpas_schedule_service import mark_scheduled_success_if_applicable
+
+        mark_scheduled_success_if_applicable(db)
+        clear_cpas_reevaluation_required(db)
+        # Stamp the exact generation frozen/evaluated — not a newer live map.
+        admission_gen = record_iap_admission_generation(
+            db, fingerprint=snapshot.authorization_generation
+        )
+        stage_names = [s["name"] for s in (stages_so_far or [])]
+        stage_names.extend(
+            ["apply_decisions_and_generate_fad", "finalize_status_audit"]
+        )
+        decision_rows = [
+            {
+                "grant_id": d.grant_id,
+                "cbsd_id": d.cbsd_id,
+                "reason": d.reason,
+            }
+            for d in decisions
+        ]
+        _append_cpas_audit(
+            db,
+            "cpas_completed",
+            {
+                "dumpId": int(dump.id),
+                "terminatedGrants": terminated,
+                "stages": stage_names,
+                "decisions": decision_rows,
+                "iapAdmissionGeneration": {
+                    "peer_generations": admission_gen.get("peer_generations"),
+                    "injection_generations": admission_gen.get(
+                        "injection_generations"
+                    ),
+                },
+            },
+        )
+        db.commit()
+        return terminated, int(dump.id), decisions, admission_gen
 
 
 def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
     """Run the transactional CPAS pipeline; return a structured stage report.
 
-    Peer/database sync may commit durable inputs. Grant terminations and the new
-    local FAD are applied in one critical section so a failed FAD publish rolls
-    back the grant decisions. Schedule success is marked only after full success.
+    Peer/database sync may commit durable inputs. Grant terminations, the new
+    local FAD, and the IAP admission-generation stamp are applied in one critical
+    section under IAP admission serialization so a failed FAD publish rolls back
+    the grant decisions and no concurrent Grant can observe a partial baseline.
     """
-    from services.cpas_schedule_service import mark_scheduled_success_if_applicable
     from services.database_sync_service import sync_injected_database_urls
 
     result: dict[str, Any] = {
@@ -886,12 +995,16 @@ def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
 
         if _dialect_name(db) == "sqlite":
             with _cpas_pipeline_lock:
-                terminated, dump_id, decisions = _run_pipeline_critical_section(
-                    db, snapshot
+                terminated, dump_id, decisions, admission_gen = (
+                    _run_pipeline_critical_section(
+                        db, snapshot, stages_so_far=list(result["stages"])
+                    )
                 )
         else:
-            terminated, dump_id, decisions = _run_pipeline_critical_section(
-                db, snapshot
+            terminated, dump_id, decisions, admission_gen = (
+                _run_pipeline_critical_section(
+                    db, snapshot, stages_so_far=list(result["stages"])
+                )
             )
 
         result["decisions"] = [
@@ -909,23 +1022,11 @@ def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
             dump_id=dump_id,
             terminated=terminated,
             decision_count=len(decisions),
-        )
-
-        mark_scheduled_success_if_applicable(db)
-        from services.cpas_reevaluation import clear_cpas_reevaluation_required
-
-        clear_cpas_reevaluation_required(db)
-        _append_cpas_audit(
-            db,
-            "cpas_completed",
-            {
-                "dumpId": dump_id,
-                "terminatedGrants": terminated,
-                "stages": [s["name"] for s in result["stages"]],
-                "decisions": result["decisions"],
+            iap_admission_generation={
+                "peer_generations": admission_gen.get("peer_generations"),
+                "injection_generations": admission_gen.get("injection_generations"),
             },
         )
-        db.commit()
         result["ok"] = True
         _stage("finalize_status_audit")
         logger.info(

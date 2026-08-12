@@ -123,27 +123,39 @@ def replace_pal_records(
     if not isinstance(records, list):
         raise ValueError("pal_payload_must_be_list_or_object")
 
-    keep_ids: set[str] = set()
-    count = 0
-    for rec in records:
-        if not isinstance(rec, dict):
-            continue
-        row = upsert_pal_record(db, rec, commit=False)
-        if row is None:
-            continue
-        keep_ids.add(row.pal_id)
-        count += 1
-
-    for row in list(db.query(PalRecord).all()):
-        if row.pal_id not in keep_ids:
-            db.delete(row)
-
     from services.data_injection_service import bump_injection_generation
 
-    bump_injection_generation(db, "pal")
+    def _mutate() -> int:
+        keep_ids: set[str] = set()
+        count = 0
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            row = upsert_pal_record(db, rec, commit=False)
+            if row is None:
+                continue
+            keep_ids.add(row.pal_id)
+            count += 1
+
+        for row in list(db.query(PalRecord).all()):
+            if row.pal_id not in keep_ids:
+                db.delete(row)
+
+        bump_injection_generation(db, "pal")
+        return count
+
     if commit:
-        db.commit()
-    return count
+        from services.concurrency import (
+            acquire_iap_admission_xact_lock,
+            exclusive_iap_admission,
+        )
+
+        with exclusive_iap_admission():
+            acquire_iap_admission_xact_lock(db)
+            count = _mutate()
+            db.commit()
+        return count
+    return _mutate()
 
 
 def revoke_pal_record(db: Session, pal_id: str, *, commit: bool = True) -> bool:
@@ -151,12 +163,26 @@ def revoke_pal_record(db: Session, pal_id: str, *, commit: bool = True) -> bool:
     row = db.query(PalRecord).filter_by(pal_id=pal_id).first()
     if row is None:
         return False
-    db.delete(row)
     from services.data_injection_service import bump_injection_generation
 
-    bump_injection_generation(db, "pal")
     if commit:
-        db.commit()
+        from services.concurrency import (
+            acquire_iap_admission_xact_lock,
+            exclusive_iap_admission,
+        )
+
+        with exclusive_iap_admission():
+            acquire_iap_admission_xact_lock(db)
+            # Re-load under lock in case of concurrent revoke.
+            row = db.query(PalRecord).filter_by(pal_id=pal_id).first()
+            if row is None:
+                return False
+            db.delete(row)
+            bump_injection_generation(db, "pal")
+            db.commit()
+        return True
+    db.delete(row)
+    bump_injection_generation(db, "pal")
     return True
 
 

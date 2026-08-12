@@ -463,8 +463,10 @@ def sync_one_peer(
 ) -> FadGenerationSnapshot | None:
     """Fetch, validate and atomically apply one peer FAD.
 
-    Heavy network I/O runs before the DB critical section. On failure the session
-    is rolled back so the previous peer snapshot remains. Repeating the same
+    Heavy network I/O runs before the DB critical section. Apply serializes
+    against IAP grant admission (process + PG advisory) so Grants cannot mix
+    marker generation N with peer records N+1. On failure the session is
+    rolled back so the previous peer snapshot remains. Repeating the same
     generation is a no-op only when durable peer records already match (P5-004).
     """
     if not (peer.url or "").strip():
@@ -474,19 +476,27 @@ def sync_one_peer(
     http = client or build_fad_httpx_client()
     try:
         snapshot = fetch_peer_generation(http, peer)
-        locked = _lock_peer_row(db, peer.id)
-        if locked is None:
-            raise FadClientError(f"peer SAS id={peer.id} disappeared during sync")
-        if peer_generation_already_applied(db, locked, snapshot):
-            logger.info(
-                "Peer FAD generation unchanged peer_id=%s generation=%s; skip apply",
-                peer.id,
-                snapshot.generation_datetime,
-            )
-            db.commit()  # release row lock
-            return snapshot
-        apply_peer_generation(db, snapshot)
-        db.commit()
+        from services.concurrency import (
+            acquire_iap_admission_xact_lock,
+            exclusive_iap_admission,
+        )
+
+        # Lock order: IAP admission → peer row (never take peer then IAP).
+        with exclusive_iap_admission():
+            acquire_iap_admission_xact_lock(db)
+            locked = _lock_peer_row(db, peer.id)
+            if locked is None:
+                raise FadClientError(f"peer SAS id={peer.id} disappeared during sync")
+            if peer_generation_already_applied(db, locked, snapshot):
+                logger.info(
+                    "Peer FAD generation unchanged peer_id=%s generation=%s; skip apply",
+                    peer.id,
+                    snapshot.generation_datetime,
+                )
+                db.commit()  # release row + IAP advisory
+                return snapshot
+            apply_peer_generation(db, snapshot)
+            db.commit()
         logger.info(
             "Peer FAD synced peer_id=%s generation=%s records=%s files=%s",
             peer.id,

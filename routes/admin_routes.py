@@ -332,13 +332,23 @@ async def inject_esc_sensor(request: Request, db: Session = Depends(get_db)):
     record = dict(record)
     record_id = rewrite_esc_sensor_id(record.get("id"))
     record["id"] = record_id
-    existing = db.query(EscSensor).filter_by(record_id=record_id).first()
-    payload = json.dumps(record)
-    if existing:
-        existing.data_json = payload
-    else:
-        db.add(EscSensor(record_id=record_id, data_json=payload))
-    db.commit()
+    from services.concurrency import (
+        acquire_iap_admission_xact_lock,
+        exclusive_iap_admission,
+    )
+    from services.data_injection_service import bump_injection_generation
+
+    with exclusive_iap_admission():
+        acquire_iap_admission_xact_lock(db)
+        existing = db.query(EscSensor).filter_by(record_id=record_id).first()
+        payload = json.dumps(record)
+        if existing:
+            existing.data_json = payload
+        else:
+            db.add(EscSensor(record_id=record_id, data_json=payload))
+        # Invalidate coherent admission markers that predate this ESC geometry.
+        bump_injection_generation(db, "esc_sensor")
+        db.commit()
     return _empty_ok()
 
 

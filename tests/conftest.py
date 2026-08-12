@@ -18,6 +18,18 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+# Prefer the pinned WInnForum harness checkout when present so IAP/ESC coupling
+# unit paths (and grant-time admission) can resolve reference_models locally.
+_PINNED_HARNESS = (
+    _ROOT
+    / ".cache"
+    / "winnforum-harness-928c3150adf7b31e53a96b695bf1fbdd3284ecb2"
+    / "src"
+    / "harness"
+)
+if _PINNED_HARNESS.is_dir():
+    os.environ.setdefault("SAS_HARNESS_DIR", str(_PINNED_HARNESS))
+
 # Import after sys.path fix.
 import database  # noqa: E402
 from database import init_db, rebind_engine  # noqa: E402

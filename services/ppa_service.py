@@ -586,14 +586,24 @@ def create_ppa(db: Session, body: dict[str, Any]) -> str:
 
     set_ppa_creation_status(db, completed=False, with_error=False)
 
+    from services.concurrency import (
+        acquire_iap_admission_xact_lock,
+        exclusive_iap_admission,
+    )
+    from services.data_injection_service import bump_injection_generation
+
     try:
         ppa_id, record = _validate_and_build(db, body)
-        _persist_zone(db, record)
-        set_ppa_creation_status(
-            db, completed=True, with_error=False, ppa_id=ppa_id
-        )
-        _append_audit(db, "create_ppa_ok", {"ppaId": ppa_id})
-        db.commit()
+        # IAP admission ↔ PPA zone: bump generation so old markers become incoherent.
+        with exclusive_iap_admission():
+            acquire_iap_admission_xact_lock(db)
+            _persist_zone(db, record)
+            bump_injection_generation(db, KIND_ZONE)
+            set_ppa_creation_status(
+                db, completed=True, with_error=False, ppa_id=ppa_id
+            )
+            _append_audit(db, "create_ppa_ok", {"ppaId": ppa_id})
+            db.commit()
         return ppa_id
     except PpaCreationError as exc:
         set_ppa_creation_status(

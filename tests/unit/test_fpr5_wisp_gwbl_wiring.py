@@ -143,10 +143,25 @@ def test_b_protected_grant_blocked_400(db_session):
     assert resp[0]["response"]["responseCode"] == INTERFERENCE
 
 
-def test_c_non_overlapping_frequency_not_blocked(db_session):
+def test_c_non_overlapping_frequency_not_blocked(db_session, monkeypatch):
+    """FSS↔GWBL boolean gate does not block 3550–3560 MHz (only 3650–3700).
+
+    Grant-time IAP may still constrain co-located FSS-blocking independently;
+    this test isolates the FPR_5 boolean by disabling IAP admission.
+    """
+    monkeypatch.setattr(
+        "services.iap.admission.proposed_grant_violates_iap",
+        lambda *args, **kwargs: False,
+    )
     cbsd = _located_cbsd(db_session)
     assert upsert_fss_record(db_session, _FSS_NEAR) is True
     assert upsert_wisp_record(db_session, _GWBL_POINT) is True
+    assert (
+        grant_blocked_by_fss_gwbl(
+            db_session, LAT, LON, 3_550_000_000, 3_560_000_000
+        )
+        is False
+    )
     resp = process_grant(
         db_session,
         [
@@ -161,7 +176,11 @@ def test_c_non_overlapping_frequency_not_blocked(db_session):
     assert resp[0]["response"]["responseCode"] == SUCCESS
 
 
-def test_c_far_location_not_blocked(db_session):
+def test_c_far_location_not_blocked(db_session, monkeypatch):
+    monkeypatch.setattr(
+        "services.iap.admission.proposed_grant_violates_iap",
+        lambda *args, **kwargs: False,
+    )
     cbsd = make_cbsd(
         db_session,
         registration={
