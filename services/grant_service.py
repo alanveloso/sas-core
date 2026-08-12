@@ -322,6 +322,21 @@ def process_grant(
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
+            # GWPZ: CBSD inside injected WISP zone + overlapping freq → 400.
+            from services.gwpz_protection import (
+                GwpzProtectionError,
+                grant_blocked_by_gwpz,
+            )
+
+            try:
+                if grant_blocked_by_gwpz(db, lat, lon, low, high):
+                    responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                    continue
+            except GwpzProtectionError:
+                # Fail-closed: malformed GWPZ prevents required determination.
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
             # QPR: quiet-zone / FCC / Table Mountain / configurable protected areas.
             from services.quiet_zone_service import grant_blocked_by_quiet_zone
 

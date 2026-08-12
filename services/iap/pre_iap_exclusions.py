@@ -28,12 +28,16 @@ from services.exclusion_zone_service import (
     ExclusionZoneError,
     point_hits_exclusion_records,
 )
-from services.geometry import haversine_m, within_geojson_buffer_m
+from services.geometry import haversine_m
+from services.gwpz_protection import (
+    GWPZ_BUFFER_M,
+    gwpz_blocks,
+    wisps_from_protection_records,
+)
 from services.iap.protection_points import (
     FSS_TTC_LOW_HZ,
     KIND_FSS,
     KIND_GWBL,
-    KIND_WISP,
     ProtectionEntityError,
     parse_fss_ttc,
 )
@@ -71,29 +75,6 @@ def _frozen_exz_records(
     return _payloads(protection_records, KIND_EXCLUSION_ZONE) + _payloads(
         protection_records, KIND_NTIA_ZONES
     )
-
-
-def _wisp_freq(payload: dict[str, Any]) -> tuple[int, int] | None:
-    record = payload.get("record")
-    if not isinstance(record, dict):
-        return None
-    deps = record.get("deploymentParam")
-    if not isinstance(deps, list) or not deps or not isinstance(deps[0], dict):
-        return None
-    fr = (deps[0].get("operationParam") or {}).get("operationFrequencyRange") or {}
-    try:
-        low = int(fr["lowFrequency"])
-        high = int(fr["highFrequency"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    if low >= high:
-        return None
-    return low, high
-
-
-def _wisp_zone(payload: dict[str, Any]) -> dict[str, Any] | None:
-    zone = payload.get("zone")
-    return zone if isinstance(zone, dict) else None
 
 
 def _fss_lat_lon_freq(
@@ -134,7 +115,7 @@ def evaluate_pre_iap_exclusions(
     db: Session | None = None,
 ) -> list[tuple[Any, str]]:
     """Return ``(frozen_grant, reason)`` pairs that must terminate before IAP."""
-    wisps = _payloads(protection_records, KIND_WISP)
+    wisps = wisps_from_protection_records(protection_records)
     fsses = _payloads(protection_records, KIND_FSS)
     gwbles = _gwbl_points(_payloads(protection_records, KIND_GWBL))
     exz_records = _frozen_exz_records(protection_records)
@@ -181,18 +162,22 @@ def evaluate_pre_iap_exclusions(
             if q_reason is not None:
                 reason = f"quiet_zone_{q_reason}"
 
-        for wisp in wisps:
-            if reason is not None:
-                break
-            zone = _wisp_zone(wisp)
-            fr = _wisp_freq(wisp)
-            if zone is None or fr is None:
-                continue
-            if not _freq_overlap(low, high, fr[0], fr[1]):
-                continue
-            if within_geojson_buffer_m(float(lat), float(lon), zone, 0.0):
-                reason = "gwpz_exclusion"
-                break
+        if reason is None:
+            for wisp in wisps:
+                # Indeterminate WISP → skip (historical pre-IAP); only True blocks.
+                if (
+                    gwpz_blocks(
+                        float(lat),
+                        float(lon),
+                        low,
+                        high,
+                        wisp,
+                        buffer_m=GWPZ_BUFFER_M,
+                    )
+                    is True
+                ):
+                    reason = "gwpz_exclusion"
+                    break
 
         if reason is None and gwbles and _freq_overlap(
             low, high, FSS_GWBL_LOW_HZ, FSS_GWBL_HIGH_HZ
