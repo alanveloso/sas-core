@@ -167,6 +167,25 @@ def test_heartbeat_rejects_relinquished_and_unsync(db_session):
     assert dead.response_code == 103
 
 
+def test_heartbeat_operation_allowed_terminated_is_500_not_103(db_session):
+    cbsd = make_cbsd(db_session)
+    grant = make_grant(
+        db_session,
+        cbsd,
+        authorized=False,
+        lifecycle_state="GRANTED",
+    )
+    grant.grant_expire_time = datetime.utcnow() + timedelta(hours=1)
+    db_session.commit()
+
+    apply_grant_state(grant, GrantState.TERMINATED)
+    db_session.commit()
+    outcome = heartbeat_operation_allowed(grant, operation_state="GRANTED")
+    assert outcome.ok is False
+    assert outcome.response_code == 500
+    assert outcome.from_state == GrantState.TERMINATED.value
+
+
 def test_relinquishment_sets_relinquished_state(db_session):
     cbsd = make_cbsd(db_session)
     grant = make_grant(

@@ -217,8 +217,18 @@ def process_heartbeat(
                 life = heartbeat_operation_allowed(grant, operation_state=str(op_state))
                 if not life.ok:
                     if life.response_code == INVALID_PARAM:
-                        # Terminal relinquished/terminated: do not echo grantId.
+                        # Relinquished / unresolvable terminal: do not echo grantId.
                         responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
+                    elif life.response_code == TERMINATED_GRANT:
+                        # Existing TERMINATED grant: 500 with original grantId (HBT_9 / FDB_1).
+                        # Do not authorize, renew, or mutate persisted termination.
+                        responses.append(
+                            _base(
+                                TERMINATED_GRANT,
+                                cbsd_id=cbsd_id,
+                                grant_id=grant_id,
+                            )
+                        )
                     elif life.response_code == SUSPENDED_GRANT:
                         responses.append(
                             _base(

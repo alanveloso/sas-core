@@ -428,7 +428,17 @@ def heartbeat_operation_allowed(
 ) -> TransitionOutcome:
     """Gate heartbeat against lifecycle + client operationState sync rules."""
     current = resolve_grant_state(grant, now=now)
-    if current in (GrantState.TERMINATED, GrantState.RELINQUISHED):
+    # Known TERMINATED grant (CPAS/lifecycle): heartbeat reports 500, not 103.
+    # RELINQUISHED remains invalid-value (103). Do not collapse D/E into "invalid".
+    if current is GrantState.TERMINATED:
+        return TransitionOutcome(
+            ok=False,
+            response_code=TERMINATED_GRANT,
+            from_state=current.value,
+            to_state=GrantState.TERMINATED.value,
+            detail="already_terminated",
+        )
+    if current is GrantState.RELINQUISHED:
         return TransitionOutcome(
             ok=False,
             response_code=INVALID_PARAM,
