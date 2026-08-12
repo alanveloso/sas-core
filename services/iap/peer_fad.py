@@ -12,18 +12,51 @@ def peer_grant_rf_id(source_sas_id: str | int, grant_id: str) -> str:
     return f"peer/{source_sas_id}/{grant_id}"
 
 
+def _peer_registration(record: dict[str, Any]) -> dict[str, Any] | None:
+    reg = record.get("registration")
+    return reg if isinstance(reg, dict) else None
+
+
+def _peer_installation_param(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve installationParam without mutating the FAD record.
+
+    Precedence: ``registration.installationParam`` when it is a dict; else
+    top-level ``installationParam`` (compatibility / incomplete nested).
+    """
+    reg = _peer_registration(record)
+    if reg is not None:
+        install = reg.get("installationParam")
+        if isinstance(install, dict):
+            return install
+    install = record.get("installationParam")
+    return install if isinstance(install, dict) else None
+
+
+def _peer_cbsd_category_raw(record: dict[str, Any]) -> Any:
+    """Resolve cbsdCategory: registration key wins when present, else top-level."""
+    reg = _peer_registration(record)
+    if reg is not None and "cbsdCategory" in reg:
+        return reg.get("cbsdCategory")
+    return record.get("cbsdCategory")
+
+
 def grant_rf_infos_from_peer_cbsd_record(
     record: dict[str, Any],
     *,
     source_sas_id: str | int,
 ) -> list[GrantRfInfo]:
-    """Parse one FAD CBSD record into peer ``GrantRfInfo`` rows (may be empty)."""
+    """Parse one FAD CBSD record into peer ``GrantRfInfo`` rows (may be empty).
+
+    Official WInnForum peer FAD CBSDs nest RF registration under
+    ``registration`` (``installationParam``, ``cbsdCategory``). Top-level
+    fields remain supported for compatibility.
+    """
     src = str(source_sas_id)
     cbsd_id = str(record.get("id") or "").strip()
     if not cbsd_id:
         return []
-    install = record.get("installationParam")
-    if not isinstance(install, dict):
+    install = _peer_installation_param(record)
+    if install is None:
         return []
     try:
         lat = float(install["latitude"])
@@ -33,7 +66,7 @@ def grant_rf_infos_from_peer_cbsd_record(
     height = float(install.get("height") or 0.0)
     height_type = install.get("heightType") or "AGL"
     indoor = bool(install.get("indoorDeployment"))
-    raw_cat = record.get("cbsdCategory")
+    raw_cat = _peer_cbsd_category_raw(record)
     if raw_cat is None or str(raw_cat).strip() == "":
         category: str | None = None
     else:
