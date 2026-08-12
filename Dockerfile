@@ -14,13 +14,18 @@ RUN apt-get update \
         ca-certificates \
         curl \
         libpq5 \
+        libgeos-c1v5 \
+        libgeos-dev \
+        gcc \
+        g++ \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.lock.txt ./requirements.lock.txt
 # Keep pip itself reproducible for lock installs (P0-003 review).
 RUN pip install --upgrade 'pip==25.2' \
-    && pip install -r requirements.lock.txt
-
+    && pip install -r requirements.lock.txt \
+    && apt-get purge -y --auto-remove gcc g++ libgeos-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY . .
 
 EXPOSE 9000 9001

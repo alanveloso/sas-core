@@ -92,7 +92,12 @@ def test_create_ppa_success_persists_zone_and_normative_id(db_session):
     assert record["usage"] == "PPA"
     assert record["ppaInfo"]["palId"] == [pal.pal_id]
     assert cbsd.cbsd_id in record["ppaInfo"]["cbsdReferenceId"]
-    assert record["zone"]["type"] == "Polygon"
+    assert record["zone"]["type"] == "FeatureCollection"
+    assert len(record["zone"]["features"]) == 1
+    assert record["zone"]["features"][0]["geometry"]["type"] in {
+        "Polygon",
+        "MultiPolygon",
+    }
 
 
 def test_create_ppa_unknown_pal_sets_with_error(db_session):

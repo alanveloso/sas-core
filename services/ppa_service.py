@@ -517,11 +517,27 @@ def _validate_and_build(
     raw_id = f"zone/ppa/pending/{pal_ids[0]}/{token}"
     ppa_id = rewrite_zone_id(raw_id, fallback_suffix=f"{pal_ids[0]}/{token}")
 
-    rings = iter_geojson_rings(contour)
-    if len(rings) == 1:
-        zone_geom: dict[str, Any] = {"type": "Polygon", "coordinates": [rings[0]]}
-    else:
-        zone_geom = contour
+    # Official PCR / FAD: zone is FeatureCollection with exactly one Feature
+    # whose geometry is Polygon or MultiPolygon (never N per-CBSD features).
+    zone_fc = _as_feature_collection(contour)
+    feats = zone_fc.get("features") if isinstance(zone_fc, dict) else None
+    if not isinstance(feats, list) or len(feats) != 1:
+        raise PpaCreationError("ppa_zone_must_be_single_feature")
+    geom = feats[0].get("geometry") if isinstance(feats[0], dict) else None
+    if not isinstance(geom, dict) or geom.get("type") not in {"Polygon", "MultiPolygon"}:
+        raise PpaCreationError("ppa_zone_invalid_geometry")
+    if not iter_geojson_rings({"type": "FeatureCollection", "features": feats}):
+        raise PpaCreationError("ppa_zone_empty_geometry")
+    zone_geom: dict[str, Any] = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": dict(feats[0].get("properties") or {}),
+                "geometry": geom,
+            }
+        ],
+    }
 
     begin = _utc_now_iso()[:10]
     expiration = None

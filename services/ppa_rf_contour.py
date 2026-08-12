@@ -9,13 +9,14 @@ Implements the reference-model semantics from
 * maximum allowable EIRP (Cat A 30 / Cat B 47 dBm/10 MHz, or
   ``installationParam.eirpCapability`` when present);
 * Hamming-smoothed radial distances 0.2…40 km;
-* union of CBSD contours (MultiPolygon / FeatureCollection without shapely).
+* true geometric union of CBSD contours → one Feature
+  (Polygon or MultiPolygon) via Shapely ``unary_union``.
 
 Does **not** create a parallel propagation engine: callers inject
 ``PropagationEngines`` from ``load_reference_engines`` (or test doubles).
 
-Fail-closed: missing engines / hybrid / required install params →
-``PpaRfContourError`` (never silent hull fallback).
+Fail-closed: missing engines / hybrid / Shapely / required install params →
+``PpaRfContourError`` (never silent hull / first-polygon fallback).
 """
 
 from __future__ import annotations
@@ -219,31 +220,104 @@ def cbsd_rf_contour_ring(
     return ring
 
 
-def _ring_feature(ring: list[list[float]]) -> dict[str, Any]:
+def union_geojson_polygons(geometries: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """True topological union of Polygon/MultiPolygon GeoJSON dicts.
+
+    Returns a GeoJSON geometry dict of type ``Polygon`` or ``MultiPolygon``.
+    Fail-closed: never convex-hull, never pick-first, never drop components.
+    Uses the product runtime Shapely dependency (not the WInnForum harness).
+    """
+    if not geometries:
+        raise PpaRfContourError("empty_union_input")
+    try:
+        from shapely.geometry import MultiPolygon, mapping, shape
+        from shapely.ops import unary_union
+    except ImportError as exc:
+        raise PpaRfContourError("shapely_unavailable") from exc
+
+    polys: list[Any] = []
+    for geom in geometries:
+        if not isinstance(geom, dict):
+            raise PpaRfContourError("invalid_union_geometry")
+        gtype = geom.get("type")
+        if gtype not in {"Polygon", "MultiPolygon"}:
+            raise PpaRfContourError("invalid_union_geometry")
+        try:
+            sh = shape(geom)
+        except (TypeError, ValueError) as exc:
+            raise PpaRfContourError("invalid_union_geometry") from exc
+        # Match reference contour hygiene (buffer(0)); not a hull substitute.
+        if not sh.is_valid:
+            sh = sh.buffer(0)
+        if sh.is_empty:
+            raise PpaRfContourError("empty_union_geometry")
+        if sh.geom_type == "Polygon":
+            if len(sh.exterior.coords) < 4:
+                raise PpaRfContourError("degenerate_union_geometry")
+            polys.append(sh)
+        elif sh.geom_type == "MultiPolygon":
+            for part in sh.geoms:
+                if part.is_empty or len(part.exterior.coords) < 4:
+                    raise PpaRfContourError("degenerate_union_geometry")
+                polys.append(part)
+        else:
+            raise PpaRfContourError(f"non_polygonal_geometry:{sh.geom_type}")
+
+    try:
+        united = unary_union(polys)
+    except Exception as exc:  # noqa: BLE001
+        raise PpaRfContourError(f"union_failed:{type(exc).__name__}") from exc
+
+    if united is None or united.is_empty:
+        raise PpaRfContourError("empty_union_result")
+
+    if united.geom_type == "GeometryCollection":
+        flat: list[Any] = []
+        for part in united.geoms:
+            if part.geom_type == "Polygon" and not part.is_empty:
+                flat.append(part)
+            elif part.geom_type == "MultiPolygon":
+                flat.extend([p for p in part.geoms if not p.is_empty])
+        if not flat:
+            raise PpaRfContourError("non_polygonal_union_result")
+        united = flat[0] if len(flat) == 1 else MultiPolygon(flat)
+
+    if united.geom_type not in {"Polygon", "MultiPolygon"}:
+        raise PpaRfContourError(f"non_polygonal_union_result:{united.geom_type}")
+
+    return mapping(united)
+
+
+def _union_feature(geometry: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "Feature",
         "properties": {"source": "ppa_rf_contour"},
-        "geometry": {"type": "Polygon", "coordinates": [ring]},
+        "geometry": geometry,
     }
 
 
 def maximum_rf_ppa_contour(
     devices: Sequence[dict[str, Any]], *, engines: PpaRfEngines
 ) -> dict[str, Any]:
-    """Union of per-CBSD RF contours as a GeoJSON FeatureCollection.
+    """Union of per-CBSD RF contours as a one-feature GeoJSON FeatureCollection.
 
-    Without shapely, the union is represented as multiple Polygon features.
-    Point-in-contour checks treat the collection as a set-union (any ring).
+    Each CBSD produces an independent RF ring; rings are then topologically
+    unioned into a single ``Polygon`` or ``MultiPolygon`` feature. Never returns
+    one Feature per CBSD.
     """
     if not devices:
         raise PpaRfContourError("empty_cluster")
-    features: list[dict[str, Any]] = []
+    polygons: list[dict[str, Any]] = []
     for device in devices:
         if not isinstance(device, dict):
             raise PpaRfContourError("invalid_device")
         ring = cbsd_rf_contour_ring(device, engines=engines)
-        features.append(_ring_feature(ring))
-    return {"type": "FeatureCollection", "features": features}
+        polygons.append({"type": "Polygon", "coordinates": [ring]})
+    geometry = union_geojson_polygons(polygons)
+    return {
+        "type": "FeatureCollection",
+        "features": [_union_feature(geometry)],
+    }
 
 
 def load_default_ppa_rf_engines() -> PpaRfEngines:

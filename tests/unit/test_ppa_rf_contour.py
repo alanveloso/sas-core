@@ -71,7 +71,8 @@ def test_rf_contour_two_cbsds_union_covers_both():
     d1 = _device(lat=39.10, lon=-94.58, eirp=30.0)
     d2 = _device(lat=39.12, lon=-94.58, eirp=30.0)
     fc = maximum_rf_ppa_contour([d1, d2], engines=engines)
-    assert len(fc["features"]) == 2
+    assert len(fc["features"]) == 1
+    assert fc["features"][0]["geometry"]["type"] in {"Polygon", "MultiPolygon"}
     assert point_in_geojson(39.10, -94.58, fc)
     assert point_in_geojson(39.12, -94.58, fc)
 
