@@ -257,23 +257,25 @@ def _apply_exclusion_zone_kml(db: Session, body: bytes) -> None:
     bump_sync_meta(db, "exz")
 
 
-def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
-    """Materialize portal scheduled DPA JSON into DPA activations + movelist.
+def _scheduled_dpa_looks_like_kml(text: str) -> bool:
+    """Deterministic format probe: XML/KML vs JSON object/array."""
+    stripped = text.lstrip("\ufeff \t\r\n")
+    if not stripped:
+        return False
+    if stripped[0] in "{[":
+        return False
+    if stripped[0] == "<":
+        return True
+    return False
 
-    Expected JSON shapes (any one):
-    * ``{"activations":[{"dpaId":...,"frequencyRange":{...}}, ...]}``
-    * ``[{"dpaId":...,"frequencyRange":{...}}, ...]``
-    * ``{"dpaId":...,"frequencyRange":{...}}``
 
-    Uses the existing DPA catalogue/activation domain (no second scheduler).
-    Unknown ``dpaId`` / channel-not-in-catalogue fail closed — same rules as
-    ``activate_dpa`` (no synthetic world geometry). Movelist refresh uses
-    ``refresh_or_fail_closed_movelists``.
-    """
-    from services import dpa_service as dpa_svc
-    from services.federal_db_service import bump_sync_meta
-
-    text = body.decode("utf-8")
+def _apply_scheduled_dpa_json(
+    db: Session,
+    *,
+    text: str,
+    dpa_svc: Any,
+) -> list[tuple[str, Any]]:
+    """Existing JSON activation contract (catalogue must already contain dpaId)."""
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -290,8 +292,7 @@ def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
     if not activations:
         raise DatabaseSyncError("scheduled_dpa_empty_activations")
 
-    # Validate every request against the real catalogue before mutating state.
-    channels: list[tuple[str, dpa_svc.FrequencyRange]] = []
+    channels: list[tuple[str, Any]] = []
     for act in activations:
         dpa_id = str(act.get("dpaId") or "").strip()
         fr = act.get("frequencyRange") or {}
@@ -316,8 +317,84 @@ def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
     _store_injection(
         db,
         "scheduled_dpa",
-        {"raw": text, "activations": activations},
+        {"raw": text, "format": "json", "activations": activations},
     )
+    return channels
+
+
+def _apply_scheduled_dpa_kml(
+    db: Session,
+    *,
+    body: bytes,
+    text: str,
+    dpa_svc: Any,
+) -> list[tuple[str, Any]]:
+    """Official portal SCHEDULED_DPA KML → catalogue upsert + channel activations."""
+    try:
+        definitions = dpa_svc.parse_dpa_kml_bytes(body, source="scheduled_dpa_kml")
+    except ET.ParseError as exc:
+        raise DatabaseSyncError("scheduled_dpa_invalid_kml") from exc
+    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+        raise DatabaseSyncError("scheduled_dpa_invalid_kml") from exc
+    if not definitions:
+        raise DatabaseSyncError("scheduled_dpa_kml_empty")
+
+    dpa_svc.upsert_catalogue_definitions(
+        db, definitions, source_label="scheduled_dpa_kml"
+    )
+
+    channels: list[tuple[str, Any]] = []
+    activation_records: list[dict[str, Any]] = []
+    for definition in definitions:
+        chans = dpa_svc.channelize(definition.freq_low_hz, definition.freq_high_hz)
+        if not chans:
+            raise DatabaseSyncError(
+                f"scheduled_dpa_kml_no_channels:{definition.dpa_id}"
+            )
+        for freq in chans:
+            channels.append((definition.dpa_id, freq))
+            activation_records.append(
+                {
+                    "dpaId": definition.dpa_id,
+                    "frequencyRange": freq.as_dict(),
+                }
+            )
+
+    db.query(AdminInjectedData).filter_by(kind="scheduled_dpa").delete()
+    _store_injection(
+        db,
+        "scheduled_dpa",
+        {
+            "raw": text,
+            "format": "kml",
+            "dpaIds": [d.dpa_id for d in definitions],
+            "activations": activation_records,
+        },
+    )
+    return channels
+
+
+def _apply_scheduled_dpa(db: Session, body: bytes) -> None:
+    """Materialize SCHEDULED_DPA JSON activations or official portal KML.
+
+    JSON shapes (unchanged):
+    * ``{"activations":[{"dpaId":...,"frequencyRange":{...}}, ...]}``
+    * ``[{"dpaId":...,"frequencyRange":{...}}, ...]``
+    * ``{"dpaId":...,"frequencyRange":{...}}``
+
+    KML: NTIA/P-DPA placemarks (same semantic parser as ``load_dpas``).
+    Format selection is deterministic from the payload prefix (JSON vs XML).
+    """
+    from services import dpa_service as dpa_svc
+    from services.federal_db_service import bump_sync_meta
+
+    text = body.decode("utf-8")
+    if _scheduled_dpa_looks_like_kml(text):
+        channels = _apply_scheduled_dpa_kml(
+            db, body=body, text=text, dpa_svc=dpa_svc
+        )
+    else:
+        channels = _apply_scheduled_dpa_json(db, text=text, dpa_svc=dpa_svc)
 
     # Drop previous scheduled activations only (retain non-scheduled).
     for row in list(

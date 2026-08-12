@@ -10,6 +10,7 @@ comes from the KML files resolved at runtime.
 from __future__ import annotations
 
 import json
+import math
 import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -192,20 +193,30 @@ def _placemark_geometry(placemark: ET.Element) -> dict[str, Any] | None:
     outer = placemark.find(
         f".//{KML_NS}outerBoundaryIs/{KML_NS}LinearRing/{KML_NS}coordinates"
     )
-    coords_el = outer
-    if coords_el is None:
-        coords_el = placemark.find(f".//{KML_NS}coordinates")
-    ring = _parse_kml_coordinates(coords_el.text if coords_el is not None else None)
-    if len(ring) < 3:
-        return None
-    if ring[0] != ring[-1]:
-        ring.append(list(ring[0]))
-    return {"type": "Polygon", "coordinates": [ring]}
+    if outer is not None:
+        ring = _parse_kml_coordinates(outer.text)
+        if len(ring) >= 3:
+            if ring[0] != ring[-1]:
+                ring.append(list(ring[0]))
+            return {"type": "Polygon", "coordinates": [ring]}
+
+    point_el = placemark.find(f".//{KML_NS}Point/{KML_NS}coordinates")
+    if point_el is not None and (point_el.text or "").strip():
+        parts = point_el.text.strip().split(",")
+        if len(parts) >= 2:
+            try:
+                lon = float(parts[0])
+                lat = float(parts[1])
+            except ValueError:
+                return None
+            return {"type": "Point", "coordinates": [lon, lat]}
+    return None
 
 
-def parse_dpa_kml(path: Path) -> list[DpaDefinition]:
-    """Parse NTIA-style E-DPA / P-DPA KML into DPA definitions."""
-    root = ET.parse(path).getroot()
+def _definitions_from_kml_root(
+    root: ET.Element, *, source: str
+) -> list[DpaDefinition]:
+    """Canonical placemark extraction shared by path and bytes parsers."""
     definitions: list[DpaDefinition] = []
     for pm in root.iter(f"{KML_NS}Placemark"):
         name_el = pm.find(f"{KML_NS}name")
@@ -221,9 +232,11 @@ def parse_dpa_kml(path: Path) -> list[DpaDefinition]:
         for key, raw in ext.items():
             if key.endswith("NeighborhoodDistanceKm") or "Neighborhood" in key:
                 try:
-                    neighborhood[key] = float(raw)
+                    value = float(raw)
                 except ValueError:
                     continue
+                if math.isfinite(value):
+                    neighborhood[key] = value
             elif key in {
                 "protectionCritDbmPer10MHz",
                 "refHeightMeters",
@@ -232,21 +245,42 @@ def parse_dpa_kml(path: Path) -> list[DpaDefinition]:
                 "maxAzimuthDeg",
             }:
                 try:
-                    protection[key] = float(raw)
+                    value = float(raw)
                 except ValueError:
                     protection[key] = raw
+                    continue
+                if math.isfinite(value):
+                    protection[key] = value
         definitions.append(
             DpaDefinition(
                 dpa_id=dpa_id,
                 freq_low_hz=freqs[0],
                 freq_high_hz=freqs[1],
-                source=str(path),
+                source=source,
                 neighborhood_km=neighborhood,
                 geometry=_placemark_geometry(pm),
                 protection_params=protection,
             )
         )
     return definitions
+
+
+def parse_dpa_kml_bytes(
+    data: bytes | str, *, source: str = "scheduled_dpa_kml"
+) -> list[DpaDefinition]:
+    """Parse NTIA/P-DPA style KML from in-memory bytes/text (no tempfile)."""
+    if isinstance(data, bytes):
+        text = data.decode("utf-8")
+    else:
+        text = data
+    root = ET.fromstring(text)
+    return _definitions_from_kml_root(root, source=source)
+
+
+def parse_dpa_kml(path: Path) -> list[DpaDefinition]:
+    """Parse NTIA-style E-DPA / P-DPA KML into DPA definitions."""
+    root = ET.parse(path).getroot()
+    return _definitions_from_kml_root(root, source=str(path))
 
 
 def load_catalogue_from_paths(paths: list[Path]) -> list[DpaDefinition]:
@@ -425,6 +459,62 @@ def persist_catalogue(
     else:
         db.add(AdminInjectedData(kind=KIND_CATALOGUE, data_json=raw))
     return payload
+
+
+def definition_from_mapping(item: dict[str, Any]) -> DpaDefinition | None:
+    """Rebuild a ``DpaDefinition`` from a persisted catalogue mapping."""
+    if not isinstance(item, dict) or not item.get("dpaId"):
+        return None
+    fr = item.get("frequencyRange") or {}
+    try:
+        low = int(fr["lowFrequency"])
+        high = int(fr["highFrequency"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return DpaDefinition(
+        dpa_id=str(item["dpaId"]),
+        freq_low_hz=low,
+        freq_high_hz=high,
+        source=str(item.get("source") or ""),
+        esc_monitored=bool(item.get("escMonitored", True)),
+        neighborhood_km={
+            str(k): float(v)
+            for k, v in dict(item.get("neighborhoodKm") or {}).items()
+            if isinstance(v, (int, float)) and math.isfinite(float(v))
+        },
+        geometry=item.get("geometry") if isinstance(item.get("geometry"), dict) else None,
+        protection_params=dict(item.get("protectionParams") or {}),
+    )
+
+
+def upsert_catalogue_definitions(
+    db: Session,
+    definitions: list[DpaDefinition],
+    *,
+    source_label: str,
+) -> list[DpaDefinition]:
+    """Merge ``definitions`` into the catalogue by ``dpaId``; keep unrelated rows."""
+    by_id: dict[str, DpaDefinition] = {}
+    for item in list_catalogue(db):
+        rebuilt = definition_from_mapping(item) if isinstance(item, dict) else None
+        if rebuilt is not None:
+            by_id[rebuilt.dpa_id] = rebuilt
+    for definition in definitions:
+        by_id[definition.dpa_id] = definition
+    merged = list(by_id.values())
+    existing = db.query(AdminInjectedData).filter_by(kind=KIND_CATALOGUE).first()
+    prior_sources: list[str] = []
+    if existing:
+        try:
+            prior = json.loads(existing.data_json or "{}")
+            raw_sources = prior.get("sources") if isinstance(prior, dict) else None
+            if isinstance(raw_sources, list):
+                prior_sources = [str(s) for s in raw_sources]
+        except json.JSONDecodeError:
+            prior_sources = []
+    sources = list(dict.fromkeys([*prior_sources, source_label]))
+    persist_catalogue(db, merged, sources=sources)
+    return merged
 
 
 def activate_all_esc_monitored(db: Session, definitions: list[DpaDefinition]) -> int:

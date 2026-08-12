@@ -212,6 +212,17 @@ def within_geojson_buffer_m(
     """True if point is inside zone or within buffer_m of its boundary."""
     if not zone:
         return False
+    # Portal scheduled DPAs may be Point placemarks (e.g. coastal reference).
+    if zone.get("type") == "Point":
+        coords = zone.get("coordinates")
+        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            try:
+                zlon = float(coords[0])
+                zlat = float(coords[1])
+            except (TypeError, ValueError):
+                return False
+            return haversine_m(lat, lon, zlat, zlon) <= buffer_m
+        return False
     for ring in iter_geojson_rings(zone):
         if not _ring_is_valid(ring):
             continue

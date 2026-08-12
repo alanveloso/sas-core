@@ -110,11 +110,18 @@ ItmMedianFn = Callable[
 
 
 def polygon_representative_point(geometry: dict[str, Any] | None) -> tuple[float, float] | None:
-    """Return a representative (lat, lon) from a GeoJSON Polygon / MultiPolygon."""
+    """Return a representative (lat, lon) from a GeoJSON Point / Polygon / MultiPolygon."""
     if not isinstance(geometry, dict):
         return None
     gtype = geometry.get("type")
     coords = geometry.get("coordinates")
+    if gtype == "Point" and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        try:
+            lon = float(coords[0])
+            lat = float(coords[1])
+        except (TypeError, ValueError):
+            return None
+        return (lat, lon)
     ring: Sequence[Any] | None = None
     if gtype == "Polygon" and isinstance(coords, list) and coords:
         ring = coords[0]
