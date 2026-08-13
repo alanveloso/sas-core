@@ -46,6 +46,34 @@ def _past_tx() -> datetime:
     return utc_now().replace(microsecond=0) - timedelta(seconds=1)
 
 
+def _persist_federal_termination(
+    grant: Grant,
+    *,
+    cbsd_id: str,
+    grant_id: str,
+) -> None:
+    """Persist TERMINATED for a federal 500 heartbeat decision.
+
+    Wall-clock expiry makes ``resolve_grant_state`` report EXPIRED while the
+    column may still be GRANTED; TERMINATE is blocked from terminal states.
+    Force TERMINATED so Step-6-style federal termination is durable.
+    """
+    from services.lifecycle import (
+        GrantEvent,
+        GrantState,
+        apply_grant_event,
+        apply_grant_state,
+    )
+
+    outcome = apply_grant_event(
+        grant,
+        GrantEvent.TERMINATE,
+        payload={"cbsdId": cbsd_id, "grantId": grant_id},
+    )
+    if not outcome.ok:
+        apply_grant_state(grant, GrantState.TERMINATED)
+
+
 def _future_tx(
     db: Session,
     cbsd,
@@ -266,7 +294,22 @@ def process_heartbeat(
                     )
                     continue
 
+                # FIX-13: evaluate federal once. Termination-grade 500 preempts generic
+                # expiration so overnight scheduled-federal heartbeats can still observe
+                # TERMINATED_GRANT (HBT_6 also accepts 500). Federal 501 must not override
+                # expiration — an already-expired grant stays 103.
                 from services.clock import ensure_utc, utc_now
+                from services.federal_db_service import heartbeat_federal_code
+
+                federal_code = heartbeat_federal_code(db, cbsd, grant)
+                if federal_code == TERMINATED_GRANT:
+                    _persist_federal_termination(
+                        grant, cbsd_id=cbsd_id, grant_id=grant_id
+                    )
+                    responses.append(
+                        _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+                    )
+                    continue
 
                 if ensure_utc(grant.grant_expire_time).replace(microsecond=0) <= utc_now().replace(
                     microsecond=0
@@ -292,20 +335,6 @@ def process_heartbeat(
                     )
                     continue
 
-                # Federal DB (EXZ / FSS / GWBL / DPA) — 500 for stale grants, 501 for current.
-                from services.federal_db_service import heartbeat_federal_code
-
-                federal_code = heartbeat_federal_code(db, cbsd, grant)
-                if federal_code == TERMINATED_GRANT:
-                    apply_grant_event(
-                        grant,
-                        GrantEvent.TERMINATE,
-                        payload={"cbsdId": cbsd_id, "grantId": grant_id},
-                    )
-                    responses.append(
-                        _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
-                    )
-                    continue
                 if federal_code == SUSPENDED_GRANT:
                     # Transient federal suspend — do not persist SUSPENDED.
                     responses.append(
