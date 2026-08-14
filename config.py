@@ -136,6 +136,10 @@ class Settings(BaseSettings):
         default=None,
         description="Override path to NED GridFloat tiles (SAS_TERRAIN_DIR).",
     )
+    sas_county_dir: Optional[Path] = Field(
+        default=None,
+        description="Override path to county GeoJSON by FIPS (SAS_COUNTY_DIR).",
+    )
     # Protection / RF dataset packaging (P6-001).
     sas_protection_data_bundle: str = Field(
         default="cbrs_winnforum_protection",
@@ -232,7 +236,7 @@ class Settings(BaseSettings):
             return _DEFAULT_CERTS
         return Path(str(value))
 
-    @field_validator("sas_terrain_dir", mode="before")
+    @field_validator("sas_terrain_dir", "sas_county_dir", mode="before")
     @classmethod
     def _coerce_terrain_dir(cls, value: object) -> object:
         if value is None or value == "":

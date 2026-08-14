@@ -23,15 +23,23 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models.models import AdminInjectedData, Cbsd
+from services.county_geometry import CountyGeometryError, load_county_geometry
 from services.fad_service import rewrite_zone_id
 from services.geometry import (
     geojson_areas_overlap,
     geojson_geometry_usable,
     iter_geojson_rings,
-    point_in_geojson,
 )
 from services.meas_report import set_admin_flag
 from services.pal_service import load_pal_records
+from services.ppa_geometry import (
+    as_feature_collection,
+    intersect_geojson,
+    point_covered_by_area,
+    polygon_covered_by,
+    polygon_within_service_area,
+    union_geojson,
+)
 from services.ppa_rf_contour import (
     PpaRfContourError,
     PpaRfEngines,
@@ -195,7 +203,8 @@ def _geometry_from_cluster(locations: list[tuple[float, float]]) -> dict[str, An
     }
 
 
-def _pal_service_area(pal: dict[str, Any]) -> dict[str, Any] | None:
+def _inline_pal_service_area(pal: dict[str, Any]) -> dict[str, Any] | None:
+    """Legacy inline GeoJSON on the PAL record (unit-test / admin inject)."""
     license_obj = pal.get("license") if isinstance(pal.get("license"), dict) else {}
     for key in ("licenseArea", "serviceArea", "licenseAreaGeometry"):
         geo = pal.get(key) or license_obj.get(key)
@@ -204,25 +213,39 @@ def _pal_service_area(pal: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _pal_license_area_identifier(pal: dict[str, Any]) -> str | None:
+    license_obj = pal.get("license") if isinstance(pal.get("license"), dict) else {}
+    ident = license_obj.get("licenseAreaIdentifier") or pal.get("licenseAreaIdentifier")
+    if ident is None or str(ident).strip() == "":
+        return None
+    return str(ident).strip()
+
+
+def _pal_service_area(pal: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve one PAL licensed area.
+
+    Precedence (reference / WInnForum PAL): ``license.licenseAreaIdentifier``
+    (county FIPS GeoJSON) over inline geometry fields. Identifier present but
+    unloadable raises ``PpaCreationError`` (fail closed, never silent None).
+    """
+    ident = _pal_license_area_identifier(pal)
+    if ident is not None:
+        try:
+            return load_county_geometry(ident)
+        except CountyGeometryError as exc:
+            raise PpaCreationError("service_area_unavailable") from exc
+    return _inline_pal_service_area(pal)
+
+
 def _union_service_areas(pals: list[dict[str, Any]]) -> dict[str, Any] | None:
-    features: list[dict[str, Any]] = []
+    parts: list[dict[str, Any]] = []
     for pal in pals:
         area = _pal_service_area(pal)
-        if area is None:
-            return None
-        if area.get("type") == "FeatureCollection":
-            features.extend(
-                f for f in (area.get("features") or []) if isinstance(f, dict)
-            )
-        elif area.get("type") == "Feature":
-            features.append(area)
-        else:
-            features.append(
-                {"type": "Feature", "properties": {}, "geometry": area}
-            )
-    if not features:
+        if area is not None:
+            parts.append(area)
+    if not parts:
         return None
-    return {"type": "FeatureCollection", "features": features}
+    return union_geojson(*parts)
 
 
 def _as_feature_collection(geom: dict[str, Any]) -> dict[str, Any]:
@@ -282,16 +305,14 @@ def _load_census_geometry() -> dict[str, Any] | None:
 def _clip_contour_to_max(
     contour: dict[str, Any], max_area: dict[str, Any]
 ) -> dict[str, Any]:
-    """Enforce contour ⊆ max_area.
-
-    When the contour already lies inside ``max_area``, keep it. Otherwise the
-    normative operation is intersection (RF ∩ constraint). Without a polygon
-    clip library we only accept contours that are already within the max area;
-    never replace an RF contour with a larger service-area polygon.
-    """
-    if _contour_within_service_area(contour, max_area):
-        return contour
-    raise PpaCreationError("contour_outside_clip_area")
+    """Return contour ∩ max_area as a FeatureCollection (areal parts only)."""
+    clipped = intersect_geojson(contour, max_area)
+    if clipped is None:
+        raise PpaCreationError("contour_empty_after_clip")
+    fc = as_feature_collection(clipped)
+    if fc is None:
+        raise PpaCreationError("contour_empty_after_clip")
+    return fc
 
 
 def _cluster_ids_from_injection(db: Session, body: dict[str, Any]) -> list[str] | None:
@@ -319,18 +340,14 @@ def _cluster_ids_from_injection(db: Session, body: dict[str, Any]) -> list[str] 
 
 
 def _points_within(zone: dict[str, Any], locations: list[tuple[float, float]]) -> bool:
-    return all(point_in_geojson(lat, lon, zone) for lat, lon in locations)
+    return all(point_covered_by_area(lat, lon, zone) for lat, lon in locations)
 
 
 def _contour_within_service_area(
     contour: dict[str, Any], service_area: dict[str, Any]
 ) -> bool:
-    """Approximate: every contour vertex must lie inside the service area."""
-    for ring in iter_geojson_rings(contour):
-        for lon, lat, *_rest in ring:
-            if not point_in_geojson(float(lat), float(lon), service_area):
-                return False
-    return True
+    """PPA/claimed vs licensed SA: reference buffer-then-within."""
+    return polygon_within_service_area(contour, service_area)
 
 
 def _existing_ppa_records(db: Session) -> list[dict[str, Any]]:
@@ -491,10 +508,13 @@ def _validate_and_build(
             and provided.get("type") == "FeatureCollection"
             else _as_feature_collection(provided)
         )
-        if not _points_within(claimed, locations):
-            raise PpaCreationError("cbsd_outside_providedContour")
-        # Claimed must not exceed the RF maximum (after SA/census clip).
-        if not _contour_within_service_area(claimed, contour):
+        # Cluster CBSDs are not required to lie inside a valid claimed contour
+        # (holder may shrink the maximum PPA). Holder + PAL SA still apply above.
+        if service_area is not None and not _contour_within_service_area(
+            claimed, service_area
+        ):
+            raise PpaCreationError("claimedBoundary_outside_service_area")
+        if not polygon_covered_by(claimed, contour):
             raise PpaCreationError("claimedBoundary_exceeds_rf_maximum")
         contour = claimed
 
