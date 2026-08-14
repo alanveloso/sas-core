@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from schemas.common import ChannelType, FrequencyRange, ResponseObject
+from schemas.common import ChannelType, FrequencyRange, MeasReport, ResponseObject
 from services.error_handlers import MAXIMUM_BATCH_SIZE
 
 
@@ -21,6 +21,7 @@ class GrantRequestItem(BaseModel):
     cbsdId: str | None = None
     operationParam: OperationParam | None = None
     measuringCapabilities: list[str] | None = None
+    measReport: MeasReport | None = None
 
     @field_validator("measuringCapabilities")
     @classmethod
