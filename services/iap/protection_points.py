@@ -256,6 +256,7 @@ def protection_points_from_fss_payload(
                     entity_kind=ProtectedEntityKind.FSS_COCHANNEL,
                     pre_iap_margin_db=profile.pre_iap_margin_db,
                     neighborhood_km=NEIGHBORHOOD_FSS_COCHANNEL_KM,
+                    source_entity_id=point_id,
                 )
             )
 
@@ -282,6 +283,7 @@ def protection_points_from_fss_payload(
                     entity_kind=ProtectedEntityKind.FSS_BLOCKING,
                     pre_iap_margin_db=profile.pre_iap_margin_db,
                     neighborhood_km=NEIGHBORHOOD_FSS_BLOCKING_KM,
+                    source_entity_id=point_id,
                 )
             )
     return out

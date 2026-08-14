@@ -325,6 +325,10 @@ def upsert_fss_record(
     key = _natural_key(KIND_FSS, payload)
     with _iap_admission_write(db, commit=commit):
         _upsert(db, KIND_FSS, payload, key=key)
+        from services.fss_provenance import SOURCE_ADMIN_INJECTED, set_fss_provenance
+
+        if key:
+            set_fss_provenance(db, key, SOURCE_ADMIN_INJECTED)
         bump_sync_meta(db, "fss")
         bump_injection_generation(db, KIND_FSS)
     return True

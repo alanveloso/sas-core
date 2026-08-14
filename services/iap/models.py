@@ -50,6 +50,8 @@ class ProtectionPoint(BaseModel):
     pre_iap_margin_db: float = Field(default=1.0, ge=0.0)
     # WINNF-TS-0112 neighborhood (km). None = no distance filter (GENERIC/tests).
     neighborhood_km: float | None = Field(default=None, ge=0.0)
+    # Underlying FSS/PPA/… record id for provenance mapping (not a fixture ID).
+    source_entity_id: str | None = None
     # ESC receiver antenna (WINNF computeInterferenceEsc). Optional for non-ESC.
     receiver_height_m: float | None = None
     receiver_antenna_azimuth_deg: float | None = None

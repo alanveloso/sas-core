@@ -480,6 +480,15 @@ def proposed_grant_violates_iap(
         else:
             resolved_points = list(points)
         resolved_points = filter_points_for_proposed_cbsd(db, resolved_points, cbsd)
+        from services.fss_provenance import (
+            exclude_federal_sync_fss_from_grant_admission,
+        )
+
+        # FIX-14: federal database-update FSS is CPAS/heartbeat-owned, not
+        # grant-time residual IAP. Admin InjectFss remains eligible.
+        resolved_points = exclude_federal_sync_fss_from_grant_admission(
+            db, resolved_points
+        )
     except ProtectionEntityError as exc:
         logger.warning("IAP admission fail-closed: protection points: %s", exc)
         return True

@@ -111,11 +111,24 @@ def replace_fss_from_federal_payload(db: Session, payload: Any) -> None:
     elif isinstance(payload, list):
         sites = [s for s in payload if isinstance(s, dict)]
 
-    db.query(AdminInjectedData).filter_by(kind="fss").delete()
+    from services.fss_provenance import (
+        SOURCE_FEDERAL_DB_SYNC,
+        delete_federal_sync_fss_rows,
+        load_fss_provenance_map,
+        persist_fss_provenance_map,
+        upsert_fss_payload,
+    )
+
+    delete_federal_sync_fss_rows(db)
+    mapping = load_fss_provenance_map(db)
     for site in sites:
         rec = federal_fss_site_to_record(site)
-        if rec:
-            db.add(AdminInjectedData(kind="fss", data_json=json.dumps(rec)))
+        if not rec:
+            continue
+        rid = upsert_fss_payload(db, rec)
+        if rid:
+            mapping[rid] = SOURCE_FEDERAL_DB_SYNC
+    persist_fss_provenance_map(db, mapping)
     bump_sync_meta(db, "fss")
 
 
