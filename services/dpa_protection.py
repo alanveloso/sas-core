@@ -180,10 +180,15 @@ def rel1ext_dpa_path_loss_db(
     injectable ITM result). Free Space is never used as a silent substitute.
     For ``FREE_SPACE``, the median is Free Space (explicit lab/test profile).
     """
+    if not grant.height_is_agl and terrain_elevation_m is None:
+        raise DpaPathLossUnavailable(
+            "terrain elevation backend required for AMSL Rel1Ext DPA path loss"
+        )
+
     if model is DpaPathLossModel.FREE_SPACE:
         if median_path_loss_db is None:
             height_agl = grant.height_m
-            if not grant.height_is_agl and terrain_elevation_m is not None:
+            if not grant.height_is_agl:
                 height_agl = grant.height_m - float(
                     terrain_elevation_m(grant.latitude, grant.longitude)
                 )
@@ -220,6 +225,26 @@ def rel1ext_dpa_path_loss_db(
     )
 
 
+def _wrap_terrain_elevation_backend(
+    terrain_elevation_m: Callable[[float, float], float] | None,
+) -> Callable[[float, float], float] | None:
+    """Convert terrain/NED backend failures into DpaPathLossUnavailable."""
+    if terrain_elevation_m is None:
+        return None
+
+    def _wrapped(lat: float, lon: float) -> float:
+        try:
+            return float(terrain_elevation_m(lat, lon))
+        except DpaPathLossUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 — numerical / IO terrain backends
+            raise DpaPathLossUnavailable(
+                f"terrain elevation backend failed: {exc}"
+            ) from exc
+
+    return _wrapped
+
+
 def make_path_loss_fn(
     *,
     model: DpaPathLossModel = DpaPathLossModel.ITM_REL1EXT,
@@ -227,6 +252,7 @@ def make_path_loss_fn(
     terrain_elevation_m: Callable[[float, float], float] | None = None,
 ) -> PathLossFn:
     """Build a path-loss callable for the selected model."""
+    terrain_elevation_m = _wrap_terrain_elevation_backend(terrain_elevation_m)
 
     def _fn(
         grant: DpaGrantRf, lat_rx: float, lon_rx: float, height_rx_m: float
@@ -258,8 +284,10 @@ def make_path_loss_fn(
     return _fn
 
 
-def load_itm_median_fn() -> ItmMedianFn:
-    """Load ITM median from reference engines; raise if ITM/NED unavailable."""
+def load_rel1ext_backends() -> tuple[
+    ItmMedianFn, Callable[[float, float], float]
+]:
+    """Load production Rel1Ext ITM median and terrain elevation backends."""
     from services.propagation import load_reference_engines
 
     engines = load_reference_engines()
@@ -284,20 +312,39 @@ def load_itm_median_fn() -> ItmMedianFn:
             raise DpaPathLossUnavailable(f"ITM median failed: {exc}") from exc
         return float(result.db_loss)
 
-    return _itm
+    raw_terrain = engines.terrain_elevation_m
+
+    def _terrain(lat: float, lon: float) -> float:
+        try:
+            return float(raw_terrain(lat, lon))
+        except Exception as exc:  # noqa: BLE001 — numerical / IO terrain backends
+            raise DpaPathLossUnavailable(
+                f"terrain elevation backend failed: {exc}"
+            ) from exc
+
+    return _itm, _terrain
+
+
+def load_itm_median_fn() -> ItmMedianFn:
+    """Load ITM median from reference engines; raise if ITM/NED unavailable."""
+    itm, _ = load_rel1ext_backends()
+    return itm
 
 
 def default_rel1ext_path_loss_fn(
     *,
     itm_median_fn: ItmMedianFn | None = None,
+    terrain_elevation_m: Callable[[float, float], float] | None = None,
 ) -> PathLossFn:
-    """Production default: ITM Rel1Ext. Does not fall back to Free Space."""
+    """Production default: ITM Rel1Ext plus terrain elevation for AMSL."""
     if itm_median_fn is not None:
         return make_path_loss_fn(
-            model=DpaPathLossModel.ITM_REL1EXT, itm_median_fn=itm_median_fn
+            model=DpaPathLossModel.ITM_REL1EXT,
+            itm_median_fn=itm_median_fn,
+            terrain_elevation_m=terrain_elevation_m,
         )
     try:
-        loaded = load_itm_median_fn()
+        loaded_itm, loaded_terrain = load_rel1ext_backends()
     except PropagationUnavailableError as exc:
         message = str(exc)
 
@@ -307,7 +354,14 @@ def default_rel1ext_path_loss_fn(
             raise DpaPathLossUnavailable(message)
 
         return _missing
-    return make_path_loss_fn(model=DpaPathLossModel.ITM_REL1EXT, itm_median_fn=loaded)
+    terrain = (
+        terrain_elevation_m if terrain_elevation_m is not None else loaded_terrain
+    )
+    return make_path_loss_fn(
+        model=DpaPathLossModel.ITM_REL1EXT,
+        itm_median_fn=loaded_itm,
+        terrain_elevation_m=terrain,
+    )
 
 
 def cochannel_eirp_dbm(grant: DpaGrantRf, low_hz: int, high_hz: int) -> float:

@@ -590,7 +590,7 @@ def test_default_rel1ext_fn_without_engines_is_unavailable(monkeypatch):
     def _boom():
         raise DpaPathLossUnavailable("ITM extension module not available")
 
-    monkeypatch.setattr(mod, "load_itm_median_fn", _boom)
+    monkeypatch.setattr(mod, "load_rel1ext_backends", _boom)
     fn = default_rel1ext_path_loss_fn()
     grant = DpaGrantRf(
         grant_id="g",
