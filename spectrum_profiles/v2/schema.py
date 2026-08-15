@@ -282,8 +282,88 @@ class TemporalSection(BaseModel):
     reevaluation: PeriodicReevaluation | None = None
 
 
+_DATA_CAPABILITIES = frozenset(
+    {
+        "terrain",
+        "land_cover",
+        "protected_entities",
+        "rights",
+        "boundaries",
+        "reference_data",
+    }
+)
+_DEVICE_CAPABILITIES = frozenset({"geolocation", "frequency_range", "max_eirp"})
+
+
+class ProtectionSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanisms: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _unique(self) -> ProtectionSection:
+        if len(self.mechanisms) != len(set(self.mechanisms)):
+            raise ValueError("protection.mechanisms must be unique")
+        for item in self.mechanisms:
+            if not item.strip():
+                raise ValueError("protection.mechanisms entries must be non-empty")
+        return self
+
+
+class CoordinationSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: str = Field(..., min_length=1)
+
+
+class RfSection(BaseModel):
+    """Selects registered RF policy/model. No vendor adapter names."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    required: bool
+    policy: str = Field(..., min_length=1)
+    propagation_model: str | None = None
+
+    @model_validator(mode="after")
+    def _required_model(self) -> RfSection:
+        if self.required and not (self.propagation_model and self.propagation_model.strip()):
+            raise ValueError("rf.required requires propagation_model")
+        return self
+
+
+class DataSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    required_capabilities: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _caps(self) -> DataSection:
+        unknown = [item for item in self.required_capabilities if item not in _DATA_CAPABILITIES]
+        if unknown:
+            raise ValueError(f"unsupported data capabilities: {unknown}")
+        if len(self.required_capabilities) != len(set(self.required_capabilities)):
+            raise ValueError("data.required_capabilities must be unique")
+        return self
+
+
+class RequirementsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    device_capabilities: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _caps(self) -> RequirementsSection:
+        unknown = [item for item in self.device_capabilities if item not in _DEVICE_CAPABILITIES]
+        if unknown:
+            raise ValueError(f"unsupported device capabilities: {unknown}")
+        if len(self.device_capabilities) != len(set(self.device_capabilities)):
+            raise ValueError("requirements.device_capabilities must be unique")
+        return self
+
+
 class ProfileV2SpectrumDocument(BaseModel):
-    """v2 envelope: spectrum plus optional access/authorization/power/geography/temporal."""
+    """v2 envelope including protection/coordination/rf/data/requirements."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -296,6 +376,11 @@ class ProfileV2SpectrumDocument(BaseModel):
     power: PowerSection | None = None
     geography: GeographySection | None = None
     temporal: TemporalSection | None = None
+    protection: ProtectionSection | None = None
+    coordination: CoordinationSection | None = None
+    rf: RfSection | None = None
+    data: DataSection | None = None
+    requirements: RequirementsSection | None = None
 
     @model_validator(mode="after")
     def _envelope(self) -> ProfileV2SpectrumDocument:

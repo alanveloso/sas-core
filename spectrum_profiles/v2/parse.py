@@ -44,6 +44,22 @@ def parse_profile_v2_spectrum(
             catalog.on_axis(
                 MechanismAxis.TEMPORAL, parsed.temporal.reevaluation.mechanism
             )
+        if parsed.protection is not None:
+            for mechanism_id in parsed.protection.mechanisms:
+                contract = catalog.get(mechanism_id)
+                if contract.axis not in {
+                    MechanismAxis.PROTECTION,
+                    MechanismAxis.GEOGRAPHY,
+                }:
+                    raise ValueError(
+                        f"mechanism {mechanism_id!r} cannot be composed under protection"
+                    )
+        if parsed.coordination is not None:
+            catalog.on_axis(MechanismAxis.COORDINATION, parsed.coordination.mechanism)
+        if parsed.rf is not None:
+            catalog.on_axis(MechanismAxis.RF, parsed.rf.policy)
+            if parsed.rf.propagation_model is not None:
+                catalog.on_axis(MechanismAxis.RF, parsed.rf.propagation_model)
     except ValueError as exc:
         raise ProfileValidationError(str(exc)) from exc
     return parsed

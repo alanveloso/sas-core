@@ -82,7 +82,7 @@ def test_rejects_dsl_wrong_axis_and_keeps_v1_loader():
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(doc2)
     doc3 = _base()
-    doc3["protection"] = {"mechanisms": []}
+    doc3["not_a_section"] = {}
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(doc3)
     assert load_profile("cbrs_winnforum").id == "cbrs_winnforum"

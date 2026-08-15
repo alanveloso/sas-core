@@ -19,6 +19,7 @@ class MechanismAxis(StrEnum):
     TEMPORAL = "temporal"
     PROTECTION = "protection"
     COORDINATION = "coordination"
+    RF = "rf"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,10 @@ _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("ordered_classes", MechanismAxis.ACCESS, "1.0.0"),
     MechanismContract("preemption", MechanismAxis.ACCESS, "1.0.0"),
     MechanismContract("protection_entitlement", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("channel_exclusion", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("distance_exclusion", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("single_link_threshold", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("aggregate_linear_power", MechanismAxis.PROTECTION, "1.0.0"),
     MechanismContract("dynamic_lease", MechanismAxis.AUTHORIZATION, "1.0.0"),
     MechanismContract("fixed_window", MechanismAxis.AUTHORIZATION, "1.0.0"),
     MechanismContract("static_authorization", MechanismAxis.AUTHORIZATION, "1.0.0"),
@@ -51,6 +56,8 @@ _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("rule_table", MechanismAxis.POWER, "1.0.0"),
     MechanismContract("periodic", MechanismAxis.TEMPORAL, "1.0.0"),
     MechanismContract("snapshot_evaluate_apply", MechanismAxis.COORDINATION, "1.0.0"),
+    MechanismContract("path_loss_plus_aggregate", MechanismAxis.RF, "1.0.0"),
+    MechanismContract("path_loss", MechanismAxis.RF, "1.0.0"),
 )
 
 
