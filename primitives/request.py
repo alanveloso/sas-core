@@ -30,6 +30,7 @@ class SpectrumRequest:
     holder_id: str
     footprints: tuple[TransmissionFootprint, ...]
     requested_at: UtcInstant
+    access_class_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.request_id.strip():
@@ -38,3 +39,5 @@ class SpectrumRequest:
             raise ValueError("holder_id is required")
         if not self.footprints:
             raise ValueError("SpectrumRequest requires at least one footprint")
+        if self.access_class_id is not None and not self.access_class_id.strip():
+            raise ValueError("access_class_id must be a non-empty token when set")
