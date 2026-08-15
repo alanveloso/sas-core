@@ -83,3 +83,14 @@ class LinearRing:
 
     def contains(self, point: GeoPoint) -> bool:
         return _point_in_ring(point.longitude_deg, point.latitude_deg, self.coordinates)
+
+
+def representative_point(
+    location: GeoPoint | PointRadius | LinearRing,
+) -> GeoPoint | None:
+    """Point used for containment tests; rings have no unique representative."""
+    if isinstance(location, GeoPoint):
+        return location
+    if isinstance(location, PointRadius):
+        return location.center
+    return None

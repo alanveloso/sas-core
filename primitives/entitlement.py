@@ -9,19 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from primitives.frequency import FrequencyRange
-from primitives.geography import GeoPoint, LinearRing, PointRadius
+from primitives.geography import LinearRing, PointRadius, representative_point
 from primitives.request import TransmissionFootprint
 from primitives.time import TimeInterval, UtcInstant
 
 EntitlementArea = PointRadius | LinearRing
-
-
-def _as_point(location: GeoPoint | PointRadius | LinearRing) -> GeoPoint | None:
-    if isinstance(location, GeoPoint):
-        return location
-    if isinstance(location, PointRadius):
-        return location.center
-    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +47,7 @@ class ProtectionEntitlement:
                 return False
         if self.area is None:
             return True
-        point = _as_point(footprint.location)
+        point = representative_point(footprint.location)
         if point is None:
             return False
         return self.area.contains(point)

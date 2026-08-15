@@ -44,3 +44,7 @@ class TimeInterval:
 
     def overlaps(self, other: TimeInterval) -> bool:
         return self.start.value < other.end.value and self.end.value > other.start.value
+
+    def contains_interval(self, other: TimeInterval) -> bool:
+        """True when ``other`` is fully inside this half-open window."""
+        return self.start.value <= other.start.value and other.end.value <= self.end.value

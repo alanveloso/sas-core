@@ -6,6 +6,13 @@ authorized extraction task wires these types.
 """
 
 from primitives.access import AccessClass, OrderedAccess, bind_request_class
+from primitives.authorization import (
+    AuthorizedArea,
+    ExclusionZone,
+    FixedWindow,
+    Lease,
+    LeaseState,
+)
 from primitives.constraint import Constraint, ConstraintKind
 from primitives.decision import Decision, DecisionAction, is_apply_write
 from primitives.entitlement import ProtectionEntitlement
@@ -19,12 +26,17 @@ from primitives.time import TimeInterval, UtcInstant
 
 __all__ = [
     "AccessClass",
+    "AuthorizedArea",
     "Constraint",
     "ConstraintKind",
     "Decision",
     "DecisionAction",
+    "ExclusionZone",
+    "FixedWindow",
     "FrequencyRange",
     "GeoPoint",
+    "Lease",
+    "LeaseState",
     "LinearRing",
     "PointRadius",
     "PowerDbm",
