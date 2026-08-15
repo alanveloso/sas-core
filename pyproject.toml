@@ -49,6 +49,7 @@ include = [
   "protection_data*",
   "tools*",
   "compliance*",
+  "primitives*",
 ]
 
 [tool.setuptools.package-data]
@@ -80,6 +81,7 @@ source = [
   "spectrum_profiles",
   "protection_data",
   "tools",
+  "primitives",
 ]
 omit = ["tests/*", "*/__pycache__/*"]
 
