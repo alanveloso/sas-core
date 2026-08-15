@@ -1,0 +1,95 @@
+"""In-process named mechanism catalog (G2-006). Not entry-point discovery (G4).
+
+Contracts are identity + axis + version. They do not embed regulatory callables
+or YAML. Unknown ids fail closed. Access may be omitted (D10).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+
+
+class MechanismAxis(StrEnum):
+    SPECTRUM = "spectrum"
+    ACCESS = "access"
+    AUTHORIZATION = "authorization"
+    GEOGRAPHY = "geography"
+    PROTECTION = "protection"
+    COORDINATION = "coordination"
+
+
+@dataclass(frozen=True, slots=True)
+class MechanismContract:
+    mechanism_id: str
+    axis: MechanismAxis
+    version: str
+    required_capabilities: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.mechanism_id.strip():
+            raise ValueError("mechanism_id is required")
+        if not self.version.strip():
+            raise ValueError("version is required")
+
+
+_BUILTIN: tuple[MechanismContract, ...] = (
+    MechanismContract("frequency_ranges", MechanismAxis.SPECTRUM, "1.0.0"),
+    MechanismContract("fixed_width_channelization", MechanismAxis.SPECTRUM, "1.0.0"),
+    MechanismContract("ordered_classes", MechanismAxis.ACCESS, "1.0.0"),
+    MechanismContract("preemption", MechanismAxis.ACCESS, "1.0.0"),
+    MechanismContract("protection_entitlement", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("dynamic_lease", MechanismAxis.AUTHORIZATION, "1.0.0"),
+    MechanismContract("fixed_window", MechanismAxis.AUTHORIZATION, "1.0.0"),
+    MechanismContract("static_authorization", MechanismAxis.AUTHORIZATION, "1.0.0"),
+    MechanismContract("point_radius", MechanismAxis.GEOGRAPHY, "1.0.0"),
+    MechanismContract("authorized_area", MechanismAxis.GEOGRAPHY, "1.0.0"),
+    MechanismContract("exclusion_zone", MechanismAxis.GEOGRAPHY, "1.0.0"),
+    MechanismContract("max_power", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("snapshot_evaluate_apply", MechanismAxis.COORDINATION, "1.0.0"),
+)
+
+
+class MechanismRegistry:
+    def __init__(self, contracts: tuple[MechanismContract, ...] = ()) -> None:
+        self._by_id: dict[str, MechanismContract] = {}
+        for contract in contracts:
+            self.register(contract)
+
+    def register(self, contract: MechanismContract) -> None:
+        if contract.mechanism_id in self._by_id:
+            raise ValueError(f"duplicate mechanism {contract.mechanism_id!r}")
+        self._by_id[contract.mechanism_id] = contract
+
+    def get(self, mechanism_id: str) -> MechanismContract:
+        try:
+            return self._by_id[mechanism_id]
+        except KeyError:
+            raise ValueError(f"unknown mechanism {mechanism_id!r}") from None
+
+    def require(self, mechanism_ids: tuple[str, ...]) -> tuple[MechanismContract, ...]:
+        return tuple(self.get(item) for item in mechanism_ids)
+
+    def ids(self) -> frozenset[str]:
+        return frozenset(self._by_id)
+
+    def on_axis(self, axis: MechanismAxis, mechanism_id: str) -> MechanismContract:
+        contract = self.get(mechanism_id)
+        if contract.axis != axis:
+            raise ValueError(
+                f"mechanism {mechanism_id!r} is {contract.axis}, expected {axis}"
+            )
+        return contract
+
+
+def builtin_mechanism_registry() -> MechanismRegistry:
+    """Fresh in-memory catalog; not a process-wide singleton."""
+    return MechanismRegistry(_BUILTIN)
+
+
+def select_optional_access(
+    registry: MechanismRegistry, mechanism_id: str | None
+) -> MechanismContract | None:
+    if mechanism_id is None:
+        return None
+    return registry.on_axis(MechanismAxis.ACCESS, mechanism_id)
