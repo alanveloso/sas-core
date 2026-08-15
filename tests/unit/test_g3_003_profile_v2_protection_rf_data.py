@@ -64,7 +64,11 @@ def test_rf_required_without_model_and_unknown_capabilities_fail_closed():
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(doc3)
     extra = builtin_mechanism_registry()
-    extra.register(MechanismContract("itm", MechanismAxis.RF, "1.0.0"))
+    extra.register(
+        MechanismContract("itm", MechanismAxis.RF, "1.0.0", slot="rf_model")
+    )
+    doc3["data"] = {"required_capabilities": ["terrain"]}
+    doc3["requirements"] = {"device_capabilities": ["geolocation"]}
     parsed = parse_profile_v2_spectrum(doc3, registry=extra)
     assert parsed.rf is not None
     assert parsed.rf.propagation_model == "itm"

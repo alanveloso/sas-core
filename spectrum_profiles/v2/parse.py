@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from primitives.registry import MechanismAxis, MechanismRegistry, builtin_mechanism_registry
 from spectrum_profiles.loader import ProfileValidationError
 from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
 
 
 def _catalog(registry: MechanismRegistry | None) -> MechanismRegistry:
@@ -60,6 +61,7 @@ def parse_profile_v2_spectrum(
             catalog.on_axis(MechanismAxis.RF, parsed.rf.policy)
             if parsed.rf.propagation_model is not None:
                 catalog.on_axis(MechanismAxis.RF, parsed.rf.propagation_model)
+        validate_profile_v2_semantics(parsed, catalog)
     except ValueError as exc:
         raise ProfileValidationError(str(exc)) from exc
     return parsed

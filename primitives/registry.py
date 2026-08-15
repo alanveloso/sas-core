@@ -28,12 +28,15 @@ class MechanismContract:
     axis: MechanismAxis
     version: str
     required_capabilities: tuple[str, ...] = ()
+    slot: str = ""
 
     def __post_init__(self) -> None:
         if not self.mechanism_id.strip():
             raise ValueError("mechanism_id is required")
         if not self.version.strip():
             raise ValueError("version is required")
+        if self.slot not in {"", "rf_policy", "rf_model"}:
+            raise ValueError("unsupported mechanism slot")
 
 
 _BUILTIN: tuple[MechanismContract, ...] = (
@@ -56,8 +59,10 @@ _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("rule_table", MechanismAxis.POWER, "1.0.0"),
     MechanismContract("periodic", MechanismAxis.TEMPORAL, "1.0.0"),
     MechanismContract("snapshot_evaluate_apply", MechanismAxis.COORDINATION, "1.0.0"),
-    MechanismContract("path_loss_plus_aggregate", MechanismAxis.RF, "1.0.0"),
-    MechanismContract("path_loss", MechanismAxis.RF, "1.0.0"),
+    MechanismContract(
+        "path_loss_plus_aggregate", MechanismAxis.RF, "1.0.0", slot="rf_policy"
+    ),
+    MechanismContract("path_loss", MechanismAxis.RF, "1.0.0", slot="rf_model"),
 )
 
 
