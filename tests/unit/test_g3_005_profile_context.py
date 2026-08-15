@@ -1,0 +1,53 @@
+"""G3-005: profile id/version/hash freeze into ProfileContext."""
+
+from __future__ import annotations
+
+from primitives.decision import Decision, DecisionAction
+from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
+from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+
+
+def _doc() -> dict:
+    return {
+        "api_version": "spectrum-access/v2",
+        "kind": "SpectrumProfile",
+        "metadata": {"id": "example", "version": "1.0.0", "status": "custom"},
+        "spectrum": {"ranges": [{"id": "main", "low_hz": 1000, "high_hz": 2000}]},
+        "coordination": {"mechanism": "snapshot_evaluate_apply"},
+        "rf": {
+            "required": True,
+            "policy": "path_loss_plus_aggregate",
+            "propagation_model": "path_loss",
+        },
+        "data": {"required_capabilities": ["terrain"]},
+        "requirements": {"device_capabilities": ["geolocation"]},
+    }
+
+
+def test_hash_stable_and_changes_with_content():
+    parsed = parse_profile_v2_spectrum(_doc())
+    again = parse_profile_v2_spectrum(_doc())
+    assert profile_hash_v2(parsed) == profile_hash_v2(again)
+    other = _doc()
+    other["metadata"] = {"id": "example", "version": "1.0.1", "status": "custom"}
+    parsed_other = parse_profile_v2_spectrum(other)
+    assert profile_hash_v2(parsed) != profile_hash_v2(parsed_other)
+
+
+def test_context_records_id_version_hash_and_binds_decision():
+    parsed = parse_profile_v2_spectrum(_doc())
+    ctx = profile_context_from_v2(parsed)
+    assert ctx.profile_id == "example"
+    assert ctx.profile_version == "1.0.0"
+    assert len(ctx.profile_hash) == 64
+    assert ("terrain", "required") in ctx.dataset_versions
+    assert ("snapshot_evaluate_apply", "1.0.0") in ctx.mechanism_versions
+    assert ctx.rf_provenance == "path_loss_plus_aggregate/path_loss"
+    decision = Decision(
+        request_id="r1",
+        action=DecisionAction.KEEP,
+        profile=ctx,
+        reason="ok",
+    )
+    assert decision.profile.profile_hash == ctx.profile_hash
+    assert decision.profile is ctx
