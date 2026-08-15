@@ -100,6 +100,11 @@ def _validate_document(profile_id: str, document: Any, source: Path) -> Spectrum
         raise ProfileValidationError(
             f"profile '{profile_id}' at '{source}' must be a mapping, got {type(document).__name__}"
         )
+    if document.get("api_version") == "spectrum-access/v2":
+        raise ProfileValidationError(
+            f"profile '{profile_id}' at '{source}' is Profile v2; "
+            "use parse_profile_v2_spectrum (load_profile is the v1 loader)"
+        )
     try:
         profile = SpectrumProfile.model_validate(document)
     except ValidationError as exc:

@@ -1,6 +1,7 @@
 """Profile YAML v2 (incremental). G3-001: spectrum/ranges/channelization/segments."""
 
 from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
+from spectrum_profiles.v2.migrate import project_v1_to_v2_document
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
 from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
 from spectrum_profiles.v2.schema import (
@@ -36,5 +37,6 @@ __all__ = [
     "parse_profile_v2_spectrum",
     "profile_context_from_v2",
     "profile_hash_v2",
+    "project_v1_to_v2_document",
     "validate_profile_v2_semantics",
 ]
