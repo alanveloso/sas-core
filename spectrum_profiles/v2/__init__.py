@@ -2,20 +2,30 @@
 
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
 from spectrum_profiles.v2.schema import (
+    AccessSection,
+    AuthorizationSection,
     FixedWidthChannelization,
+    GeographySection,
+    PowerSection,
     ProfileMetadata,
     ProfileV2SpectrumDocument,
     SpectrumRange,
     SpectrumSection,
     SpectrumSegment,
+    TemporalSection,
 )
 
 __all__ = [
+    "AccessSection",
+    "AuthorizationSection",
     "FixedWidthChannelization",
+    "GeographySection",
+    "PowerSection",
     "ProfileMetadata",
     "ProfileV2SpectrumDocument",
     "SpectrumRange",
     "SpectrumSection",
     "SpectrumSegment",
+    "TemporalSection",
     "parse_profile_v2_spectrum",
 ]

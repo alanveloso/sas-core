@@ -15,6 +15,8 @@ class MechanismAxis(StrEnum):
     ACCESS = "access"
     AUTHORIZATION = "authorization"
     GEOGRAPHY = "geography"
+    POWER = "power"
+    TEMPORAL = "temporal"
     PROTECTION = "protection"
     COORDINATION = "coordination"
 
@@ -45,7 +47,9 @@ _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("point_radius", MechanismAxis.GEOGRAPHY, "1.0.0"),
     MechanismContract("authorized_area", MechanismAxis.GEOGRAPHY, "1.0.0"),
     MechanismContract("exclusion_zone", MechanismAxis.GEOGRAPHY, "1.0.0"),
-    MechanismContract("max_power", MechanismAxis.PROTECTION, "1.0.0"),
+    MechanismContract("max_power", MechanismAxis.POWER, "1.0.0"),
+    MechanismContract("rule_table", MechanismAxis.POWER, "1.0.0"),
+    MechanismContract("periodic", MechanismAxis.TEMPORAL, "1.0.0"),
     MechanismContract("snapshot_evaluate_apply", MechanismAxis.COORDINATION, "1.0.0"),
 )
 

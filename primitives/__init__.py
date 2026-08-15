@@ -21,6 +21,13 @@ from primitives.geography import GeoPoint, LinearRing, PointRadius, haversine_m
 from primitives.power import PowerDbm, PowerMw, dbm_to_mw, mw_to_dbm
 from primitives.preemption import class_preempts
 from primitives.profile_context import ProfileContext
+from primitives.registry import (
+    MechanismAxis,
+    MechanismContract,
+    MechanismRegistry,
+    builtin_mechanism_registry,
+    select_optional_access,
+)
 from primitives.request import SpectrumRequest, TransmissionFootprint
 from primitives.time import TimeInterval, UtcInstant
 
@@ -38,6 +45,9 @@ __all__ = [
     "Lease",
     "LeaseState",
     "LinearRing",
+    "MechanismAxis",
+    "MechanismContract",
+    "MechanismRegistry",
     "PointRadius",
     "PowerDbm",
     "OrderedAccess",
@@ -49,9 +59,11 @@ __all__ = [
     "TransmissionFootprint",
     "UtcInstant",
     "bind_request_class",
+    "builtin_mechanism_registry",
     "class_preempts",
     "dbm_to_mw",
     "haversine_m",
     "is_apply_write",
     "mw_to_dbm",
+    "select_optional_access",
 ]

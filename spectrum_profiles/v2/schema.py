@@ -1,10 +1,12 @@
-"""Profile v2 spectrum section (G3-001). Other v2 sections arrive in later G3 tasks."""
+"""Profile v2 spectrum section plus access/power/time/geography (G3-001/G3-002)."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from primitives.access import AccessClass, OrderedAccess
 from primitives.frequency import FrequencyRange
+from primitives.geography import GeoPoint, LinearRing, PointRadius
 
 
 class SpectrumSegment(BaseModel):
@@ -94,8 +96,194 @@ class ProfileMetadata(BaseModel):
     based_on: str | None = None
 
 
+class AccessClassConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(..., min_length=1)
+    priority: int
+    preemptible: bool
+
+
+class AccessSection(BaseModel):
+    """Omitted on the parent document when the regime has no classes (D10)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: str = Field(..., min_length=1)
+    classes: tuple[AccessClassConfig, ...]
+
+    @model_validator(mode="after")
+    def _ordered_classes(self) -> AccessSection:
+        if self.mechanism != "ordered_classes":
+            raise ValueError("access.mechanism must be ordered_classes")
+        OrderedAccess(
+            classes=tuple(
+                AccessClass(
+                    class_id=item.id,
+                    priority=item.priority,
+                    preemptible=item.preemptible,
+                )
+                for item in self.classes
+            )
+        )
+        return self
+
+
+class AuthorizationSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: str = Field(..., min_length=1)
+    duration_s: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _duration(self) -> AuthorizationSection:
+        if self.mechanism == "dynamic_lease" and self.duration_s is None:
+            raise ValueError("dynamic_lease requires duration_s")
+        return self
+
+
+class PowerRule(BaseModel):
+    """Closed selector set (D15). No expressions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_eirp_dbm: float
+    max_psd_dbm_mhz: float | None = None
+    indoor_outdoor: str | None = None
+    height_m_low: float | None = None
+    height_m_high: float | None = None
+    area_id: str | None = None
+    device_class: str | None = None
+
+    @model_validator(mode="after")
+    def _selectors(self) -> PowerRule:
+        if self.indoor_outdoor is not None and self.indoor_outdoor not in {
+            "indoor",
+            "outdoor",
+        }:
+            raise ValueError("indoor_outdoor must be 'indoor' or 'outdoor'")
+        if (self.height_m_low is None) != (self.height_m_high is None):
+            raise ValueError("height_m_low and height_m_high must be set together")
+        if self.height_m_low is not None and self.height_m_high is not None:
+            if self.height_m_low < 0 or self.height_m_high < 0:
+                raise ValueError("height_m bounds must be non-negative")
+            if self.height_m_high <= self.height_m_low:
+                raise ValueError("height_m_high must be greater than height_m_low")
+        return self
+
+
+class PowerSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: str = Field(..., min_length=1)
+    rules: tuple[PowerRule, ...] = ()
+
+    @model_validator(mode="after")
+    def _mechanism(self) -> PowerSection:
+        if self.mechanism != "rule_table":
+            raise ValueError("power.mechanism must be rule_table")
+        return self
+
+
+class GeoPointConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    latitude_deg: float
+    longitude_deg: float
+
+    @model_validator(mode="after")
+    def _point(self) -> GeoPointConfig:
+        GeoPoint(latitude_deg=self.latitude_deg, longitude_deg=self.longitude_deg)
+        return self
+
+
+class AuthorizedAreaConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(..., min_length=1)
+    ring: tuple[tuple[float, float], ...]
+
+    @model_validator(mode="after")
+    def _ring(self) -> AuthorizedAreaConfig:
+        LinearRing.from_lon_lat(self.ring)
+        return self
+
+
+class ExclusionZoneConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(..., min_length=1)
+    low_hz: int
+    high_hz: int
+    ring: tuple[tuple[float, float], ...] | None = None
+    center: GeoPointConfig | None = None
+    radius_m: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _area(self) -> ExclusionZoneConfig:
+        FrequencyRange(low_hz=self.low_hz, high_hz=self.high_hz)
+        ring_set = self.ring is not None
+        ball_set = self.center is not None and self.radius_m is not None
+        if ring_set == ball_set:
+            raise ValueError("exclusion zone requires exactly one of ring or center+radius_m")
+        if ring_set:
+            LinearRing.from_lon_lat(self.ring or ())
+            return self
+        if self.center is None or self.radius_m is None:
+            raise ValueError("exclusion zone requires exactly one of ring or center+radius_m")
+        PointRadius(
+            center=GeoPoint(
+                latitude_deg=self.center.latitude_deg,
+                longitude_deg=self.center.longitude_deg,
+            ),
+            radius_m=self.radius_m,
+        )
+        return self
+
+
+class GeographySection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: str = Field(..., min_length=1)
+    authorized_areas: tuple[AuthorizedAreaConfig, ...] = ()
+    exclusion_zones: tuple[ExclusionZoneConfig, ...] = ()
+    center: GeoPointConfig | None = None
+    radius_m: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _payload(self) -> GeographySection:
+        if self.mechanism == "authorized_area" and not self.authorized_areas:
+            raise ValueError("authorized_area requires authorized_areas")
+        if self.mechanism == "exclusion_zone" and not self.exclusion_zones:
+            raise ValueError("exclusion_zone requires exclusion_zones")
+        if self.mechanism == "point_radius":
+            if self.center is None or self.radius_m is None:
+                raise ValueError("point_radius requires center and radius_m")
+            PointRadius(
+                center=GeoPoint(
+                    latitude_deg=self.center.latitude_deg,
+                    longitude_deg=self.center.longitude_deg,
+                ),
+                radius_m=self.radius_m,
+            )
+        return self
+
+
+class PeriodicReevaluation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: str = Field(..., min_length=1)
+    interval_s: int = Field(..., gt=0)
+
+
+class TemporalSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reevaluation: PeriodicReevaluation | None = None
+
+
 class ProfileV2SpectrumDocument(BaseModel):
-    """Envelope + spectrum only. Additional v2 sections are added in later tasks."""
+    """v2 envelope: spectrum plus optional access/authorization/power/geography/temporal."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -103,6 +291,11 @@ class ProfileV2SpectrumDocument(BaseModel):
     kind: str
     metadata: ProfileMetadata
     spectrum: SpectrumSection
+    access: AccessSection | None = None
+    authorization: AuthorizationSection | None = None
+    power: PowerSection | None = None
+    geography: GeographySection | None = None
+    temporal: TemporalSection | None = None
 
     @model_validator(mode="after")
     def _envelope(self) -> ProfileV2SpectrumDocument:
