@@ -9,9 +9,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from primitives.admission import power_exceeds
 from primitives.frequency import FrequencyRange
 from primitives.power import PowerDbm
-from primitives.admission import power_exceeds
+from primitives.refresh import PeriodicRefresh
 from models.models import Cbsd, FccIdRecord, Grant
 from services.blacklist_service import is_cbsd_blacklisted
 from services.dpa_neighborhood import (
@@ -35,7 +36,8 @@ UNSUPPORTED_SPECTRUM = 300
 INTERFERENCE = 400
 GRANT_CONFLICT = 401
 
-HEARTBEAT_INTERVAL_SEC = 60
+DEFAULT_GRANT_REFRESH = PeriodicRefresh(interval_seconds=60)
+HEARTBEAT_INTERVAL_SEC = DEFAULT_GRANT_REFRESH.interval_seconds
 # Long enough for HBT.12 (sleep 240s + optional 300s) yet < 24h for HBT.6.
 DEFAULT_GRANT_DURATION_SEC = 900
 CAT_A_MAX_EIRP_10MHZ = 30.0

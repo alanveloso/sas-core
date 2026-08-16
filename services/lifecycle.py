@@ -15,6 +15,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models.models import Cbsd, Grant
+from primitives.refresh import open_until
+from primitives.time import UtcInstant
 
 SUCCESS = 0
 MISSING_PARAM = 102
@@ -246,7 +248,8 @@ def _grant_expired(grant: Grant, *, now: datetime | None = None) -> bool:
     expire = grant.grant_expire_time
     if expire is None:
         return False
-    return ensure_utc(expire).replace(microsecond=0) <= wall
+    end = ensure_utc(expire).replace(microsecond=0)
+    return not open_until(UtcInstant(end), UtcInstant(wall))
 
 
 def resolve_grant_state(

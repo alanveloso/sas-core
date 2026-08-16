@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from models.models import Grant
 from services.blacklist_service import is_cbsd_blacklisted
 from services.dpa_neighborhood import compute_transmit_expire_time
-from services.grant_service import HEARTBEAT_INTERVAL_SEC
+from services.grant_service import DEFAULT_GRANT_REFRESH
 from services.meas_report import (
     FLAG_MEAS_HBT,
     MEAS_WITH_GRANT,
@@ -264,8 +264,9 @@ def process_heartbeat(
                                 cbsd_id=cbsd_id,
                                 grant_id=grant_id,
                                 grant_expire=grant.grant_expire_time,
-                                heartbeat_interval=grant.heartbeat_interval
-                                or HEARTBEAT_INTERVAL_SEC,
+                                heartbeat_interval=DEFAULT_GRANT_REFRESH.advertised(
+                                    grant.heartbeat_interval
+                                ),
                             )
                         )
                     else:
@@ -288,8 +289,9 @@ def process_heartbeat(
                             cbsd_id=cbsd_id,
                             grant_id=grant_id,
                             grant_expire=grant.grant_expire_time,
-                            heartbeat_interval=grant.heartbeat_interval
-                            or HEARTBEAT_INTERVAL_SEC,
+                            heartbeat_interval=DEFAULT_GRANT_REFRESH.advertised(
+                                grant.heartbeat_interval
+                            ),
                         )
                     )
                     continue
@@ -298,7 +300,6 @@ def process_heartbeat(
                 # expiration so overnight scheduled-federal heartbeats can still observe
                 # TERMINATED_GRANT (HBT_6 also accepts 500). Federal 501 must not override
                 # expiration — an already-expired grant stays 103.
-                from services.clock import ensure_utc, utc_now
                 from services.federal_db_service import heartbeat_federal_code
 
                 federal_code = heartbeat_federal_code(db, cbsd, grant)
@@ -311,9 +312,9 @@ def process_heartbeat(
                     )
                     continue
 
-                if ensure_utc(grant.grant_expire_time).replace(microsecond=0) <= utc_now().replace(
-                    microsecond=0
-                ):
+                from services.lifecycle import _grant_expired
+
+                if _grant_expired(grant):
                     apply_grant_event(
                         grant,
                         GrantEvent.EXPIRE,
@@ -343,8 +344,9 @@ def process_heartbeat(
                             cbsd_id=cbsd_id,
                             grant_id=grant_id,
                             grant_expire=grant.grant_expire_time,
-                            heartbeat_interval=grant.heartbeat_interval
-                            or HEARTBEAT_INTERVAL_SEC,
+                            heartbeat_interval=DEFAULT_GRANT_REFRESH.advertised(
+                                grant.heartbeat_interval
+                            ),
                         )
                     )
                     continue
@@ -404,8 +406,9 @@ def process_heartbeat(
                         grant_expire=grant.grant_expire_time
                         if req.get("grantRenew") is True
                         else None,
-                        heartbeat_interval=grant.heartbeat_interval
-                        or HEARTBEAT_INTERVAL_SEC,
+                        heartbeat_interval=DEFAULT_GRANT_REFRESH.advertised(
+                            grant.heartbeat_interval
+                        ),
                         meas_config=meas_config,
                     )
                 )

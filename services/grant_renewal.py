@@ -16,9 +16,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models.models import Grant, PalRecord
+from primitives.authorization import FixedWindow
+from primitives.time import TimeInterval
 from services.grant_service import DEFAULT_GRANT_DURATION_SEC
 from services.lifecycle import (
     TERMINAL_GRANT_STATES,
+    _grant_expired,
     resolve_grant_state,
 )
 
@@ -182,7 +185,7 @@ def compute_renewal(
         return RenewalResult(
             ok=False, response_code=INVALID_PARAM, detail="terminal_or_expired"
         )
-    if ensure_utc(grant.grant_expire_time).replace(microsecond=0) <= wall:
+    if _grant_expired(grant, now=wall):
         return RenewalResult(
             ok=False, response_code=INVALID_PARAM, detail="grant_already_expired"
         )
@@ -208,7 +211,9 @@ def compute_renewal(
             return RenewalResult(
                 ok=False, response_code=INVALID_PARAM, detail="pal_license_expired"
             )
-        new_expire = min(default, cap)
+        requested = TimeInterval.from_datetimes(wall, default)
+        cap_window = FixedWindow(window=TimeInterval.from_datetimes(wall, cap))
+        new_expire = default if cap_window.allows_validity(requested) else cap
     else:
         new_expire = default
 
