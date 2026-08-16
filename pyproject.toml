@@ -25,6 +25,15 @@ dependencies = [
   "shapely==1.7.1",
 ]
 
+[project.entry-points."spectrum_access.device_adapters"]
+mapping = "adapters.device:MappingDeviceAdapter"
+
+[project.entry-points."spectrum_access.network_adapters"]
+mapping = "adapters.device:MappingNetworkAdapter"
+
+[project.entry-points."spectrum_access.protocol_adapters"]
+generic_json = "adapters.protocol:GenericJsonProtocolAdapter"
+
 [project.optional-dependencies]
 dev = [
   "pytest==9.1.1",
