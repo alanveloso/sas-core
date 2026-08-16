@@ -60,6 +60,7 @@ include = [
   "compliance*",
   "primitives*",
   "adapters*",
+  "providers*",
 ]
 
 [tool.setuptools.package-data]
@@ -93,6 +94,7 @@ source = [
   "tools",
   "primitives",
   "adapters",
+  "providers",
 ]
 omit = ["tests/*", "*/__pycache__/*"]
 

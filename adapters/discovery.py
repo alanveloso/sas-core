@@ -1,7 +1,8 @@
 """Adapter plugin discovery via entry points (G4-003).
 
 Third-party packages publish groups under ``spectrum_access.*`` without editing
-Coordination Core. Data/RF/mechanism groups are reserved names only.
+Coordination Core. Data providers load via ``providers.discovery``.
+RF/mechanism groups remain reserved names only.
 """
 
 from __future__ import annotations
@@ -33,9 +34,7 @@ ADAPTER_GROUPS = frozenset(
     }
 )
 
-RESERVED_GROUPS = ADAPTER_GROUPS | frozenset(
-    {GROUP_MECHANISMS, GROUP_DATA_PROVIDERS, GROUP_RF_MODELS}
-)
+RESERVED_GROUPS = ADAPTER_GROUPS | frozenset({GROUP_MECHANISMS, GROUP_RF_MODELS})
 
 
 def _default_list_entry_points(group: str) -> Sequence[Any]:
