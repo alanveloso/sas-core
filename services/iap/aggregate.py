@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import math
-
+from primitives.power import dbm_to_mw, mw_to_dbm
+from primitives.rf_arithmetic import sum_linear_mw, within_threshold_mw
 from services.iap.models import (
     ChannelAggregateResult,
     FrequencyChannel,
@@ -22,16 +22,6 @@ DEFAULT_EIRP_FLOOR_DBM_MHZ = -137.0
 # WINNF interference.ESC_CAT_A_HIGH_FREQ_HZ — Cat A not considered for ESC
 # constraints at/above this edge (grant or channel low).
 ESC_CAT_A_HIGH_FREQ_HZ = 3_660_000_000
-
-
-def dbm_to_mw(dbm: float) -> float:
-    return 10.0 ** (dbm / 10.0)
-
-
-def mw_to_dbm(mw: float) -> float:
-    if mw <= 0.0:
-        return float("-inf")
-    return 10.0 * math.log10(mw)
 
 
 def apply_pre_iap_margin_db(threshold_dbm: float, margin_db: float) -> float:
@@ -112,9 +102,25 @@ def aggregate_channel(
         managing_sas_mw=float(asas),
         threshold_mw=threshold_mw,
         fairshare_mw=fairshare,
-        within_threshold=agg <= threshold_mw + 1e-15,
+        within_threshold=within_threshold_mw(agg, threshold_mw),
     )
 
 
 def sum_interference_mw(values: list[float]) -> float:
-    return float(sum(max(0.0, v) for v in values))
+    return sum_linear_mw(values)
+
+
+__all__ = (
+    "DEFAULT_EIRP_FLOOR_DBM_MHZ",
+    "EIRP_STEP_DB",
+    "ESC_CAT_A_HIGH_FREQ_HZ",
+    "IAPBW_HZ",
+    "aggregate_channel",
+    "apply_pre_iap_margin_db",
+    "dbm_to_mw",
+    "grant_overlaps_channel",
+    "mw_to_dbm",
+    "overlapping_iap_channels",
+    "resolve_iap_band_origin_hz",
+    "sum_interference_mw",
+)

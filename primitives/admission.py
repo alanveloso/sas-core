@@ -1,6 +1,6 @@
 """Admission of a spectrum request against declarative constraints (G5-003).
 
-No protocol nouns. PAL/GAA/IAP stay in CBRS services.
+No protocol nouns. Access-class and IAP loops stay in services.
 """
 
 from __future__ import annotations

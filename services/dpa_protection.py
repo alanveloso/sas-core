@@ -28,8 +28,14 @@ from typing import Any, Callable, Mapping, Sequence
 from sqlalchemy.orm import Session
 
 from models.models import Cbsd, Grant
+from primitives.power import mw_to_dbm
+from primitives.rf_arithmetic import (
+    received_power_dbm,
+    received_power_mw,
+    sum_linear_mw,
+    within_threshold_dbm,
+)
 from services.geometry import within_geojson_buffer_m
-from services.iap.aggregate import dbm_to_mw, mw_to_dbm
 from services.propagation.errors import PropagationUnavailableError
 from services.propagation.rel1ext_dpa import (
     ACTIVITY_LOSS_FACTOR_DB,
@@ -391,11 +397,11 @@ def interference_dbm_at_point(
     eirp = cochannel_eirp_dbm(grant, low_hz, high_hz)
     if eirp == float("-inf"):
         return None
-    inter_dbm = eirp - float(path_loss_db)
+    inter_dbm = received_power_dbm(eirp, path_loss_db)
     return PointInterference(
         grant_id=grant.grant_id,
         interference_dbm=inter_dbm,
-        interference_mw=dbm_to_mw(inter_dbm),
+        interference_mw=received_power_mw(eirp, path_loss_db),
         path_loss_db=float(path_loss_db),
     )
 
@@ -407,10 +413,11 @@ def aggregate_within_threshold(
     margin_db: float = DEFAULT_DPA_MARGIN_DB,
 ) -> tuple[float, bool]:
     """Return (I_agg_dbm, ok) for I_agg ≤ TH + Δ."""
-    total_mw = sum(max(0.0, c.interference_mw) for c in contributions)
-    agg_dbm = mw_to_dbm(total_mw) if total_mw > 0 else float("-inf")
-    limit = float(threshold_dbm) + float(margin_db)
-    return agg_dbm, agg_dbm <= limit + 1e-12
+    total_mw = sum_linear_mw(c.interference_mw for c in contributions)
+    agg_dbm = mw_to_dbm(total_mw)
+    return agg_dbm, within_threshold_dbm(
+        agg_dbm, threshold_dbm, margin_db, abs_tol=1e-12
+    )
 
 
 def build_movelist(

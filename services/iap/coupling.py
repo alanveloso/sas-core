@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 from typing import Callable, Literal, Sequence
 
-from services.iap.aggregate import dbm_to_mw
+from primitives.rf_arithmetic import db_from_linear, linear_from_db, received_power_mw
 from services.iap.engine import InterferenceCoupling
 from services.iap.models import (
     FrequencyChannel,
@@ -125,14 +125,6 @@ def itm_path_loss_db(
     return float(result.db_loss)
 
 
-def _linear_to_db(value: float) -> float:
-    return 10.0 * math.log10(value)
-
-
-def _db_to_linear(value: float) -> float:
-    return 10.0 ** (value / 10.0)
-
-
 def effective_system_eirp_dbm(
     max_eirp_dbm_mhz: float,
     cbsd_max_ant_gain_dbi: float,
@@ -144,7 +136,7 @@ def effective_system_eirp_dbm(
     return (
         (float(max_eirp_dbm_mhz) - float(cbsd_max_ant_gain_dbi))
         + float(effective_ant_gain_dbi)
-        + _linear_to_db(float(reference_bandwidth_hz) / MHZ_HZ)
+        + db_from_linear(float(reference_bandwidth_hz) / MHZ_HZ)
     )
 
 
@@ -164,8 +156,8 @@ def esc_mask_loss_db(channel: FrequencyChannel) -> float:
         freq_hz += MHZ_HZ
     if not attens:
         raise IapCouplingUnavailable("ESC mask loss: empty frequency sampling")
-    mean_lin = sum(_db_to_linear(-a) for a in attens) / float(len(attens))
-    return float(-_linear_to_db(mean_lin))
+    mean_lin = sum(linear_from_db(-a) for a in attens) / float(len(attens))
+    return float(-db_from_linear(mean_lin))
 
 
 def make_iap_coupling(
@@ -181,7 +173,7 @@ def make_iap_coupling(
         eirp_dbm_mhz: float,
     ) -> float:
         pl_db = float(path_loss_db_fn(grant, point, channel))
-        return float(dbm_to_mw(float(eirp_dbm_mhz) - pl_db))
+        return float(received_power_mw(float(eirp_dbm_mhz), pl_db))
 
     return coupling
 
@@ -334,8 +326,7 @@ def make_esc_iap_coupling(
             float(eirp_dbm_mhz), cbsd_peak, g_cbsd + g_esc
         )
         mask = esc_mask_loss_db(channel)
-        interf_dbm = eirp_eff - db_loss - mask
-        return float(dbm_to_mw(interf_dbm))
+        return float(received_power_mw(eirp_eff, db_loss + mask))
 
     return coupling
 

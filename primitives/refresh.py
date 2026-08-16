@@ -23,7 +23,7 @@ def open_until(end: UtcInstant, instant: UtcInstant) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class PeriodicRefresh:
-    """Advertised keep-alive period in seconds. Not grantExpireTime."""
+    """Advertised keep-alive period in seconds. Not outer lease validity."""
 
     interval_seconds: int
 

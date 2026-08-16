@@ -32,6 +32,15 @@ from primitives.registry import (
     select_optional_access,
 )
 from primitives.request import SpectrumRequest, TransmissionFootprint
+from primitives.rf_arithmetic import (
+    db_from_linear,
+    linear_from_db,
+    received_power_dbm,
+    received_power_mw,
+    sum_linear_mw,
+    within_threshold_dbm,
+    within_threshold_mw,
+)
 from primitives.time import TimeInterval, UtcInstant
 
 __all__ = [
@@ -66,12 +75,19 @@ __all__ = [
     "bind_request_class",
     "builtin_mechanism_registry",
     "class_preempts",
+    "db_from_linear",
     "dbm_to_mw",
     "evaluate_admission",
     "haversine_m",
     "is_apply_write",
+    "linear_from_db",
     "mw_to_dbm",
     "open_until",
     "power_exceeds",
+    "received_power_dbm",
+    "received_power_mw",
     "select_optional_access",
+    "sum_linear_mw",
+    "within_threshold_dbm",
+    "within_threshold_mw",
 ]
