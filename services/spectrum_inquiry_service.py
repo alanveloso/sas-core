@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from primitives.channelization import assignment_channels
 from models.models import AdminInjectedData, Cbsd
 from services.blacklist_service import is_cbsd_blacklisted
 from services.geometry import haversine_m, point_in_geojson
@@ -54,31 +55,17 @@ def _subtract_range(
 
 
 def _split_10mhz(low: int, high: int) -> list[tuple[int, int]]:
-    channels: list[tuple[int, int]] = []
-    # Align to CBRS 10 MHz grid starting at 3550 MHz.
-    start = max(low, CBRS_LOW_HZ)
-    end = min(high, CBRS_HIGH_HZ)
-    if end <= start:
-        return channels
-    aligned = ((start + CHANNEL_HZ - 1) // CHANNEL_HZ) * CHANNEL_HZ
-    # If start is already on-grid and within range, keep it.
-    if start % CHANNEL_HZ == 0:
-        aligned = start
-    elif aligned - CHANNEL_HZ >= start and aligned - CHANNEL_HZ >= CBRS_LOW_HZ:
-        aligned = aligned - CHANNEL_HZ
-    # Prefer exact coverage: if start is mid-channel, emit from exact start.
-    if start < aligned:
-        # Keep leftover head as its own channel so contain-checks can match edges.
-        head_end = min(aligned, end)
-        if head_end > start:
-            channels.append((start, head_end))
-    cur = aligned
-    while cur + CHANNEL_HZ <= end:
-        channels.append((cur, cur + CHANNEL_HZ))
-        cur += CHANNEL_HZ
-    if cur < end:
-        channels.append((cur, end))
-    return channels
+    return [
+        (ch.low_hz, ch.high_hz)
+        for ch in assignment_channels(
+            low,
+            high,
+            width_hz=CHANNEL_HZ,
+            origin_hz=CBRS_LOW_HZ,
+            clip_low_hz=CBRS_LOW_HZ,
+            clip_high_hz=CBRS_HIGH_HZ,
+        )
+    ]
 
 
 def _cbsd_location(cbsd: Cbsd) -> tuple[float | None, float | None]:

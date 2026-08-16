@@ -9,6 +9,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from primitives.frequency import FrequencyRange
+from primitives.power import PowerDbm
+from primitives.admission import power_exceeds
 from models.models import Cbsd, FccIdRecord, Grant
 from services.blacklist_service import is_cbsd_blacklisted
 from services.dpa_neighborhood import (
@@ -93,8 +96,12 @@ def _parse_freq(
         return INVALID_PARAM, None, None
     if high_i <= low_i:
         return INVALID_PARAM, None, None
-    # Fully or partially outside CBRS → 300.
-    if low_i < CBRS_LOW_HZ or high_i > CBRS_HIGH_HZ:
+    try:
+        asked = FrequencyRange(low_hz=low_i, high_hz=high_i)
+        band = FrequencyRange(low_hz=CBRS_LOW_HZ, high_hz=CBRS_HIGH_HZ)
+    except ValueError:
+        return INVALID_PARAM, None, None
+    if not band.contains(asked):
         return UNSUPPORTED_SPECTRUM, None, None
     return None, low_i, high_i
 
@@ -291,7 +298,7 @@ def process_grant(
 
         fcc = db.query(FccIdRecord).filter_by(fcc_id=cbsd.fcc_id).first()
         fcc_max = float(fcc.fcc_max_eirp) if fcc else CAT_B_MAX_EIRP_10MHZ
-        if max_eirp > _max_allowed_eirp_mhz(cbsd, fcc_max):
+        if power_exceeds(PowerDbm(max_eirp), PowerDbm(_max_allowed_eirp_mhz(cbsd, fcc_max))):
             responses.append(_resp(INVALID_PARAM, cbsd_id=cbsd_id))
             continue
 
