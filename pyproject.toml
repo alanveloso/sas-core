@@ -34,6 +34,9 @@ mapping = "adapters.device:MappingNetworkAdapter"
 [project.entry-points."spectrum_access.protocol_adapters"]
 generic_json = "adapters.protocol:GenericJsonProtocolAdapter"
 
+[project.entry-points."spectrum_access.rf_models"]
+free_space = "rf.cbrs_winnforum:free_space_rf_adapter"
+
 [project.optional-dependencies]
 dev = [
   "pytest==9.1.1",
@@ -61,6 +64,7 @@ include = [
   "primitives*",
   "adapters*",
   "providers*",
+  "rf*",
 ]
 
 [tool.setuptools.package-data]
@@ -95,6 +99,7 @@ source = [
   "primitives",
   "adapters",
   "providers",
+  "rf",
 ]
 omit = ["tests/*", "*/__pycache__/*"]
 

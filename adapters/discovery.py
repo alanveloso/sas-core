@@ -2,7 +2,7 @@
 
 Third-party packages publish groups under ``spectrum_access.*`` without editing
 Coordination Core. Data providers load via ``providers.discovery``.
-RF/mechanism groups remain reserved names only.
+RF models load via ``rf.discovery``. Mechanism groups remain reserved.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ ADAPTER_GROUPS = frozenset(
     }
 )
 
-RESERVED_GROUPS = ADAPTER_GROUPS | frozenset({GROUP_MECHANISMS, GROUP_RF_MODELS})
+RESERVED_GROUPS = ADAPTER_GROUPS | frozenset({GROUP_MECHANISMS})
 
 
 def _default_list_entry_points(group: str) -> Sequence[Any]:
