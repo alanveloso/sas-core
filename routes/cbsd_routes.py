@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from adapters.winnforum_rest import WinnForumRestProtocolAdapter
 from database import get_db
 from schemas.deregistration import DeregistrationRequestItem
 from schemas.grant import GrantRequestItem
@@ -34,23 +35,7 @@ from services.spectrum_inquiry_service import process_spectrum_inquiry
 
 router = APIRouter(prefix="/v1.2", tags=["cbsd-sas"])
 
-_REQUEST_KEYS = {
-    "registration": "registrationRequest",
-    "spectrumInquiry": "spectrumInquiryRequest",
-    "grant": "grantRequest",
-    "heartbeat": "heartbeatRequest",
-    "relinquishment": "relinquishmentRequest",
-    "deregistration": "deregistrationRequest",
-}
-
-_RESPONSE_KEYS = {
-    "registration": "registrationResponse",
-    "spectrumInquiry": "spectrumInquiryResponse",
-    "grant": "grantResponse",
-    "heartbeat": "heartbeatResponse",
-    "relinquishment": "relinquishmentResponse",
-    "deregistration": "deregistrationResponse",
-}
+_PROTOCOL = WinnForumRestProtocolAdapter()
 
 ServiceRunner = Callable[[list[dict[str, Any]], str | None], list[dict[str, Any]]]
 
@@ -58,7 +43,7 @@ ServiceRunner = Callable[[list[dict[str, Any]], str | None], list[dict[str, Any]
 def _single_code_response(procedure: str, code: int) -> JSONResponse:
     return JSONResponse(
         status_code=200,
-        content={_RESPONSE_KEYS[procedure]: [{"response": {"responseCode": code}}]},
+        content={_PROTOCOL.response_key(procedure): [{"response": {"responseCode": code}}]},
     )
 
 
@@ -75,7 +60,7 @@ def _run_batch(
     if not auth.allowed:
         return _single_code_response(procedure, auth.denial_code or CERT_ERROR)
 
-    request_key = _REQUEST_KEYS[procedure]
+    request_key = _PROTOCOL.request_key(procedure)
     raw_items = body.get(request_key)
     if raw_items is None:
         # Protocol envelope (HTTP 200), not FastAPI 400 → WINNF remap ambiguity.
@@ -138,7 +123,7 @@ def registration(
 ):
     return _run_batch(
         procedure="registration",
-        response_key="registrationResponse",
+        response_key=_PROTOCOL.response_key("registration"),
         body=body,
         item_model=RegistrationRequestItem,
         request=request,
@@ -156,7 +141,7 @@ def grant(
 ):
     return _run_batch(
         procedure="grant",
-        response_key="grantResponse",
+        response_key=_PROTOCOL.response_key("grant"),
         body=body,
         item_model=GrantRequestItem,
         request=request,
@@ -174,7 +159,7 @@ def heartbeat(
 ):
     return _run_batch(
         procedure="heartbeat",
-        response_key="heartbeatResponse",
+        response_key=_PROTOCOL.response_key("heartbeat"),
         body=body,
         item_model=HeartbeatRequestItem,
         request=request,
@@ -192,7 +177,7 @@ def spectrum_inquiry(
 ):
     return _run_batch(
         procedure="spectrumInquiry",
-        response_key="spectrumInquiryResponse",
+        response_key=_PROTOCOL.response_key("spectrumInquiry"),
         body=body,
         item_model=SpectrumInquiryRequestItem,
         request=request,
@@ -210,7 +195,7 @@ def relinquishment(
 ):
     return _run_batch(
         procedure="relinquishment",
-        response_key="relinquishmentResponse",
+        response_key=_PROTOCOL.response_key("relinquishment"),
         body=body,
         item_model=RelinquishmentRequestItem,
         request=request,
@@ -228,7 +213,7 @@ def deregistration(
 ):
     return _run_batch(
         procedure="deregistration",
-        response_key="deregistrationResponse",
+        response_key=_PROTOCOL.response_key("deregistration"),
         body=body,
         item_model=DeregistrationRequestItem,
         request=request,

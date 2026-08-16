@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from adapters.winnforum_rest import WINNFORUM_SAS_VERSION, WinnForumRestProtocolAdapter
 from services.error_handlers import INVALID_VALUE, MAXIMUM_BATCH_SIZE, VERSION_UNSUPPORTED
 
 # Mounted implementation version for CBSD-SAS procedures (routes/cbsd_routes.py).
 # Matching is case-sensitive and aligned with the concrete /v1.2 router prefix.
-SUPPORTED_CBSD_SAS_VERSIONS: frozenset[str] = frozenset({"v1.2"})
+SUPPORTED_CBSD_SAS_VERSIONS: frozenset[str] = frozenset({WINNFORUM_SAS_VERSION})
 
 
 class UnsupportedVersionBatchError(ValueError):
@@ -30,37 +31,13 @@ class ProcedureVersionSpec:
 
 
 PROCEDURE_SPECS: dict[str, ProcedureVersionSpec] = {
-    "registration": ProcedureVersionSpec(
-        request_key="registrationRequest",
-        response_key="registrationResponse",
-        echo_fields=(),
-    ),
-    "spectrumInquiry": ProcedureVersionSpec(
-        request_key="spectrumInquiryRequest",
-        response_key="spectrumInquiryResponse",
-        echo_fields=("cbsdId",),
-    ),
-    "grant": ProcedureVersionSpec(
-        request_key="grantRequest",
-        response_key="grantResponse",
-        echo_fields=("cbsdId",),
-    ),
-    "heartbeat": ProcedureVersionSpec(
-        request_key="heartbeatRequest",
-        response_key="heartbeatResponse",
-        echo_fields=("cbsdId", "grantId"),
-        include_past_transmit_expire=True,
-    ),
-    "relinquishment": ProcedureVersionSpec(
-        request_key="relinquishmentRequest",
-        response_key="relinquishmentResponse",
-        echo_fields=("cbsdId", "grantId"),
-    ),
-    "deregistration": ProcedureVersionSpec(
-        request_key="deregistrationRequest",
-        response_key="deregistrationResponse",
-        echo_fields=("cbsdId",),
-    ),
+    spec.name: ProcedureVersionSpec(
+        request_key=spec.request_key,
+        response_key=spec.response_key,
+        echo_fields=spec.echo_fields,
+        include_past_transmit_expire=spec.include_past_transmit_expire,
+    )
+    for spec in WinnForumRestProtocolAdapter().procedure_specs()
 }
 
 
