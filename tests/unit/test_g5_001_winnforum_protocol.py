@@ -35,10 +35,10 @@ def test_envelope_keys_match_existing_cbsd_sas_contract():
         )
 
 
-def test_decode_to_consumer_is_deferred():
+def test_decode_requires_procedure_array():
     protocol = WinnForumRestProtocolAdapter()
-    with pytest.raises(ValueError, match="out of scope"):
-        protocol.decode({"grantRequest": []}, consumer_adapter=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="missing a procedure array"):
+        protocol.decode({}, consumer_adapter=None)  # type: ignore[arg-type]
 
 
 def test_discovery_loads_winnforum_rest_factory():

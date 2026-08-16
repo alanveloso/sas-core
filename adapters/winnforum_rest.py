@@ -1,18 +1,21 @@
 """WInnForum CBSD-SAS REST protocol adapter (G5-001).
 
-Owns v1.2 procedure envelope keys used by existing routes. Mapping a CBSD
-record to ConsumerView is out of scope (G5-002). Domain admission rewrite is
-out of scope (G5-003). HTTP status/responseCode behavior stays in routes.
+Owns v1.2 procedure envelope keys used by existing routes. CBSD items map to
+ConsumerView via an injected ConsumerAdapter (G5-002). Domain admission rewrite
+is out of scope (G5-003). HTTP status/responseCode behavior stays in routes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Mapping
 
 from adapters.device import ConsumerAdapter
-from adapters.protocol import PROTOCOL_API_VERSION, ProtocolInbound
+from adapters.protocol import PROTOCOL_API_VERSION, DomainOperation, ProtocolInbound
 from primitives.decision import Decision
+from primitives.request import SpectrumRequest
+from primitives.time import UtcInstant
 
 WINNFORUM_REST_PROTOCOL_ID = "winnforum-rest"
 WINNFORUM_SAS_VERSION = "v1.2"
@@ -110,7 +113,31 @@ class WinnForumRestProtocolAdapter:
     def decode(
         self, envelope: Mapping[str, object], consumer_adapter: ConsumerAdapter
     ) -> ProtocolInbound:
-        raise ValueError("WInnForum item-to-consumer mapping is out of scope")
+        item = self._first_item(envelope)
+        view = consumer_adapter.to_consumer(item)
+        holder = view.holder_id
+        return ProtocolInbound(
+            operation=DomainOperation.REQUEST_SPECTRUM,
+            request=SpectrumRequest(
+                request_id=holder,
+                holder_id=holder,
+                footprints=view.footprints,
+                requested_at=UtcInstant(datetime.now(timezone.utc)),
+            ),
+        )
+
+    def _first_item(self, envelope: Mapping[str, object]) -> Mapping[str, object]:
+        for spec in WINNFORUM_PROCEDURES:
+            raw = envelope.get(spec.request_key)
+            if raw is None:
+                continue
+            if not isinstance(raw, list) or not raw:
+                raise ValueError("WInnForum batch must contain at least one item")
+            first = raw[0]
+            if not isinstance(first, Mapping):
+                raise ValueError("WInnForum item must be an object")
+            return first
+        raise ValueError("WInnForum request envelope is missing a procedure array")
 
     def encode(self, decision: Decision) -> dict[str, object]:
         raise ValueError("WInnForum HTTP responses are not generic Decision envelopes")

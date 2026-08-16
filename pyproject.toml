@@ -27,6 +27,7 @@ dependencies = [
 
 [project.entry-points."spectrum_access.device_adapters"]
 mapping = "adapters.device:MappingDeviceAdapter"
+cbsd = "adapters.cbsd:cbsd_device_adapter"
 
 [project.entry-points."spectrum_access.network_adapters"]
 mapping = "adapters.device:MappingNetworkAdapter"

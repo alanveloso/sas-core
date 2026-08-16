@@ -1,4 +1,7 @@
-"""Device, network, and protocol adapters (G4/G5)."""
+"""Generic device, network, and protocol adapter surface (G4).
+
+Regime-specific codecs live in dedicated modules, not this barrel.
+"""
 
 from adapters.device import (
     ADAPTER_API_VERSION,
@@ -24,18 +27,12 @@ from adapters.protocol import (
     ProtocolAdapter,
     ProtocolInbound,
 )
-from adapters.winnforum_rest import (
-    WINNFORUM_REST_PROTOCOL_ID,
-    WinnForumRestProtocolAdapter,
-    winnforum_rest_protocol_adapter,
-)
 
 __all__ = [
     "ADAPTER_API_VERSION",
     "ADAPTER_GROUPS",
     "PROTOCOL_API_VERSION",
     "GENERIC_JSON_PROTOCOL_ID",
-    "WINNFORUM_REST_PROTOCOL_ID",
     "GROUP_DEVICE_ADAPTERS",
     "GROUP_NETWORK_ADAPTERS",
     "GROUP_PROTOCOL_ADAPTERS",
@@ -49,7 +46,5 @@ __all__ = [
     "MappingNetworkAdapter",
     "ProtocolAdapter",
     "ProtocolInbound",
-    "WinnForumRestProtocolAdapter",
     "consumer_meets_requirements",
-    "winnforum_rest_protocol_adapter",
 ]
