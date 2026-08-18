@@ -834,9 +834,11 @@ def apply_peer_conflict_to_local_grants(db: Session) -> None:
     Convenience wrapper used by older call sites/tests. Prefer the staged
     pipeline in ``execute_cpas_pipeline`` for daily activities.
     """
-    snapshot = freeze_cpas_snapshot(db)
-    decisions = evaluate_cpas_protections(db, snapshot)
-    if apply_cpas_decisions(db, decisions):
+    from primitives.coordination import run_snapshot_evaluate_apply
+    from services.cpas_cycle import CpasCoordinationCycle
+
+    result = run_snapshot_evaluate_apply(CpasCoordinationCycle(db))
+    if result.writes:
         db.commit()
 
 
@@ -904,8 +906,11 @@ def _run_pipeline_critical_section(
 
         # Recompute under coordination so TOCTOU after freeze cannot widen the set;
         # still constrained to snapshot.active_grant_pks.
-        decisions = evaluate_cpas_protections(db, snapshot)
-        terminated = apply_cpas_decisions(db, decisions)
+        from services.cpas_cycle import CpasCoordinationCycle
+
+        cycle = CpasCoordinationCycle(db)
+        decisions = cycle.evaluate(snapshot)
+        terminated = cycle.apply(snapshot, decisions).writes
         dump = create_full_activity_dump(db, commit=False)
 
         from services.cpas_schedule_service import mark_scheduled_success_if_applicable
@@ -981,7 +986,10 @@ def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
             failed_peers=peer_report.get("failed"),
         )
 
-        snapshot = freeze_cpas_snapshot(db, peer_report)
+        from services.cpas_cycle import CpasCoordinationCycle
+
+        cycle = CpasCoordinationCycle(db, peer_sync_report=peer_report)
+        snapshot = cycle.snapshot()
         _stage(
             "freeze_snapshot",
             frozen_at=snapshot.frozen_at,
@@ -990,7 +998,7 @@ def execute_cpas_pipeline(db: Session) -> dict[str, Any]:
         )
 
         # Preview outside the lock (observability); authoritative set is recomputed inside.
-        preview = evaluate_cpas_protections(db, snapshot)
+        preview = cycle.evaluate(snapshot)
         _stage("evaluate_protections", decision_count=len(preview))
 
         if _dialect_name(db) == "sqlite":
