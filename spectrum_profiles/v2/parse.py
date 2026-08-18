@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+import yaml
 
 from primitives.registry import MechanismAxis, MechanismRegistry, builtin_mechanism_registry
-from spectrum_profiles.loader import ProfileValidationError
+from spectrum_profiles.loader import ProfileNotFoundError, ProfileValidationError
 from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
 from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
+
+_V2_PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles" / "v2"
 
 
 def _catalog(registry: MechanismRegistry | None) -> MechanismRegistry:
@@ -65,3 +69,25 @@ def parse_profile_v2_spectrum(
     except ValueError as exc:
         raise ProfileValidationError(str(exc)) from exc
     return parsed
+
+
+def load_profile_v2(
+    profile_id: str,
+    *,
+    registry: MechanismRegistry | None = None,
+) -> ProfileV2SpectrumDocument:
+    """Load a v2 YAML from ``profiles/v2``. Does not replace ``load_profile``."""
+    if not profile_id or "/" in profile_id or "\\" in profile_id or ".." in profile_id:
+        raise ProfileValidationError("invalid profile id")
+    path = (_V2_PROFILES_DIR / f"{profile_id}.yaml").resolve()
+    try:
+        path.relative_to(_V2_PROFILES_DIR.resolve())
+    except ValueError as exc:
+        raise ProfileValidationError("profile path escaped v2 directory") from exc
+    if not path.is_file():
+        raise ProfileNotFoundError(f"profile v2 '{profile_id}' not found")
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ProfileValidationError(f"profile v2 YAML error: {exc}") from exc
+    return parse_profile_v2_spectrum(document, registry=registry)

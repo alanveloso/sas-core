@@ -6,7 +6,7 @@ from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_device_capabilities,
     negotiate_profile_plugins,
 )
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
 from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
 from spectrum_profiles.v2.schema import (
     AccessSection,
@@ -39,6 +39,7 @@ __all__ = [
     "SpectrumSegment",
     "TemporalSection",
     "parse_profile_v2_spectrum",
+    "load_profile_v2",
     "adapters_satisfying_device_capabilities",
     "negotiate_profile_plugins",
     "profile_context_from_v2",

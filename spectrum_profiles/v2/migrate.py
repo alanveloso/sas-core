@@ -1,6 +1,7 @@
 """Project a v1 SpectrumProfile onto a Profile v2 spectrum document.
 
 This does not replace ``load_profile``. CBRS entity packs and IAP/DPA stay on v1.
+The full declarative composition lives in ``profiles/v2/cbrs_winnforum.yaml`` (G5-007).
 Assignment channel width is the current CBRS SIQ grid projected as profile data (D13).
 """
 
