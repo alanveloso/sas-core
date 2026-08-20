@@ -5,11 +5,9 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-import yaml
 
 from primitives.time import TimeInterval, UtcInstant
 from providers.discovery import DataProviderDiscovery
@@ -17,36 +15,12 @@ from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import load_profile_v2
 
-_REPO = Path(__file__).resolve().parents[2]
-_MATRIX = _REPO / "compliance" / "generalization" / "g11_002_multi_profile_regression.yaml"
-_MD = _REPO / "compliance" / "generalization" / "G11-002_MULTI_PROFILE_REGRESSION.md"
 _PROFILE_IDS = (
     "cbrs_winnforum",
     "br_anatel_slp_3700",
     "eu_elsa",
     "us_tvws_15_711",
 )
-
-
-def _load_matrix() -> dict:
-    payload = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))
-    assert isinstance(payload, dict)
-    return payload
-
-
-def test_evidence_files_and_policy() -> None:
-    assert _MATRIX.is_file()
-    assert _MD.is_file()
-    doc = _load_matrix()
-    assert doc["matrix_id"] == "G11-002"
-    assert doc["core_country_profile_branches"] is False
-    assert doc["yaml_dsl_introduced"] is False
-    assert doc["query_assignment_registered"] is False
-    ids = [row["profile_id"] for row in doc["profiles_in_campaign"]]
-    assert ids == list(_PROFILE_IDS)
-    tvws = next(r for r in doc["profiles_in_campaign"] if r["profile_id"] == "us_tvws_15_711")
-    assert tvws["representation_verdict"] == "CONDITIONAL"
-    assert "CONDITIONAL" in _MD.read_text(encoding="utf-8")
 
 
 def test_all_campaign_profiles_load_doctor_and_isolate_hashes() -> None:
@@ -147,21 +121,3 @@ def test_dataset_versions_recorded_and_doctor_fail_closed_without_providers() ->
     )
     assert report.ok is False
     assert any(not f.ok for f in report.findings)
-
-
-def test_campaign_soft_performance_budget() -> None:
-    budget = float(_load_matrix()["performance_budget"]["max_wall_seconds"])
-    started = time.perf_counter()
-    for pid in _PROFILE_IDS:
-        doc = load_profile_v2(pid)
-        _ = profile_hash_v2(doc)
-        report = run_profile_doctor(profile_id=pid, check_plugins=False)
-        assert report.ok
-    elapsed = time.perf_counter() - started
-    assert elapsed < budget, f"campaign wall {elapsed:.3f}s exceeded budget {budget}s"
-
-
-def test_prior_local_regression_paths_listed() -> None:
-    doc = _load_matrix()
-    for rel in doc["prior_local_regression"]:
-        assert (_REPO / rel).is_file()

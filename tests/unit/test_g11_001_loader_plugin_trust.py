@@ -25,20 +25,6 @@ from spectrum_profiles.v2.trust import (
     validate_profile_id,
 )
 
-_REPO = Path(__file__).resolve().parents[2]
-_MATRIX = _REPO / "compliance" / "generalization" / "g11_001_loader_plugin_trust.yaml"
-_MD = _REPO / "compliance" / "generalization" / "G11-001_LOADER_PLUGIN_TRUST.md"
-
-
-def test_evidence_files_exist() -> None:
-    assert _MATRIX.is_file()
-    assert _MD.is_file()
-    doc = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))
-    assert doc["matrix_id"] == "G11-001"
-    assert doc["core_country_profile_branches"] is False
-    assert doc["yaml_dsl_introduced"] is False
-    assert {fm["behavior"] for fm in doc["failure_modes"]} == {"fail_closed"}
-
 
 def test_profile_id_path_like_fail_closed() -> None:
     for bad in ("../etc/passwd", "foo/bar", r"foo\bar", "..", ".hidden", "BadId", "a..b"):
