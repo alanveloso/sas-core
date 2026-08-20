@@ -1,0 +1,176 @@
+"""G8-005: three design regimes on the same core — CBRS + BR + eLSA (local).
+
+Does not claim WInnForum PASS_OFFICIAL or ETSI conformity.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from adapters.cbsd import CbsdDeviceAdapter
+from adapters.elsa1 import Elsa1ProtocolAdapter
+from adapters.managed_consumer import ManagedNetworkAdapter
+from adapters.protocol import DomainOperation
+from primitives.availability import AvailabilityZoneKind
+from spectrum_profiles.context import (
+    DEFAULT_PROFILE_ID,
+    active_profile_id,
+    clear_profile_override,
+    get_active_profile,
+)
+from spectrum_profiles.loader import ProfileNotFoundError, get_profiles_dir, load_profile
+from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
+from spectrum_profiles.v2.cost import measure_profile_cost
+from spectrum_profiles.v2.doctor import run_profile_doctor
+from spectrum_profiles.v2.parse import load_profile_v2
+
+_REPO = Path(__file__).resolve().parents[2]
+_REGIME_IDS = ("cbrs_winnforum", "br_anatel_slp_3700", "eu_elsa")
+
+
+def test_default_active_remains_cbrs_after_three_regime_loads() -> None:
+    clear_profile_override()
+    assert DEFAULT_PROFILE_ID == "cbrs_winnforum"
+    _ = load_profile_v2("cbrs_winnforum")
+    _ = load_profile_v2("br_anatel_slp_3700")
+    _ = load_profile_v2("eu_elsa")
+    assert active_profile_id() == "cbrs_winnforum"
+    active = get_active_profile()
+    assert active.band_plan.low_hz == 3_550_000_000
+    assert active.band_plan.high_hz == 3_700_000_000
+
+
+def test_three_profile_contexts_are_isolated() -> None:
+    cbrs = load_profile_v2("cbrs_winnforum")
+    br = load_profile_v2("br_anatel_slp_3700")
+    elsa = load_profile_v2("eu_elsa")
+    hashes = {
+        profile_hash_v2(cbrs),
+        profile_hash_v2(br),
+        profile_hash_v2(elsa),
+    }
+    assert len(hashes) == 3
+    ctx = {p.metadata.id: profile_context_from_v2(p) for p in (cbrs, br, elsa)}
+    assert ctx["cbrs_winnforum"].profile_id == "cbrs_winnforum"
+    assert ctx["br_anatel_slp_3700"].profile_id == "br_anatel_slp_3700"
+    assert ctx["eu_elsa"].profile_id == "eu_elsa"
+
+    # Distinct regime shapes on the same Profile v2 / core contracts
+    assert cbrs.access is not None
+    assert br.access is None
+    assert elsa.access is None
+    assert cbrs.authorization is not None and cbrs.authorization.mechanism == "dynamic_lease"
+    assert br.authorization is not None and br.authorization.mechanism == "static_authorization"
+    assert elsa.authorization is not None and elsa.authorization.mechanism == "fixed_window"
+    assert cbrs.rf is not None and cbrs.rf.required is True
+    assert br.rf is not None and br.rf.required is False
+    assert elsa.rf is not None and elsa.rf.required is False
+    assert elsa.temporal is not None and elsa.temporal.availability is not None
+    assert elsa.temporal.availability.mechanism == "availability_constraint"
+    assert elsa.requirements is not None
+    assert elsa.requirements.network_capabilities
+    assert not elsa.requirements.device_capabilities
+    assert "geolocation" not in elsa.requirements.network_capabilities
+
+
+def test_all_three_reference_profiles_pass_doctor_and_cost() -> None:
+    for profile_id in _REGIME_IDS:
+        report = run_profile_doctor(profile_id=profile_id)
+        assert report.ok, profile_id + ": " + "; ".join(
+            f"{f.name}={f.detail}" for f in report.findings if not f.ok
+        )
+        cost = measure_profile_cost(profile_id=profile_id, repo_root=_REPO)
+        assert cost.mechanism_reuse_pct == 100.0, profile_id
+        assert cost.mechanisms_novel == ()
+        assert cost.profile_python_loc == 0
+
+
+def test_v1_loader_ignores_v2_only_regimes() -> None:
+    v1_dir = get_profiles_dir()
+    assert (v1_dir / "cbrs_winnforum.yaml").is_file()
+    for regime in ("br_anatel_slp_3700", "eu_elsa"):
+        assert not (v1_dir / f"{regime}.yaml").exists()
+        assert (v1_dir / "v2" / f"{regime}.yaml").is_file()
+        try:
+            load_profile(regime)
+            raise AssertionError(f"v1 loader must not resolve {regime}")
+        except ProfileNotFoundError:
+            pass
+
+
+def test_interleaved_three_regime_loads_preserve_bands() -> None:
+    for _ in range(3):
+        cbrs = load_profile_v2("cbrs_winnforum")
+        br = load_profile_v2("br_anatel_slp_3700")
+        elsa = load_profile_v2("eu_elsa")
+        v1 = load_profile("cbrs_winnforum")
+        assert v1.band_plan.high_hz == 3_700_000_000
+        assert cbrs.spectrum.ranges[0].low_hz == 3_550_000_000
+        assert br.spectrum.ranges[0].low_hz == 3_700_000_000
+        assert elsa.spectrum.ranges[0].low_hz == 2_300_000_000
+
+
+def test_same_core_adapters_compose_without_fake_cbsd() -> None:
+    """CBRS device path and eLSA network+protocol path share ConsumerView/Protocol contracts."""
+    cbsd = CbsdDeviceAdapter()
+    cbsd_view = cbsd.to_consumer(
+        {
+            "cbsdId": "cbsd-1",
+            "installationParam": {
+                "latitude": 39.0,
+                "longitude": -77.0,
+                "height": 10.0,
+                "heightType": "AGL",
+            },
+            "operationParam": {
+                "maxEirp": 23.0,
+                "operationFrequencyRange": {
+                    "lowFrequency": 3550000000,
+                    "highFrequency": 3560000000,
+                },
+            },
+        }
+    )
+    assert "geolocation" in cbsd_view.capabilities
+
+    network = ManagedNetworkAdapter()
+    elsa = Elsa1ProtocolAdapter()
+    inbound = elsa.decode(
+        {
+            "procedure": "elsraiNotification",
+            "transaction_id": "tx-g8-005",
+            "requested_at": "2026-08-20T12:00:00+00:00",
+            "consumer": {
+                "network_id": "mfcn-1",
+                "vsp_id": "vsp-a",
+                "ring": [[0, 0], [1, 0], [1, 1], [0, 0]],
+                "low_hz": 2300000000,
+                "high_hz": 2310000000,
+                "eirp_dbm": 30.0,
+            },
+            "elsrai": {
+                "zones": [
+                    {
+                        "id": "z1",
+                        "kind": "allowance",
+                        "low_hz": 2300000000,
+                        "high_hz": 2320000000,
+                        "ring": [[0, 0], [1, 0], [1, 1], [0, 0]],
+                        "validity_start": "2026-08-20T12:00:00+00:00",
+                        "validity_end": "2026-08-20T18:00:00+00:00",
+                        "mode": "scheduled",
+                    }
+                ],
+                "event_kind": "updated",
+                "event_id": "ev-1",
+                "observed_at": "2026-08-20T12:00:01+00:00",
+            },
+        },
+        network,
+    )
+    assert inbound.operation is DomainOperation.APPLY_AVAILABILITY
+    assert inbound.request.holder_id == "vsp-a/mfcn-1"
+    assert "geolocation" not in network.advertised_capabilities()
+    assert inbound.availability_constraints[0].zone_kind is AvailabilityZoneKind.ALLOWANCE
+    # Distinct holders — network path must not look like CBSD id scheme from protocol.
+    assert inbound.request.holder_id != cbsd_view.holder_id
