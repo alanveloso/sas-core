@@ -43,6 +43,8 @@ def selected_mechanism_ids(parsed: ProfileV2SpectrumDocument) -> tuple[str, ...]
         ids.append(parsed.rf.policy)
         if parsed.rf.propagation_model is not None:
             ids.append(parsed.rf.propagation_model)
+    for item in parsed.constraints:
+        ids.append(item.mechanism)
     seen: set[str] = set()
     ordered: list[str] = []
     for item in ids:

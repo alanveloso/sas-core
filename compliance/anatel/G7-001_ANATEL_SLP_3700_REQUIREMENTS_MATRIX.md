@@ -33,16 +33,16 @@ Esta matriz **não** é evidência de conformidade ANATEL nem autorização para
 | Requirement ID | Source | Section/item | Requirement summary | Profile field/mechanism | Code/plugin | Test | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | BR-SLP-3700-001 | ATO_915_2024 | 5.13.1 / Tabela XII | Faixa operacional 3.700–3.800 MHz; blocos com F1=3.700 MHz, BW=10 MHz, N=10 | `spectrum.ranges`; `spectrum.channelization.mechanism=fixed_width_channelization` (width_hz=10e6, origin_hz=3700e6) | — | TBD:G7-005 | PLANNED_YAML |
-| BR-SLP-3700-002 | ATO_915_2024 | 5.13.2 | Duplexação por divisão de tempo (TDD) na subfaixa | metadata/notes ou parâmetro de profile (sem mechanism TDD dedicado hoje) | — | TBD:G7-005 | GAP_PRIMITIVE |
+| BR-SLP-3700-002 | ATO_915_2024 | 5.13.2 | Duplexação por divisão de tempo (TDD) na subfaixa | `constraints.duplex_mode=tdd` | — | test_g7_003 | PLANNED_YAML |
 | BR-SLP-3700-003 | ATO_915_2024 | 5.13.3-I | e.i.r.p. PSD máx. base/nodal indoor: 30 dBm/10 MHz | `power.mechanism=rule_table` (regra indoor) | — | TBD:G7-005 | PLANNED_YAML |
 | BR-SLP-3700-004 | ATO_915_2024 | 5.13.3-II | e.i.r.p. PSD máx. base/nodal outdoor: 26 dBm/10 MHz | `power.mechanism=rule_table` (regra outdoor) | — | TBD:G7-005 | PLANNED_YAML |
 | BR-SLP-3700-005 | ATO_915_2024 | 5.13.3-III | e.i.r.p. máx. móvel/terminal: 26 dBm (+2 dB tol. conformidade) | `power.mechanism=rule_table` (classe terminal); tolerância de certificação fora do core | — | TBD:G7-005 | PLANNED_YAML |
-| BR-SLP-3700-006 | ATO_915_2024 | 5.13.3.1 | Proibido reforçador/repetidor na faixa | constraint/policy de admissão (rejeitar tipologias repeater) | device adapter capability / payload validation | TBD:G7-005 | GAP_PRIMITIVE |
+| BR-SLP-3700-006 | ATO_915_2024 | 5.13.3.1 | Proibido reforçador/repetidor na faixa | `constraints.forbidden_device_roles` | — | test_g7_003 | PLANNED_YAML |
 | BR-SLP-3700-007 | ATO_915_2024 | 5.13.4–5.13.11 | ACLR, OBUE e espúrios (Tabelas XII-a/b/c) | — (certificação de equipamento) | — | — | OUT_OF_SCOPE_EQUIP |
 | BR-SLP-3700-008 | ATO_915_2024 | 5.13.12 | Autorização limitada aos limites geográficos da propriedade; cobertura só na propriedade | `authorization.mechanism=static_authorization`; `geography.mechanism=authorized_area` (ou footprint da licença) | station/license device adapter | TBD:G7-005 | PLANNED_YAML |
 | BR-SLP-3700-009 | ATO_915_2024 | 5.13.13 | Preferência indoor; outdoor com área de cobertura limitada | `power` indoor/outdoor rules; geography area limits | — | TBD:G7-005 | PLANNED_YAML |
-| BR-SLP-3700-010 | ATO_915_2024 | 5.13.14 | Altura máx. antena outdoor base/nodal: 6 m AGL | regra de admissão / `requirements` ou power/geography parameter | — | TBD:G7-005 | GAP_PRIMITIVE |
-| BR-SLP-3700-011 | ATO_915_2024 | 5.13.15 | Outdoor: largura consignada ≤ 50 MHz | constraint sobre channelization/assignment width | — | TBD:G7-005 | PLANNED_YAML |
+| BR-SLP-3700-010 | ATO_915_2024 | 5.13.14 | Altura máx. antena outdoor base/nodal: 6 m AGL | `constraints.antenna_height_limit` | — | test_g7_003 | PLANNED_YAML |
+| BR-SLP-3700-011 | ATO_915_2024 | 5.13.15 | Outdoor: largura consignada ≤ 50 MHz | `constraints.max_assignment_bandwidth` (+ channelization 10 MHz) | — | test_g7_003 | PLANNED_YAML |
 | BR-SLP-3700-012 | ATO_915_2024 | 5.13.16 | Parâmetros de estações no BDTA públicos para coordenação prévia | `data.required_capabilities` (ex.: `protected_entities`, `boundaries`) | data provider BDTA/bundle BR | TBD:G7-004 | GAP_DATA |
 | BR-SLP-3700-013 | ATO_915_2024 | 5.13.17.1 | Proteger EMSAT (Ilha do Governador) de emissões terrestres | `protection` + `exclusion_zone` / entidade protegida | data provider + geography | TBD:G7-004/G7-005 | GAP_DATA |
 | BR-SLP-3700-014 | ATO_915_2024 | 5.13.17.3–5 / Tabela XII-d | Separação mínima / acordo de coordenação estação terrestre ↔ terrena | `protection.mechanisms` incl. `distance_exclusion`; acordos = PROCESS | data provider estações terrenas | TBD:G7-004/G7-005 | GAP_DATA |

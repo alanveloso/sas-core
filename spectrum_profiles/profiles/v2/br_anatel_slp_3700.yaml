@@ -3,10 +3,8 @@
 # Not loaded by the CBRS v1 request-path loader (spectrum_profiles.loader.load_profile).
 # Not an ANATEL conformity claim. Zero profile-specific Python.
 #
-# Gaps deferred (see matrix): TDD (002), anti-repeater (006), ACLR/OBUE (007),
-# antenna height hard-cap (010), BDTA datasets (012–016), indoor priority (017),
-# TDD sync process (018). Outdoor ≤50 MHz assignment (011) is operational guidance
-# until a reusable width-cap primitive exists (≤5×10 MHz blocks on this grid).
+# Gaps deferred (see matrix / G7-003 justification): indoor-over-outdoor priority (017),
+# TDD sync process (018), ACLR/OBUE (007), BDTA datasets (012–016).
 
 api_version: spectrum-access/v2
 kind: SpectrumProfile
@@ -19,11 +17,14 @@ metadata:
   references:
     - ATO_915_2024
     - BR-SLP-3700-001
+    - BR-SLP-3700-002
     - BR-SLP-3700-003
     - BR-SLP-3700-004
     - BR-SLP-3700-005
+    - BR-SLP-3700-006
     - BR-SLP-3700-008
     - BR-SLP-3700-009
+    - BR-SLP-3700-010
     - BR-SLP-3700-011
     - BR-SLP-3700-012
     - BR-SLP-3700-019
@@ -111,3 +112,19 @@ requirements:
     - geolocation
     - frequency_range
     - max_eirp
+
+constraints:
+  # G7-003 reusable primitives (see compliance/anatel/G7-003_PRIMITIVE_JUSTIFICATION.md)
+  - mechanism: duplex_mode
+    mode: tdd
+  - mechanism: max_assignment_bandwidth
+    max_bandwidth_hz: 50000000
+    indoor_outdoor: outdoor
+  - mechanism: antenna_height_limit
+    max_height_m: 6.0
+    indoor_outdoor: outdoor
+    device_class: base_nodal
+  - mechanism: forbidden_device_roles
+    roles:
+      - repeater
+      - booster

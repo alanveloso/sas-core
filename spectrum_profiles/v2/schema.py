@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing import Annotated, Literal, Union
 
 from primitives.access import AccessClass, OrderedAccess
 from primitives.frequency import FrequencyRange
 from primitives.geography import GeoPoint, LinearRing, PointRadius
+from primitives.station_limits import (
+    AntennaHeightLimit,
+    DuplexMode,
+    DuplexModeRequirement,
+    ForbiddenDeviceRoles,
+    MaxAssignmentBandwidth,
+)
 
 
 class SpectrumSegment(BaseModel):
@@ -362,6 +370,91 @@ class RequirementsSection(BaseModel):
         return self
 
 
+class DuplexModeConstraint(BaseModel):
+    """G7-003: declared duplex mode (closed enum)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: Literal["duplex_mode"] = "duplex_mode"
+    mode: Literal["tdd", "fdd", "half_duplex", "simplex"]
+
+    def to_primitive(self) -> DuplexModeRequirement:
+        return DuplexModeRequirement(mode=DuplexMode(self.mode))
+
+
+class MaxAssignmentBandwidthConstraint(BaseModel):
+    """G7-003: max contiguous assignment bandwidth."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: Literal["max_assignment_bandwidth"] = "max_assignment_bandwidth"
+    max_bandwidth_hz: int = Field(..., gt=0)
+    indoor_outdoor: Literal["indoor", "outdoor"] | None = None
+
+    def to_primitive(self) -> MaxAssignmentBandwidth:
+        return MaxAssignmentBandwidth(
+            max_bandwidth_hz=self.max_bandwidth_hz,
+            indoor_outdoor=self.indoor_outdoor,
+        )
+
+
+class AntennaHeightLimitConstraint(BaseModel):
+    """G7-003: max antenna height AGL."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: Literal["antenna_height_limit"] = "antenna_height_limit"
+    max_height_m: float = Field(..., gt=0)
+    indoor_outdoor: Literal["indoor", "outdoor"] | None = None
+    device_class: str | None = None
+
+    @model_validator(mode="after")
+    def _device_class(self) -> AntennaHeightLimitConstraint:
+        if self.device_class is not None and not self.device_class.strip():
+            raise ValueError("device_class must be non-empty when set")
+        return self
+
+    def to_primitive(self) -> AntennaHeightLimit:
+        return AntennaHeightLimit(
+            max_height_m=self.max_height_m,
+            indoor_outdoor=self.indoor_outdoor,
+            device_class=self.device_class,
+        )
+
+
+class ForbiddenDeviceRolesConstraint(BaseModel):
+    """G7-003: opaque device-role denylist."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: Literal["forbidden_device_roles"] = "forbidden_device_roles"
+    roles: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _roles(self) -> ForbiddenDeviceRolesConstraint:
+        if not self.roles:
+            raise ValueError("roles must be non-empty")
+        if len(self.roles) != len(set(self.roles)):
+            raise ValueError("roles must be unique")
+        if any(not role.strip() for role in self.roles):
+            raise ValueError("roles must be non-empty tokens")
+        return self
+
+    def to_primitive(self) -> ForbiddenDeviceRoles:
+        return ForbiddenDeviceRoles(roles=frozenset(self.roles))
+
+
+ProfileConstraint = Annotated[
+    Union[
+        DuplexModeConstraint,
+        MaxAssignmentBandwidthConstraint,
+        AntennaHeightLimitConstraint,
+        ForbiddenDeviceRolesConstraint,
+    ],
+    Field(discriminator="mechanism"),
+]
+
+
 class ProfileV2SpectrumDocument(BaseModel):
     """v2 envelope including protection/coordination/rf/data/requirements."""
 
@@ -381,6 +474,7 @@ class ProfileV2SpectrumDocument(BaseModel):
     rf: RfSection | None = None
     data: DataSection | None = None
     requirements: RequirementsSection | None = None
+    constraints: tuple[ProfileConstraint, ...] = ()
 
     @model_validator(mode="after")
     def _envelope(self) -> ProfileV2SpectrumDocument:

@@ -42,8 +42,11 @@ class MechanismContract:
 _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("frequency_ranges", MechanismAxis.SPECTRUM, "1.0.0"),
     MechanismContract("fixed_width_channelization", MechanismAxis.SPECTRUM, "1.0.0"),
+    MechanismContract("duplex_mode", MechanismAxis.SPECTRUM, "1.0.0"),
+    MechanismContract("max_assignment_bandwidth", MechanismAxis.SPECTRUM, "1.0.0"),
     MechanismContract("ordered_classes", MechanismAxis.ACCESS, "1.0.0"),
     MechanismContract("preemption", MechanismAxis.ACCESS, "1.0.0"),
+    MechanismContract("forbidden_device_roles", MechanismAxis.ACCESS, "1.0.0"),
     MechanismContract("protection_entitlement", MechanismAxis.PROTECTION, "1.0.0"),
     MechanismContract("channel_exclusion", MechanismAxis.PROTECTION, "1.0.0"),
     MechanismContract("distance_exclusion", MechanismAxis.PROTECTION, "1.0.0"),
@@ -57,6 +60,7 @@ _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("exclusion_zone", MechanismAxis.GEOGRAPHY, "1.0.0"),
     MechanismContract("max_power", MechanismAxis.POWER, "1.0.0"),
     MechanismContract("rule_table", MechanismAxis.POWER, "1.0.0"),
+    MechanismContract("antenna_height_limit", MechanismAxis.POWER, "1.0.0"),
     MechanismContract("periodic", MechanismAxis.TEMPORAL, "1.0.0"),
     MechanismContract("snapshot_evaluate_apply", MechanismAxis.COORDINATION, "1.0.0"),
     MechanismContract(

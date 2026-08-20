@@ -54,11 +54,12 @@ requirements:
     source: ATO_915_2024
     section: "5.13.2"
     summary: "Time-division duplex (TDD) required in the sub-band."
-    profile_field: "metadata/notes or future duplex parameter (no dedicated TDD mechanism today)"
-    mechanisms: []
+    profile_field: "constraints.duplex_mode"
+    mechanisms:
+      - duplex_mode
     code_plugin: null
-    test: "TBD:G7-005"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g7_003_reusable_primitives.py"
+    status: PLANNED_YAML
 
   - id: BR-SLP-3700-003
     source: ATO_915_2024
@@ -103,11 +104,12 @@ requirements:
     source: ATO_915_2024
     section: "5.13.3.1"
     summary: "Signal boosters/repeaters forbidden for terrestrial systems in this band."
-    profile_field: "admission constraint / device typology reject"
-    mechanisms: []
-    code_plugin: "device adapter validation (future)"
-    test: "TBD:G7-005"
-    status: GAP_PRIMITIVE
+    profile_field: "constraints.forbidden_device_roles"
+    mechanisms:
+      - forbidden_device_roles
+    code_plugin: null
+    test: "tests/unit/test_g7_003_reusable_primitives.py"
+    status: PLANNED_YAML
 
   - id: BR-SLP-3700-007
     source: ATO_915_2024
@@ -147,22 +149,26 @@ requirements:
     source: ATO_915_2024
     section: "5.13.14"
     summary: "Outdoor base/nodal antenna height ≤ 6 m AGL."
-    profile_field: "admission/height parameter (no dedicated height mechanism yet)"
-    mechanisms: []
+    profile_field: "constraints.antenna_height_limit"
+    mechanisms:
+      - antenna_height_limit
     code_plugin: null
-    test: "TBD:G7-005"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g7_003_reusable_primitives.py"
+    status: PLANNED_YAML
+    numeric_notes:
+      - "6 m AGL outdoor base/nodal"
 
   - id: BR-SLP-3700-011
     source: ATO_915_2024
     section: "5.13.15"
     summary: "Outdoor assigned bandwidth ≤ 50 MHz."
-    profile_field: "spectrum assignment width constraint"
+    profile_field: "constraints.max_assignment_bandwidth; spectrum.channelization"
     mechanisms:
+      - max_assignment_bandwidth
       - fixed_width_channelization
       - frequency_ranges
     code_plugin: null
-    test: "TBD:G7-005"
+    test: "tests/unit/test_g7_003_reusable_primitives.py"
     status: PLANNED_YAML
     numeric_notes:
       - "50 MHz max outdoor assigned bandwidth"

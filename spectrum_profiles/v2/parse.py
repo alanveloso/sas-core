@@ -65,6 +65,18 @@ def parse_profile_v2_spectrum(
             catalog.on_axis(MechanismAxis.RF, parsed.rf.policy)
             if parsed.rf.propagation_model is not None:
                 catalog.on_axis(MechanismAxis.RF, parsed.rf.propagation_model)
+        for item in parsed.constraints:
+            mid = item.mechanism
+            if mid in {"duplex_mode", "max_assignment_bandwidth"}:
+                catalog.on_axis(MechanismAxis.SPECTRUM, mid)
+            elif mid == "antenna_height_limit":
+                catalog.on_axis(MechanismAxis.POWER, mid)
+            elif mid == "forbidden_device_roles":
+                catalog.on_axis(MechanismAxis.ACCESS, mid)
+            else:
+                raise ValueError(f"unsupported constraint mechanism {mid!r}")
+            # Instantiates closed primitive (fail closed on bad params).
+            item.to_primitive()
         validate_profile_v2_semantics(parsed, catalog)
     except ValueError as exc:
         raise ProfileValidationError(str(exc)) from exc

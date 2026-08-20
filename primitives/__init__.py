@@ -47,6 +47,13 @@ from primitives.rf_arithmetic import (
     within_threshold_dbm,
     within_threshold_mw,
 )
+from primitives.station_limits import (
+    AntennaHeightLimit,
+    DuplexMode,
+    DuplexModeRequirement,
+    ForbiddenDeviceRoles,
+    MaxAssignmentBandwidth,
+)
 from primitives.time import TimeInterval, UtcInstant
 
 __all__ = [
@@ -80,6 +87,11 @@ __all__ = [
     "TimeInterval",
     "TransmissionFootprint",
     "UtcInstant",
+    "AntennaHeightLimit",
+    "DuplexMode",
+    "DuplexModeRequirement",
+    "ForbiddenDeviceRoles",
+    "MaxAssignmentBandwidth",
     "bind_request_class",
     "builtin_mechanism_registry",
     "class_preempts",
