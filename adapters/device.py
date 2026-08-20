@@ -21,6 +21,11 @@ DEVICE_CAPABILITY_GEOLOCATION = "geolocation"
 DEVICE_CAPABILITY_FREQUENCY_RANGE = "frequency_range"
 DEVICE_CAPABILITY_MAX_EIRP = "max_eirp"
 
+# Network/managed-consumer capabilities (G8-002). Shared tokens with device where
+# frequency/power apply; never imply per-radio geolocation.
+NETWORK_CAPABILITY_MANAGED_AREA = "managed_area"
+NETWORK_CAPABILITY_NETWORK_IDENTITY = "network_identity"
+
 
 class AdapterKind(StrEnum):
     DEVICE = "device"
@@ -42,6 +47,14 @@ class ConsumerView:
             raise ValueError("capabilities must be non-empty tokens")
         if DEVICE_CAPABILITY_GEOLOCATION in self.capabilities and not self.footprints:
             raise ValueError("geolocation capability requires at least one footprint")
+        if NETWORK_CAPABILITY_MANAGED_AREA in self.capabilities:
+            if not self.footprints:
+                raise ValueError("managed_area capability requires at least one footprint")
+            for footprint in self.footprints:
+                if not isinstance(footprint.location, LinearRing):
+                    raise ValueError(
+                        "managed_area capability requires LinearRing footprints"
+                    )
 
 
 def consumer_meets_requirements(
@@ -122,7 +135,11 @@ class MappingNetworkAdapter:
 
     def advertised_capabilities(self) -> frozenset[str]:
         return frozenset(
-            {DEVICE_CAPABILITY_FREQUENCY_RANGE, DEVICE_CAPABILITY_MAX_EIRP}
+            {
+                NETWORK_CAPABILITY_MANAGED_AREA,
+                DEVICE_CAPABILITY_FREQUENCY_RANGE,
+                DEVICE_CAPABILITY_MAX_EIRP,
+            }
         )
 
     def to_consumer(self, payload: Mapping[str, object]) -> ConsumerView:

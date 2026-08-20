@@ -301,6 +301,10 @@ _DATA_CAPABILITIES = frozenset(
     }
 )
 _DEVICE_CAPABILITIES = frozenset({"geolocation", "frequency_range", "max_eirp"})
+# G8-002: network/managed-consumer requirements (no per-radio geolocation token).
+_NETWORK_CAPABILITIES = frozenset(
+    {"managed_area", "network_identity", "frequency_range", "max_eirp"}
+)
 
 
 class ProtectionSection(BaseModel):
@@ -359,6 +363,7 @@ class RequirementsSection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     device_capabilities: tuple[str, ...] = ()
+    network_capabilities: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _caps(self) -> RequirementsSection:
@@ -367,6 +372,13 @@ class RequirementsSection(BaseModel):
             raise ValueError(f"unsupported device capabilities: {unknown}")
         if len(self.device_capabilities) != len(set(self.device_capabilities)):
             raise ValueError("requirements.device_capabilities must be unique")
+        unknown_net = [
+            item for item in self.network_capabilities if item not in _NETWORK_CAPABILITIES
+        ]
+        if unknown_net:
+            raise ValueError(f"unsupported network capabilities: {unknown_net}")
+        if len(self.network_capabilities) != len(set(self.network_capabilities)):
+            raise ValueError("requirements.network_capabilities must be unique")
         return self
 
 

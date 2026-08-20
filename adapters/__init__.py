@@ -19,6 +19,7 @@ from adapters.discovery import (
     GROUP_PROTOCOL_ADAPTERS,
     AdapterDiscovery,
 )
+from adapters.managed_consumer import ManagedNetworkAdapter, managed_network_adapter
 from adapters.protocol import (
     GENERIC_JSON_PROTOCOL_ID,
     PROTOCOL_API_VERSION,
@@ -42,9 +43,11 @@ __all__ = [
     "ConsumerView",
     "DomainOperation",
     "GenericJsonProtocolAdapter",
+    "ManagedNetworkAdapter",
     "MappingDeviceAdapter",
     "MappingNetworkAdapter",
     "ProtocolAdapter",
     "ProtocolInbound",
     "consumer_meets_requirements",
+    "managed_network_adapter",
 ]

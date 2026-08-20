@@ -57,8 +57,8 @@ requirements:
     summary: "Canonical consumer is a VSP MFCN via eLC; eLR stores shared resources and conveys availability — not a CBSD/device grant model."
     profile_field: "consumer via network/managed-consumer representation (G8-002); authorization holder + footprints (D6)"
     mechanisms: []
-    code_plugin: "network/managed-consumer adapter (G8-002); not fake CBSD"
-    test: "MATRIX_TEST"
+    code_plugin: "adapters.managed_consumer:ManagedNetworkAdapter (G8-002); eLSA1 protocol still G8-004"
+    test: "tests/unit/test_g8_002_managed_consumer.py"
     status: ADAPTER_REQUIRED
     focus: network_centric
 

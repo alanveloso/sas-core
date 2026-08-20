@@ -13,6 +13,7 @@ from spectrum_profiles.v2.doctor import (
 from spectrum_profiles.v2.migrate import project_v1_to_v2_document
 from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_device_capabilities,
+    adapters_satisfying_network_capabilities,
     negotiate_profile_plugins,
 )
 from spectrum_profiles.v2.parse import (
@@ -60,6 +61,7 @@ __all__ = [
     "load_profile_v2",
     "load_profile_v2_document",
     "adapters_satisfying_device_capabilities",
+    "adapters_satisfying_network_capabilities",
     "negotiate_profile_plugins",
     "profile_context_from_v2",
     "profile_hash_v2",

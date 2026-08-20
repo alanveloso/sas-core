@@ -40,7 +40,7 @@ Esta matriz **não** é conformidade ETSI, implementação de protocolo eLSA1, n
 
 | Requirement ID | Source | Section/item | Requirement summary | Profile field/mechanism | Code/plugin | Test | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| ELSA-001 | ETSI_TS_103_652_2 | 4.2.1 eLC/eLR | Consumidor = MFCN/VSP via eLC; eLR armazena recursos e disponibilidade | representação network/managed-consumer (D6) | G8-002 adapter | MATRIX_TEST | ADAPTER_REQUIRED |
+| ELSA-001 | ETSI_TS_103_652_2 | 4.2.1 eLC/eLR | Consumidor = MFCN/VSP via eLC; eLR armazena recursos e disponibilidade | representação network/managed-consumer (D6) | `ManagedNetworkAdapter` (G8-002); eLSA1→G8-004 | test_g8_002 | ADAPTER_REQUIRED |
 | ELSA-002 | ARCH_G0_005 | D6/D8 | Não promover Grant/CBSD como substantivos universais | `dynamic_lease` / `fixed_window` sem Grant no core | — | MATRIX_TEST | PLANNED_YAML |
 | ELSA-003 | ETSI_TS_103_652_2 | 4.2.2 eLSA1 | Interface eLR↔eLC para eLSRAI + ack | protocol adapter | G8-004 | TBD:G8-004 | ADAPTER_REQUIRED |
 | ELSA-004 | ETSI_TS_103_652_2 | 4.2.2 eLSA4 | eLC mapeia eLSRAI → config de rádio MFCN | — | adapter MFCN | — | OUT_OF_SCOPE_MFCN |

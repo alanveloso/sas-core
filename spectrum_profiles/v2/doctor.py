@@ -20,7 +20,10 @@ from providers.discovery import DataProviderDiscovery
 from rf.discovery import RfModelDiscovery
 from spectrum_profiles.loader import ProfileError
 from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
-from spectrum_profiles.v2.negotiate import adapters_satisfying_device_capabilities
+from spectrum_profiles.v2.negotiate import (
+    adapters_satisfying_device_capabilities,
+    adapters_satisfying_network_capabilities,
+)
 from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
 from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
 
@@ -87,6 +90,7 @@ def package_bootstrap_adapter_discovery() -> AdapterDiscovery:
         return live
     from adapters.cbsd import cbsd_device_adapter
     from adapters.device import MappingDeviceAdapter, MappingNetworkAdapter
+    from adapters.managed_consumer import managed_network_adapter
     from adapters.protocol import GenericJsonProtocolAdapter
     from adapters.winnforum_rest import winnforum_rest_protocol_adapter
 
@@ -96,7 +100,10 @@ def package_bootstrap_adapter_discovery() -> AdapterDiscovery:
                 "mapping": MappingDeviceAdapter,
                 "cbsd": cbsd_device_adapter,
             },
-            GROUP_NETWORK_ADAPTERS: {"mapping": MappingNetworkAdapter},
+            GROUP_NETWORK_ADAPTERS: {
+                "mapping": MappingNetworkAdapter,
+                "managed": managed_network_adapter,
+            },
             GROUP_PROTOCOL_ADAPTERS: {
                 "generic_json": GenericJsonProtocolAdapter,
                 "winnforum_rest": winnforum_rest_protocol_adapter,
@@ -194,6 +201,11 @@ def diagnose_profile_v2(
         if parsed.requirements is not None
         else ()
     )
+    network_caps = (
+        parsed.requirements.network_capabilities
+        if parsed.requirements is not None
+        else ()
+    )
     data_caps = (
         parsed.data.required_capabilities if parsed.data is not None else ()
     )
@@ -249,6 +261,35 @@ def diagnose_profile_v2(
             name="device_plugins",
             ok=True,
             detail="no device capabilities required",
+            section="plugins",
+        )
+
+    if network_caps:
+        try:
+            hits = adapters_satisfying_network_capabilities(
+                adapters, GROUP_NETWORK_ADAPTERS, network_caps
+            )
+            _add(
+                report,
+                name="network_plugins",
+                ok=True,
+                detail=f"capabilities={list(network_caps)} adapters={list(hits)}",
+                section="plugins",
+            )
+        except ValueError as exc:
+            _add(
+                report,
+                name="network_plugins",
+                ok=False,
+                detail=str(exc),
+                section="plugins",
+            )
+    else:
+        _add(
+            report,
+            name="network_plugins",
+            ok=True,
+            detail="no network capabilities required",
             section="plugins",
         )
 

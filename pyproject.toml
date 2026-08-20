@@ -31,6 +31,7 @@ cbsd = "adapters.cbsd:cbsd_device_adapter"
 
 [project.entry-points."spectrum_access.network_adapters"]
 mapping = "adapters.device:MappingNetworkAdapter"
+managed = "adapters.managed_consumer:managed_network_adapter"
 
 [project.entry-points."spectrum_access.protocol_adapters"]
 generic_json = "adapters.protocol:GenericJsonProtocolAdapter"
