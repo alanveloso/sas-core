@@ -1,0 +1,192 @@
+# G10-003 — Quantitative generalization metrics (end of G10 holdout phase).
+# Machine-readable companion to G10-003_QUANTITATIVE_GENERALIZATION_REPORT.md.
+# Does NOT change Coordination Core, registry, RF port, or ORM.
+# Does NOT "fix" G10-002 CONDITIONAL — that verdict is retained as evidence.
+version: 1
+matrix_id: G10-003
+phase: G10
+uut_head_at_measurement: "5c1cd93d5c96c001baba7b4ce59dd7580b74615b"
+branch: generalization/g2
+
+methodology:
+  yaml_loc: "Non-blank YAML lines excluding full-line comments (#…)."
+  tests_loc: "Non-blank lines in the listed unit test files."
+  profile_specific_python_loc: "Python under spectrum_profiles/profiles/ plus regime-named profile classes; expected 0."
+  mechanism_reuse_pct: "100 * |mechanisms ∩ builtin_registry| / |mechanisms| for mechanisms selected in the profile YAML."
+  core_files_modified_for_profile_yaml: "Files of Coordination Core changed solely to add the profile YAML (target ≈ 0)."
+  conditional_policy: >
+    Holdout CONDITIONAL / challenge PARTIAL|GAP are first-class evaluation evidence.
+    They must not be rewritten to PASS to improve metrics.
+
+architecture_targets:
+  coordination_core_country_or_profile_branches: 0
+  new_profile_yaml_requiring_core_change_approx: 0
+  query_assignment_registered: false
+  query_assignment_status: OPEN_FOR_LATER_DESIGN
+  query_assignment_gate: G9-006-IF-001
+
+registry:
+  builtin_mechanism_count: 26
+  query_assignment_in_registry: false
+
+# Profile v2 YAML regimes present at measurement (not challenge-only audits).
+profiles:
+  - profile_id: cbrs_winnforum
+    role: reference_recomposition
+    profile_path: spectrum_profiles/profiles/v2/cbrs_winnforum.yaml
+    yaml_loc: 74
+    tests_loc: 415
+    test_files:
+      - tests/unit/test_g3_001_profile_v2_spectrum.py
+      - tests/unit/test_g3_002_profile_v2_access_power_geo.py
+      - tests/unit/test_g3_003_profile_v2_protection_rf_data.py
+      - tests/unit/test_g3_004_profile_v2_semantics.py
+      - tests/unit/test_g3_006_cbrs_v1_compat.py
+      - tests/unit/test_g5_007_cbrs_profile_v2.py
+    profile_specific_python_loc: 0
+    generic_primitive_loc_added_for_this_profile: 0
+    new_adapters_providers_plugins: 0
+    core_files_modified_for_profile_yaml: 0
+    rf_port_changes_for_this_profile: 0
+    mechanism_count: 12
+    mechanism_reuse_pct: 100.0
+    authorization_mechanism: dynamic_lease
+    representation_verdict: PASS
+
+  - profile_id: br_anatel_slp_3700
+    role: first_new_regime_g7
+    profile_path: spectrum_profiles/profiles/v2/br_anatel_slp_3700.yaml
+    yaml_loc: 98
+    tests_loc: 491
+    test_files:
+      - tests/unit/test_g7_001_anatel_requirements_matrix.py
+      - tests/unit/test_g7_002_br_anatel_slp_3700.py
+      - tests/unit/test_g7_003_reusable_primitives.py
+      - tests/unit/test_g7_004_operator_feature_bundle.py
+      - tests/unit/test_g7_005_multi_profile_regression.py
+    profile_specific_python_loc: 0
+    generic_primitive_loc_added_for_this_profile: null
+    notes: "G7 added reusable constraint primitives used by YAML; counted as catalog growth, not profile-specific Python."
+    new_adapters_providers_plugins: 0
+    core_files_modified_for_profile_yaml: 0
+    rf_port_changes_for_this_profile: 0
+    mechanism_count: 13
+    mechanism_reuse_pct: 100.0
+    authorization_mechanism: static_authorization
+    representation_verdict: PASS
+
+  - profile_id: eu_elsa
+    role: network_availability_slice_g8
+    profile_path: spectrum_profiles/profiles/v2/eu_elsa.yaml
+    yaml_loc: 67
+    tests_loc: 771
+    test_files:
+      - tests/unit/test_g8_001_elsa_requirements_matrix.py
+      - tests/unit/test_g8_002_managed_consumer.py
+      - tests/unit/test_g8_003_availability_primitives.py
+      - tests/unit/test_g8_004_elsa1_protocol.py
+      - tests/unit/test_g8_005_three_regime_regression.py
+    profile_specific_python_loc: 0
+    generic_primitive_loc_added_for_this_profile: null
+    new_adapters_providers_plugins: 2
+    new_plugin_paths:
+      - adapters/managed_consumer.py
+      - adapters/elsa1.py
+    new_plugin_loc_total: 313
+    supporting_primitive_path: primitives/availability.py
+    supporting_primitive_loc: 138
+    core_files_modified_for_profile_yaml: 0
+    rf_port_changes_for_this_profile: 0
+    mechanism_count: 9
+    mechanism_reuse_pct: 100.0
+    authorization_mechanism: fixed_window
+    representation_verdict: PASS
+
+  - profile_id: us_tvws_15_711
+    role: holdout_g10
+    profile_path: spectrum_profiles/profiles/v2/us_tvws_15_711.yaml
+    yaml_loc: 76
+    tests_loc: 220
+    test_files:
+      - tests/unit/test_g10_001_tvws_holdout_map.py
+      - tests/unit/test_g10_002_tvws_holdout_representation.py
+    profile_specific_python_loc: 0
+    generic_primitive_loc_added_for_this_profile: 0
+    new_adapters_providers_plugins: 0
+    core_files_modified_for_profile_yaml: 0
+    rf_port_changes_for_this_profile: 0
+    mechanism_count: 11
+    mechanism_reuse_pct: 100.0
+    authorization_mechanism: null
+    authorization_omitted_reason: "query_assignment unregistered (G9-006 IF-001); do not fake."
+    representation_verdict: CONDITIONAL
+    representation_verdict_source: compliance/fcc/g10_002_holdout_verdict.yaml
+    treat_conditional_as_defect: false
+
+totals_profiles_v2:
+  profile_count: 4
+  yaml_loc_sum: 315
+  tests_loc_sum: 1897
+  profile_specific_python_loc_sum: 0
+  core_files_modified_for_profile_yaml_sum: 0
+  rf_port_changes_sum: 0
+  profiles_with_100pct_mechanism_reuse: 4
+  holdout_conditional_count: 1
+
+cross_profile_mechanism_reuse:
+  mechanisms_used_across_any_profile: 21
+  mechanisms_shared_by_at_least_two_profiles: 11
+  mechanisms_shared_by_all_four_profiles:
+    - channel_exclusion
+    - distance_exclusion
+    - exclusion_zone
+    - protection_entitlement
+    - rule_table
+    - snapshot_evaluate_apply
+
+# Challenge-set / holdout map evidence (fit audits — not full operational profiles).
+challenge_and_holdout_evidence:
+  - task: G9-001
+    id: uk_shared_access
+    overall_verdict: PARTIAL
+    evidence: compliance/ofcom/uk_shared_access_fit_audit.yaml
+  - task: G9-002
+    id: ca_ncll_3900
+    overall_verdict: PARTIAL
+    evidence: compliance/ised/ca_ncll_3900_fit_audit.yaml
+  - task: G9-003
+    id: eu_wbb_lmp_3800
+    overall_verdict: PARTIAL
+    evidence: compliance/eu/eu_wbb_lmp_3800_fit_audit.yaml
+  - task: G9-004
+    id: de_bnetza_local_3700
+    overall_verdict: PARTIAL
+    evidence: compliance/bnetza/de_bnetza_local_3700_fit_audit.yaml
+  - task: G9-005
+    id: afc_6ghz
+    overall_verdict: GAP
+    evidence: compliance/ofcom/afc_6ghz_fit_audit.yaml
+  - task: G10-001
+    id: us_tvws_15_711_map
+    overall_verdict: PARTIAL
+    evidence: compliance/fcc/tvws_15_711_holdout_map.yaml
+  - task: G10-002
+    id: us_tvws_15_711
+    overall_verdict: CONDITIONAL
+    evidence: compliance/fcc/g10_002_holdout_verdict.yaml
+
+challenge_fit_tests_loc: 840
+challenge_fit_test_glob: tests/unit/test_g9_*.py
+
+summary_assessment:
+  reuse_target_met: true
+  core_change_target_met_for_profile_yaml: true
+  profile_specific_python_target_met: true
+  holdout_conditional_retained_as_evidence: true
+  open_gate_blocking_full_tvws_and_afc_query_path: query_assignment
+
+non_goals:
+  - Register query_assignment
+  - Rewrite CONDITIONAL/PARTIAL/GAP to PASS
+  - Coordination Core or ORM changes
+  - Claim FCC/Ofcom/ISED conformity
