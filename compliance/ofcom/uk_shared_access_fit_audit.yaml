@@ -1,0 +1,357 @@
+# Ofcom UK Shared Access — challenge-set fit audit (G9-001).
+# Traceability / gap measurement only — not a conformity claim and not a Profile v2 implementation.
+# Challenge target id (future, not created here): uk_shared_access
+# Columns align with .cursor/generalization-plan/11_TRACEABILITY.md plus fit_verdict.
+version: 1
+matrix_id: G9-001
+challenge_id: uk_shared_access
+profile_id_target: null
+audit_mode: fit_gap_only
+primary_instrument:
+  id: OFCOM_SHARED_ACCESS
+  authority: Ofcom
+  title: "Shared access licences (Ofcom)"
+  url: "https://www.ofcom.org.uk/spectrum/frequencies/shared-access"
+  focus_section: "Bands, low/medium power products, coordination and guidance"
+  retrieved_note: "Cited from Ofcom Shared Access page (updated 2026-05-01) and Shared Access Licence Guidance / July 2024 framework updates."
+
+allowed_statuses:
+  - FIT_EXISTING
+  - FIT_PARTIAL
+  - GAP_PRIMITIVE
+  - GAP_DATA
+  - GAP_ADAPTER
+  - PROCESS
+  - OUT_OF_SCOPE
+  - MATRIX_TEST
+
+# Closed fit_verdict vocabulary for challenge audits (G9).
+allowed_fit_verdicts:
+  - FIT
+  - PARTIAL
+  - GAP
+  - N_A
+
+sources:
+  - id: OFCOM_SHARED_ACCESS
+    authority: Ofcom
+    document: "Shared access licences (web guidance)"
+    url: "https://www.ofcom.org.uk/spectrum/frequencies/shared-access"
+  - id: OFCOM_SA_GUIDANCE
+    authority: Ofcom
+    document: "Shared Access Licence Guidance document"
+    url: "https://www.ofcom.org.uk/siteassets/resources/documents/consultations/category-1-10-weeks/consultation-supporting-increased-use-of-shared-spectrum/associated-documents/shared-access-licence-guidance-document.pdf"
+  - id: OFCOM_SA_STATEMENT_2024
+    authority: Ofcom
+    document: "Statement — Enhancing the Shared Access framework (July 2024 updates)"
+    url: "https://www.ofcom.org.uk/spectrum/frequencies/consultation-supporting-increased-use-of-shared-spectrum"
+  - id: ARCH_G0_005
+    authority: project
+    document: "G0-005 Architecture v2 freeze"
+    url: null
+  - id: PLAN_CHALLENGE
+    authority: project
+    document: "06_REFERENCE_AND_CUSTOM_PROFILES.md — challenge set"
+    url: null
+
+requirements:
+  - id: UK-SA-001
+    source: OFCOM_SHARED_ACCESS
+    section: "Spectrum bands"
+    summary: "Four bands: 1800 MHz paired (1781.7–1785 // 1876.7–1880); 2300 (2320–2340 and 2390–2400); 3800–4200; 24.25–27.5 GHz."
+    profile_field: "spectrum.ranges (multi-range) or one profile per band product"
+    mechanisms:
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    notes: "Schema already allows multiple ranges; national assignment data still external."
+
+  - id: UK-SA-002
+    source: OFCOM_SA_GUIDANCE
+    section: "Low power licence / 50 m circle"
+    summary: "Low power authorises base stations within a circular area of 50 m radius (plus connected terminals)."
+    profile_field: "geography.point_radius (r=50 m) and/or authorized_area"
+    mechanisms:
+      - point_radius
+      - authorized_area
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: UK-SA-003
+    source: OFCOM_SHARED_ACCESS
+    section: "Medium power licence"
+    summary: "Medium power authorises a single base station and associated terminals."
+    profile_field: "device/station consumer + single footprint (not fake CBSD Grant)"
+    mechanisms: []
+    code_plugin: "device/network ConsumerAdapter (G4/G8-002)"
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "Representation fits; Ofcom portal/antenna-library workflow is PROCESS."
+
+  - id: UK-SA-004
+    source: OFCOM_SA_GUIDANCE
+    section: "Low power max EIRP"
+    summary: "Guidance cites low power max EIRP 24 dBm for the licensed area product."
+    profile_field: "power.mechanism=rule_table (licence_class=low_power)"
+    mechanisms:
+      - rule_table
+      - max_power
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    numeric_notes:
+      - "24 dBm low power (guidance summary)"
+
+  - id: UK-SA-005
+    source: OFCOM_SA_GUIDANCE
+    section: "Medium power max EIRP"
+    summary: "Guidance cites medium power max EIRP 42 dBm for a single base station."
+    profile_field: "power.mechanism=rule_table (licence_class=medium_power)"
+    mechanisms:
+      - rule_table
+      - max_power
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    numeric_notes:
+      - "42 dBm medium power (guidance summary)"
+
+  - id: UK-SA-006
+    source: OFCOM_SA_GUIDANCE
+    section: "Indoor-only vs indoor/outdoor"
+    summary: "Low power offers indoor-only or indoor/outdoor options; indoor-only is more coordination-friendly."
+    profile_field: "power.rule_table indoor_outdoor selectors"
+    mechanisms:
+      - rule_table
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: UK-SA-007
+    source: OFCOM_SHARED_ACCESS
+    section: "Licence product nature"
+    summary: "Shared Access is an Ofcom-issued local licence (not CBRS dynamic grant/heartbeat)."
+    profile_field: "authorization.mechanism=static_authorization"
+    mechanisms:
+      - static_authorization
+      - fixed_window
+    forbid_mechanisms_as_keepalive:
+      - dynamic_lease
+      - periodic
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: UK-SA-008
+    source: OFCOM_SA_GUIDANCE
+    section: "First-come first-served + Ofcom coordination"
+    summary: "Assignments after Ofcom technical coordination assessment; applicant uses licensing portal."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+    notes: "Coordinator product is Ofcom SMS; not our Coordination Core default path."
+
+  - id: UK-SA-009
+    source: OFCOM_SA_GUIDANCE
+    section: "User-Led coordination"
+    summary: "If Ofcom coordination fails, applicant may seek informed consent from neighbours (user-led)."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+
+  - id: UK-SA-010
+    source: OFCOM_SA_GUIDANCE
+    section: "TDD synchronisation (3.8–4.2 GHz)"
+    summary: "Coordination may assume synchronised TDD; unsynchronised operation uses different limits / agreements."
+    profile_field: "constraints.duplex_mode=tdd; sync policy"
+    mechanisms:
+      - duplex_mode
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "duplex_mode exists; mutual frame-structure sync remains PROCESS/ops."
+
+  - id: UK-SA-011
+    source: OFCOM_SA_STATEMENT_2024
+    section: "Antenna height / urban Medium Power / London exceptions"
+    summary: "Medium Power urban access with height caps; Greater London retains premises-sterilisation exceptions."
+    profile_field: "constraints.antenna_height_limit; urban/London exception PROCESS"
+    mechanisms:
+      - antenna_height_limit
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "Height limit fits; sterilisation threshold test is Ofcom PROCESS + GAP_DATA if mirrored."
+
+  - id: UK-SA-012
+    source: OFCOM_SHARED_ACCESS
+    section: "Channel sizes / bandwidth"
+    summary: "Variable channel sizes (e.g. 10–100 MHz fee steps; 1800 paired 2×3.3 MHz)."
+    profile_field: "spectrum.channelization optional; max_assignment_bandwidth"
+    mechanisms:
+      - fixed_width_channelization
+      - max_assignment_bandwidth
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "Arbitrary requested bandwidth without fixed grid is supported conceptually (G0-004); no UK YAML yet."
+
+  - id: UK-SA-013
+    source: OFCOM_SHARED_ACCESS
+    section: "1800 MHz paired FDD"
+    summary: "1800 MHz shared spectrum is paired uplink/downlink."
+    profile_field: "constraints.duplex_mode=fdd + paired ranges"
+    mechanisms:
+      - duplex_mode
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "FDD mode exists; explicit paired-range linkage may need profile convention (not a new core noun)."
+
+  - id: UK-SA-014
+    source: OFCOM_SHARED_ACCESS
+    section: "Online mapping / availability (3.8–4.2 GHz)"
+    summary: "Ofcom publishes online mapping for spectrum availability in 3.8–4.2 GHz to inform applications."
+    profile_field: "query_assignment / availability maps (challenge adjacent to AFC)"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: GAP_PRIMITIVE
+    fit_verdict: GAP
+    notes: "query_assignment remains deferred (G9-005 AFC); do not invent from CBRS Grant."
+
+  - id: UK-SA-015
+    source: OFCOM_SHARED_ACCESS
+    section: "Licence fees"
+    summary: "Annual fees by band/channel size and rural/urban Medium Power."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: OUT_OF_SCOPE
+    fit_verdict: N_A
+
+  - id: UK-SA-016
+    source: ARCH_G0_005
+    section: "D6 / D8 / D9"
+    summary: "Challenge must not force CBSD/Grant as universal nouns; local licence maps to static_authorization / fixed_window."
+    profile_field: "static_authorization; omit Grant/CBSD in core"
+    mechanisms:
+      - static_authorization
+    forbid_domain_nouns:
+      - Grant
+      - CBSD
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: UK-SA-017
+    source: OFCOM_SA_GUIDANCE
+    section: "Incumbent / neighbour protection"
+    summary: "Coordination protects other Shared Access users and band incumbents (e.g. earth stations, fixed links, MOD/amateur constraints by band)."
+    profile_field: "protection + data.protected_entities/boundaries"
+    mechanisms:
+      - protection_entitlement
+      - distance_exclusion
+      - exclusion_zone
+      - channel_exclusion
+    data_capabilities:
+      - protected_entities
+      - boundaries
+    code_plugin: "providers (capability-based); Ofcom datasets not in-repo"
+    test: "MATRIX_TEST"
+    status: GAP_DATA
+    fit_verdict: GAP
+    notes: "Mechanisms exist; official UK geometries/assignment DB not shipped (fail closed)."
+
+  - id: UK-SA-018
+    source: OFCOM_SA_GUIDANCE
+    section: "Band product restrictions"
+    summary: "Medium power unavailable in 2300 MHz Shared Spectrum; 26 GHz historically indoor-leaning / density limits."
+    profile_field: "closed selectors licence_type × band (rule_table / omit mechanisms)"
+    mechanisms:
+      - rule_table
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "Expressible as separate band profiles or closed selectors; no DSL."
+
+  - id: UK-SA-019
+    source: OFCOM_SHARED_ACCESS
+    section: "Technical Frequency Assignment Criteria / IR 2103–2104"
+    summary: "Ofcom TFAC + interface requirements define assignment/coordination technical criteria and IR masks."
+    profile_field: "rf.required + RF model plugin OR external Ofcom tool"
+    mechanisms:
+      - path_loss
+      - single_link_threshold
+    code_plugin: "RF port plugin for Ofcom criteria OR GAP_ADAPTER to external SMS"
+    test: "MATRIX_TEST"
+    status: GAP_ADAPTER
+    fit_verdict: GAP
+    notes: "Do not hardcode Ofcom TFAC into Coordination Core."
+
+  - id: UK-SA-020
+    source: OFCOM_SHARED_ACCESS
+    section: "Antenna library (omni/directional)"
+    summary: "Portal antenna library (omni gain ranges; directional patterns ITU-R F.1336-5 for 3.8–4.2)."
+    profile_field: null
+    mechanisms: []
+    code_plugin: "device adapter antenna params (partial) + Ofcom library PROCESS"
+    test: null
+    status: PROCESS
+    fit_verdict: PARTIAL
+
+  - id: UK-SA-021
+    source: PLAN_CHALLENGE
+    section: "Challenge-set role"
+    summary: "UK Shared Access is a challenge profile: measure fit without redesigning core; no mandatory implementation in G9-001."
+    profile_field: "challenge_id=uk_shared_access; profile_id_target deferred"
+    mechanisms: []
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: MATRIX_TEST
+    fit_verdict: N_A
+
+fit_summary:
+  fit_existing: 7
+  fit_partial: 6
+  gap_primitive: 1
+  gap_data: 1
+  gap_adapter: 1
+  process: 3
+  out_of_scope: 1
+  matrix_test: 1
+  overall_challenge_verdict: PARTIAL
+  overall_notes: >
+    Core contracts cover local-licence geography/power/duplex/static authorization without CBSD/Grant.
+    Largest gaps are Ofcom assignment/coordination tooling (PROCESS/ADAPTER), UK protection datasets
+    (GAP_DATA), and query-style availability maps (query_assignment deferred toward AFC G9-005).
+
+core_redesign_required: false
+implement_profile_in_this_task: false
