@@ -1,0 +1,383 @@
+# BNetzA Germany local/campus 3700–3800 MHz — challenge-set fit audit (G9-004).
+# Traceability / gap measurement only — not a conformity claim and not a Profile v2 implementation.
+# Challenge target id (future, not created here): de_bnetza_local_3700
+# Deliverable focus: prove same band ≠ same profile (vs br_anatel_slp_3700).
+version: 1
+matrix_id: G9-004
+challenge_id: de_bnetza_local_3700
+profile_id_target: null
+audit_mode: fit_gap_only
+contrast_profile_id: br_anatel_slp_3700
+contrast_band_hz: [3700000000, 3800000000]
+primary_instrument:
+  id: BNETZA_VV_LOKALES_BREITBAND_3700
+  authority: Bundesnetzagentur (BNetzA)
+  title: "VV Lokales Breitband — Frequenzzuteilungen für lokale Frequenznutzungen 3.700–3.800 MHz"
+  url: "https://www.bundesnetzagentur.de/SharedDocs/Downloads/DE/Sachgebiete/Telekommunikation/Unternehmen_Institutionen/Frequenzen/OffentlicheNetze/LokaleNetze/Verwaltungsvorschrift3.7-3.8GHz_pdf.pdf?__blob=publicationFile&v=1"
+  focus_section: "Zuteilungsgebiet, Feldstärkegrenze, 10-MHz-Blöcke, TDD, keine blockinternen BS-EIRP"
+  retrieved_note: "Cited from BNetzA Regionale/lokale Netze portal, VV Lokales Breitband PDF extract, fee ordinance B.0.10, and secondary summaries (e.g. 5G-ACIA) for UE power."
+
+allowed_statuses:
+  - FIT_EXISTING
+  - FIT_PARTIAL
+  - GAP_PRIMITIVE
+  - GAP_DATA
+  - GAP_ADAPTER
+  - PROCESS
+  - OUT_OF_SCOPE
+  - MATRIX_TEST
+
+allowed_fit_verdicts:
+  - FIT
+  - PARTIAL
+  - GAP
+  - N_A
+
+sources:
+  - id: BNETZA_VV_LOKALES_BREITBAND_3700
+    authority: BNetzA
+    document: "Verwaltungsvorschrift Lokales Breitband 3.700–3.800 MHz"
+    url: "https://www.bundesnetzagentur.de/SharedDocs/Downloads/DE/Sachgebiete/Telekommunikation/Unternehmen_Institutionen/Frequenzen/OffentlicheNetze/LokaleNetze/Verwaltungsvorschrift3.7-3.8GHz_pdf.pdf?__blob=publicationFile&v=1"
+  - id: BNETZA_LOKALE_NETZE
+    authority: BNetzA
+    document: "Regionale und lokale Netze (portal)"
+    url: "https://www.bundesnetzagentur.de/DE/Fachthemen/Telekommunikation/Frequenzen/OeffentlicheNetze/LokaleNetze/lokalenetze-node.html"
+  - id: BNETZA_BGEBV_FREQZUT
+    authority: BNetzA
+    document: "BNetzA BGebV-FreqZut — fee schedule B.0.10 (3.7–3.8 GHz local)"
+    url: "https://www.gesetze-im-internet.de/bnetzafreqzutbgebv/BJNR451500021.html"
+  - id: G5_ACIA_DE
+    authority: 5G-ACIA (secondary)
+    document: "Germany 5G user guide — local 3.7–3.8 GHz summary"
+    url: "https://5g-acia.org/insight/5g-user-guide/germany/"
+  - id: BR_SLP_MATRIX
+    authority: project
+    document: "G7-001 ANATEL SLP 3700–3800 requirements matrix / br_anatel_slp_3700"
+    url: null
+  - id: ARCH_G0_005
+    authority: project
+    document: "G0-005 Architecture v2 freeze"
+    url: null
+  - id: PLAN_CHALLENGE
+    authority: project
+    document: "06_REFERENCE_AND_CUSTOM_PROFILES.md — challenge set"
+    url: null
+
+requirements:
+  - id: DE-LOC-001
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Band 3.700–3.800 MHz"
+    summary: "Local campus assignments use 3700–3800 MHz — the same numeric band as ANATEL SLP / br_anatel_slp_3700."
+    profile_field: "spectrum.ranges"
+    mechanisms:
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    notes: "Shared Hz range is necessary but not sufficient for profile identity."
+
+  - id: DE-LOC-002
+    source: PLAN_CHALLENGE
+    section: "Same band ≠ same profile"
+    summary: "Germany local/campus must remain a distinct challenge (de_bnetza_local_3700); must not reuse or alias br_anatel_slp_3700 despite identical 3700–3800 MHz."
+    profile_field: "challenge_id=de_bnetza_local_3700 ≠ br_anatel_slp_3700"
+    mechanisms:
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    contrast:
+      br_anatel_slp_3700: "Same band; different authority, power, height, outdoor BW, protection tables"
+
+  - id: DE-LOC-003
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Frequenzzuteilungsgebiet / Grundstück"
+    summary: "Assignments are local (property/campus/Betriebsgelände), not nationwide MNO blocks in 3.4–3.7."
+    profile_field: "geography.authorized_area + static_authorization"
+    mechanisms:
+      - authorized_area
+      - static_authorization
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: DE-LOC-004
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Befristung bis 10 Jahre"
+    summary: "Assignments granted for up to 10 years (subject to band framework end dates) — local licence, not CBRS heartbeat."
+    profile_field: "authorization.mechanism=static_authorization + fixed_window"
+    mechanisms:
+      - static_authorization
+      - fixed_window
+    forbid_mechanisms_as_keepalive:
+      - dynamic_lease
+      - periodic
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: DE-LOC-005
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "10-MHz-Blöcke"
+    summary: "Assignment in integer multiples of 10 MHz; fee schedule cites min 10 / max 100 MHz."
+    profile_field: "fixed_width_channelization (10 MHz) + max_assignment_bandwidth"
+    mechanisms:
+      - fixed_width_channelization
+      - max_assignment_bandwidth
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    contrast:
+      br_anatel_slp_3700: "BR outdoor consigned BW ≤50 MHz (Ato 915); DE allows up to 100 MHz per fee schedule"
+
+  - id: DE-LOC-006
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Anlage 2 — TDD"
+    summary: "Duplex mode is TDD."
+    profile_field: "constraints.duplex_mode=tdd"
+    mechanisms:
+      - duplex_mode
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: DE-LOC-007
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Anlage 2 — keine blockinternen BS-EIRP"
+    summary: "No prescribed in-block EIRP limits for base stations (unlike BR indoor/outdoor PSD caps)."
+    profile_field: "omit BR-style max_power BS rows; do not import Ato 915 EIRP into DE profile"
+    mechanisms: []
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    contrast:
+      br_anatel_slp_3700: "BR requires rule_table indoor 30 / outdoor 26 dBm/10 MHz for base/nodal"
+    notes: "Absence of a limit is configuration; copying BR power tables would be a regime error."
+
+  - id: DE-LOC-008
+    source: G5_ACIA_DE
+    section: "UE power (secondary)"
+    summary: "Secondary guidance cites UE limit 28 dBm TRP; BR SLP terminal max is 26 dBm (+tol)."
+    profile_field: "rule_table device_class=terminal (DE values, not BR)"
+    mechanisms:
+      - rule_table
+      - max_power
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    contrast:
+      br_anatel_slp_3700: "Different terminal EIRP/TRP numeric; must not share one power table"
+    notes: "Primary VV emphasises BEM/out-of-block; UE in-block from secondary — confirm against Anlage 2 before any DE YAML."
+
+  - id: DE-LOC-009
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "1.1 Feldstärkewert auf der Zuteilungsgrenze"
+    summary: "No default max field strength at the assignment border; if coordination fails, BNetzA may apply 32 dBµV/m/5 MHz at 3 m height at/beyond the border."
+    profile_field: "border pfd/field-strength constraint (RF/plugin) + authorized_area"
+    mechanisms:
+      - authorized_area
+      - max_power
+      - distance_exclusion
+    code_plugin: "RF port / field-strength evaluation plugin"
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    numeric_notes:
+      - "32 dBµV/m/5 MHz @ 3 m (fallback)"
+
+  - id: DE-LOC-010
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Koexistenz / Vereinbarungen"
+    summary: "Interference among local licensees is first handled by mutual agreements; regulator fallback only if needed."
+    profile_field: null
+    mechanisms: []
+    forbid_mechanisms_for_semantics:
+      - ordered_classes
+      - preemption
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: PROCESS
+    fit_verdict: PARTIAL
+    contrast:
+      br_anatel_slp_3700: "BR uses tabulated terrestrial separation distances / indoor priority rules — different coexistence policy"
+
+  - id: DE-LOC-011
+    source: G5_ACIA_DE
+    section: "Unsync guard vs nationwide <3700"
+    summary: "For unsynchronised networks, guard bands toward adjacent nationwide assignments below 3700 MHz are implemented by the local assignee."
+    profile_field: "channel_exclusion / guard in assignee spectrum + duplex sync PROCESS"
+    mechanisms:
+      - channel_exclusion
+      - duplex_mode
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+
+  - id: DE-LOC-012
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Andere Funkdienste / Erdfunk"
+    summary: "Other radio services exist in/near the band (e.g. earth stations); local use must not cause harmful interference."
+    profile_field: "protection + data.protected_entities"
+    mechanisms:
+      - protection_entitlement
+      - exclusion_zone
+      - distance_exclusion
+    data_capabilities:
+      - protected_entities
+      - boundaries
+    code_plugin: "providers; DE catalogues not in-repo"
+    test: "MATRIX_TEST"
+    status: GAP_DATA
+    fit_verdict: GAP
+    contrast:
+      br_anatel_slp_3700: "BR has explicit EMSAT Ilha do Governador geometry requirements — DE needs DE datasets, not BR bundles"
+
+  - id: DE-LOC-013
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Technologieneutral"
+    summary: "Assignments are technology-neutral; core must not hardcode a radio access technology."
+    profile_field: "omit RAT hardcoding"
+    mechanisms: []
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: DE-LOC-014
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Antragsberechtigung"
+    summary: "Eligibility from property ownership / usage rights / commissioning — administrative."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+
+  - id: DE-LOC-015
+    source: BNETZA_BGEBV_FREQZUT
+    section: "B.0.10 fees"
+    summary: "Fee = 1000 + 5·t·B·(6a1+a2) for local 3700–3800 MHz assignments."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: OUT_OF_SCOPE
+    fit_verdict: N_A
+
+  - id: DE-LOC-016
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Use-it-or-lose-it"
+    summary: "Assignment may be revoked if unused within one year or unused for more than one year."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+
+  - id: DE-LOC-017
+    source: ARCH_G0_005
+    section: "D6 / D8 / D9"
+    summary: "Must not force CBSD/Grant as universal nouns; DE local Zuteilung maps to static_authorization."
+    profile_field: "static_authorization; omit Grant/CBSD in core"
+    mechanisms:
+      - static_authorization
+    forbid_domain_nouns:
+      - Grant
+      - CBSD
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: DE-LOC-018
+    source: ARCH_G0_005
+    section: "D10 / access"
+    summary: "No CBRS-like dynamic Incumbent/PAL/GAA tiers for DE local campus."
+    profile_field: "omit access / ordered_classes"
+    mechanisms: []
+    forbid_mechanisms_for_semantics:
+      - ordered_classes
+      - preemption
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: DE-LOC-019
+    source: BR_SLP_MATRIX
+    section: "Contrast — BR-specific constraints"
+    summary: "BR Ato 915 outdoor antenna height 6 m AGL, outdoor BW ≤50 MHz, indoor preference, and EMSAT tables must not be silently applied to DE."
+    profile_field: "separate future de_bnetza_local_3700.yaml; never alias br_anatel_slp_3700"
+    mechanisms: []
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    contrast:
+      br_anatel_slp_3700: "antenna_height_limit=6 m outdoor; max outdoor BW 50 MHz; EMSAT protection — DE-specific rules differ"
+
+  - id: DE-LOC-020
+    source: BNETZA_VV_LOKALES_BREITBAND_3700
+    section: "Anlage 2 — BEM / 2008/411"
+    summary: "Out-of-block BEM and coexistence masks reference Commission Decision 2008/411/EC (as amended) and related ECC material."
+    profile_field: "rf.required + RF mask plugin"
+    mechanisms:
+      - path_loss
+      - max_power
+      - single_link_threshold
+    code_plugin: "RF port plugin for BEM/field-strength; not hardcoded in core"
+    test: "MATRIX_TEST"
+    status: GAP_ADAPTER
+    fit_verdict: GAP
+
+  - id: DE-LOC-021
+    source: BNETZA_LOKALE_NETZE
+    section: "Antragsverfahren"
+    summary: "Applications via BNetzA electronic forms/email — national SMS PROCESS."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+
+  - id: DE-LOC-022
+    source: PLAN_CHALLENGE
+    section: "Challenge-set role"
+    summary: "Germany local 3.7–3.8 is a challenge profile whose primary proof is same-band≠same-profile versus BR SLP; no mandatory DE YAML in G9-004."
+    profile_field: "challenge_id=de_bnetza_local_3700; profile_id_target deferred"
+    mechanisms: []
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: MATRIX_TEST
+    fit_verdict: N_A
+
+fit_summary:
+  fit_existing: 10
+  fit_partial: 4
+  gap_primitive: 0
+  gap_data: 1
+  gap_adapter: 1
+  process: 4
+  out_of_scope: 1
+  matrix_test: 1
+  overall_challenge_verdict: PARTIAL
+  overall_notes: >
+    Same 3700–3800 MHz as br_anatel_slp_3700, but DE has no prescribed in-block BS EIRP, different
+    terminal/power/BW/height/coexistence policy, and BNetzA border field-strength fallback.
+    Core redesign not required; do not alias or import BR Ato 915 tables into a future DE profile.
+
+core_redesign_required: false
+implement_profile_in_this_task: false
