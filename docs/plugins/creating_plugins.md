@@ -65,6 +65,7 @@ managed = "adapters.managed_consumer:managed_network_adapter"
 [project.entry-points."spectrum_access.protocol_adapters"]
 generic_json = "adapters.protocol:GenericJsonProtocolAdapter"
 winnforum_rest = "adapters.winnforum_rest:winnforum_rest_protocol_adapter"
+elsa1 = "adapters.elsa1:elsa1_protocol_adapter"
 
 [project.entry-points."spectrum_access.rf_models"]
 free_space = "rf.cbrs_winnforum:free_space_rf_adapter"

@@ -90,6 +90,7 @@ def package_bootstrap_adapter_discovery() -> AdapterDiscovery:
         return live
     from adapters.cbsd import cbsd_device_adapter
     from adapters.device import MappingDeviceAdapter, MappingNetworkAdapter
+    from adapters.elsa1 import elsa1_protocol_adapter
     from adapters.managed_consumer import managed_network_adapter
     from adapters.protocol import GenericJsonProtocolAdapter
     from adapters.winnforum_rest import winnforum_rest_protocol_adapter
@@ -107,6 +108,7 @@ def package_bootstrap_adapter_discovery() -> AdapterDiscovery:
             GROUP_PROTOCOL_ADAPTERS: {
                 "generic_json": GenericJsonProtocolAdapter,
                 "winnforum_rest": winnforum_rest_protocol_adapter,
+                "elsa1": elsa1_protocol_adapter,
             },
         },
         list_entry_points=lambda _g: (),

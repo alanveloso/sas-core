@@ -84,8 +84,8 @@ requirements:
     summary: "eLSA1 is the protocol interface between eLR and eLC for eLSRAI exchange and acknowledgement."
     profile_field: "protocol adapter capability (not Coordination Core)"
     mechanisms: []
-    code_plugin: "eLSA1 protocol adapter (G8-004)"
-    test: "TBD:G8-004"
+    code_plugin: "adapters.elsa1:Elsa1ProtocolAdapter + ManagedNetworkAdapter"
+    test: "tests/unit/test_g8_004_elsa1_protocol.py"
     status: ADAPTER_REQUIRED
     focus: network_centric
 
@@ -325,8 +325,8 @@ requirements:
     summary: "End-to-end acknowledgment for eLSA spectrum resource availability changes (licensee implemented changes)."
     profile_field: null
     mechanisms: []
-    code_plugin: "eLSA1 confirmation procedures (G8-004)"
-    test: "TBD:G8-004"
+    code_plugin: "elsa1 elsraiConfirmation procedure (slice)"
+    test: "tests/unit/test_g8_004_elsa1_protocol.py"
     status: ADAPTER_REQUIRED
     focus: availability
 
@@ -349,10 +349,11 @@ requirements:
     section: "5.5 eLSRAI Request/Notification/Confirmation"
     summary: "High-level eLSRAI request, notification, and confirmation procedures synchronize availability between eLR and eLC."
     profile_field: null
-    mechanisms: []
-    code_plugin: "protocol adapter procedures (G8-004)"
-    test: "TBD:G8-004"
-    status: OUT_OF_SCOPE_PROTOCOL
+    mechanisms:
+      - availability_constraint
+    code_plugin: "adapters.elsa1 procedure slice; full TS 103 652-3 IE encoding still out of scope"
+    test: "tests/unit/test_g8_004_elsa1_protocol.py"
+    status: ADAPTER_REQUIRED
     focus: availability
 
   - id: ELSA-024

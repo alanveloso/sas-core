@@ -19,6 +19,7 @@ from adapters.discovery import (
     GROUP_PROTOCOL_ADAPTERS,
     AdapterDiscovery,
 )
+from adapters.elsa1 import ELSA1_PROTOCOL_ID, Elsa1ProtocolAdapter, elsa1_protocol_adapter
 from adapters.managed_consumer import ManagedNetworkAdapter, managed_network_adapter
 from adapters.protocol import (
     GENERIC_JSON_PROTOCOL_ID,
@@ -33,6 +34,7 @@ __all__ = [
     "ADAPTER_API_VERSION",
     "ADAPTER_GROUPS",
     "PROTOCOL_API_VERSION",
+    "ELSA1_PROTOCOL_ID",
     "GENERIC_JSON_PROTOCOL_ID",
     "GROUP_DEVICE_ADAPTERS",
     "GROUP_NETWORK_ADAPTERS",
@@ -42,6 +44,7 @@ __all__ = [
     "ConsumerAdapter",
     "ConsumerView",
     "DomainOperation",
+    "Elsa1ProtocolAdapter",
     "GenericJsonProtocolAdapter",
     "ManagedNetworkAdapter",
     "MappingDeviceAdapter",
@@ -49,5 +52,6 @@ __all__ = [
     "ProtocolAdapter",
     "ProtocolInbound",
     "consumer_meets_requirements",
+    "elsa1_protocol_adapter",
     "managed_network_adapter",
 ]

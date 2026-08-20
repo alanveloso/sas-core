@@ -4,7 +4,7 @@ Maps a network authorization holder (e.g. eLSA VSP/MFCN identity) onto
 ConsumerView with area footprints. Explicitly rejects CBSD/Grant payload shapes
 so networks are never modeled as fake CBSDs.
 
-Protocol eLSA1 codecs remain G8-004.
+Protocol eLSA1 codecs: ``adapters.elsa1`` (G8-004 vertical slice).
 """
 
 from __future__ import annotations

@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Mapping, Protocol, runtime_checkable
 
 from adapters.device import ADAPTER_API_VERSION, ConsumerAdapter
+from primitives.availability import AvailabilityChangeEvent, AvailabilityConstraint
 from primitives.decision import Decision
 from primitives.request import SpectrumRequest
 from primitives.time import UtcInstant
@@ -25,14 +26,21 @@ class DomainOperation(StrEnum):
     """Closed inbound operations. Periodic keep-alive is not a protocol verb here."""
 
     REQUEST_SPECTRUM = "request_spectrum"
+    APPLY_AVAILABILITY = "apply_availability"
 
 
 @dataclass(frozen=True, slots=True)
 class ProtocolInbound:
-    """Decoded envelope: operation plus canonical spectrum request."""
+    """Decoded envelope: operation plus canonical spectrum request.
+
+    Optional availability fields carry eLSA-style windows/events without making
+    the protocol adapter own network identity (that stays on ConsumerAdapter).
+    """
 
     operation: DomainOperation
     request: SpectrumRequest
+    availability_constraints: tuple[AvailabilityConstraint, ...] = ()
+    availability_event: AvailabilityChangeEvent | None = None
 
 
 @runtime_checkable
