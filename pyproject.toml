@@ -39,6 +39,10 @@ winnforum_rest = "adapters.winnforum_rest:winnforum_rest_protocol_adapter"
 [project.entry-points."spectrum_access.rf_models"]
 free_space = "rf.cbrs_winnforum:free_space_rf_adapter"
 
+[project.entry-points."spectrum_access.data_providers"]
+bundle_protected_entities = "providers.operator_feature_bundle:protected_entities_provider"
+bundle_boundaries = "providers.operator_feature_bundle:boundaries_provider"
+
 [project.optional-dependencies]
 dev = [
   "pytest==9.1.1",

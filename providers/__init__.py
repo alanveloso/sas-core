@@ -19,6 +19,13 @@ from providers.contract import (
     providers_meet_requirements,
 )
 from providers.discovery import DataProviderDiscovery
+from providers.operator_feature_bundle import (
+    BUNDLE_ENV,
+    DataBundleUnavailableError,
+    OperatorFeatureBundleProvider,
+    load_feature_bundle,
+    resolve_bundle_path,
+)
 
 __all__ = [
     "CAPABILITY_BOUNDARIES",
@@ -29,6 +36,8 @@ __all__ = [
     "CAPABILITY_TERRAIN",
     "DATA_CAPABILITIES",
     "PROVIDER_API_VERSION",
+    "BUNDLE_ENV",
+    "DataBundleUnavailableError",
     "DataKind",
     "DataProvider",
     "DataProviderDiscovery",
@@ -37,5 +46,8 @@ __all__ = [
     "MappingLandCoverProvider",
     "MappingReferenceProvider",
     "MappingTerrainProvider",
+    "OperatorFeatureBundleProvider",
+    "load_feature_bundle",
     "providers_meet_requirements",
+    "resolve_bundle_path",
 ]

@@ -20,6 +20,10 @@ certification-package/
 data/geo/ned/**
 !data/geo/ned/README.md
 !data/geo/ned/VERSION
+# ANATEL SLP operator feature bundles (G7-004); keep README + template only.
+data/geo/anatel/**/*_bundle.yaml
+!data/geo/anatel/README.md
+!data/geo/anatel/*.template.yaml
 # NTIA DPA KML (provision locally; keep README + VERSION).
 data/ntia/**
 !data/ntia/README.md

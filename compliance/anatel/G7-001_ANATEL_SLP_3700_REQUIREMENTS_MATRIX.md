@@ -22,7 +22,7 @@ Esta matriz **não** é evidência de conformidade ANATEL nem autorização para
 | Status | Significado |
 | --- | --- |
 | `PLANNED_YAML` | Expressável no Profile v2 com mechanisms/capabilities já no catálogo (G7-002) |
-| `GAP_DATA` | Precisa provider/dados BR (G7-004); sem inventar datasets |
+| `BUNDLE_REQUIRED` | Provider de bundle operado instalado (G7-004); geometrias oficiais ainda não no Git |
 | `GAP_PRIMITIVE` | Pode exigir primitive nova — só se reutilizável (G7-003); revisar antes |
 | `OUT_OF_SCOPE_EQUIP` | Máscara/certificação de equipamento (ACLR/OBUE/espúrios); fora do Coordination Core |
 | `PROCESS` | Processo de outorga/coordenação entre partes; não é decisão automática de grant CBRS-like |
@@ -43,11 +43,11 @@ Esta matriz **não** é evidência de conformidade ANATEL nem autorização para
 | BR-SLP-3700-009 | ATO_915_2024 | 5.13.13 | Preferência indoor; outdoor com área de cobertura limitada | `power` indoor/outdoor rules; geography area limits | — | TBD:G7-005 | PLANNED_YAML |
 | BR-SLP-3700-010 | ATO_915_2024 | 5.13.14 | Altura máx. antena outdoor base/nodal: 6 m AGL | `constraints.antenna_height_limit` | — | test_g7_003 | PLANNED_YAML |
 | BR-SLP-3700-011 | ATO_915_2024 | 5.13.15 | Outdoor: largura consignada ≤ 50 MHz | `constraints.max_assignment_bandwidth` (+ channelization 10 MHz) | — | test_g7_003 | PLANNED_YAML |
-| BR-SLP-3700-012 | ATO_915_2024 | 5.13.16 | Parâmetros de estações no BDTA públicos para coordenação prévia | `data.required_capabilities` (ex.: `protected_entities`, `boundaries`) | data provider BDTA/bundle BR | TBD:G7-004 | GAP_DATA |
-| BR-SLP-3700-013 | ATO_915_2024 | 5.13.17.1 | Proteger EMSAT (Ilha do Governador) de emissões terrestres | `protection` + `exclusion_zone` / entidade protegida | data provider + geography | TBD:G7-004/G7-005 | GAP_DATA |
-| BR-SLP-3700-014 | ATO_915_2024 | 5.13.17.3–5 / Tabela XII-d | Separação mínima / acordo de coordenação estação terrestre ↔ terrena | `protection.mechanisms` incl. `distance_exclusion`; acordos = PROCESS | data provider estações terrenas | TBD:G7-004/G7-005 | GAP_DATA |
+| BR-SLP-3700-012 | ATO_915_2024 | 5.13.16 | Parâmetros de estações no BDTA públicos para coordenação prévia | `data.required_capabilities` | `operator_feature_bundle` | test_g7_004 | BUNDLE_REQUIRED |
+| BR-SLP-3700-013 | ATO_915_2024 | 5.13.17.1 | Proteger EMSAT (Ilha do Governador) de emissões terrestres | `protection` + bundle `protected_entities` | operator bundle | test_g7_004 | BUNDLE_REQUIRED |
+| BR-SLP-3700-014 | ATO_915_2024 | 5.13.17.3–5 / Tabela XII-d | Separação mínima / acordo de coordenação estação terrestre ↔ terrena | `distance_exclusion` + bundle | operator bundle | test_g7_004 | BUNDLE_REQUIRED |
 | BR-SLP-3700-015 | ATO_915_2024 | 5.13.17.6–7 | Terrena entrante / mitigação / faixa de guarda | PROCESS + possíveis exclusões/guard bands no profile | — | TBD:G7-005 | PROCESS |
-| BR-SLP-3700-016 | ATO_915_2024 | 5.13.18.2 / Tabela XII-e | Separação entre estações terrestres (200 m / 500 m etc.) | `distance_exclusion` (+ sync/guard = PROCESS) | data provider estações terrestres | TBD:G7-004/G7-005 | GAP_DATA |
+| BR-SLP-3700-016 | ATO_915_2024 | 5.13.18.2 / Tabela XII-e | Separação entre estações terrestres (200 m / 500 m etc.) | `distance_exclusion` + bundle | operator bundle | test_g7_004 | BUNDLE_REQUIRED |
 | BR-SLP-3700-017 | ATO_915_2024 | 5.13.18.4 | Em conflito outdoor vs indoor comprovado, prioridade à indoor | regra de coexistência / policy (não `ordered_classes` de acesso dinâmico) | — | TBD:G7-005 | GAP_PRIMITIVE |
 | BR-SLP-3700-018 | ATO_915_2024 | 5.13.18.5 | Sincronismo TDD comum entre redes vizinhas quando necessário | PROCESS / parâmetro operacional; não grant heartbeat | — | — | PROCESS |
 | BR-SLP-3700-019 | ARCH_D9_D10 | D9 | Autorização tipo licença local de longa validade, sem refresh periódico tipo CBRS | `authorization.mechanism=static_authorization` | — | TBD:G7-005 | PLANNED_YAML |
