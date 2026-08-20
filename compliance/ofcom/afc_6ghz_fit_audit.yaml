@@ -1,0 +1,388 @@
+# Ofcom AFC 6 GHz — challenge-set fit audit (G9-005).
+# Traceability / gap measurement only — not a conformity claim and not a Profile v2 / AFCSP implementation.
+# Challenge target id (future, not created here): afc_6ghz
+# Deliverable focus: query-driven spectrum/power availability → deferred mechanism query_assignment (D9).
+# Do NOT register or implement query_assignment in this task (fit-gap only).
+version: 1
+matrix_id: G9-005
+challenge_id: afc_6ghz
+profile_id_target: null
+audit_mode: fit_gap_only
+primary_instrument:
+  id: OFCOM_AFC_FRAMEWORK
+  authority: Ofcom
+  title: "Automated Frequency Coordination (AFC) — 6 GHz Standard Power"
+  url: "https://www.ofcom.org.uk/spectrum/radio-equipment/automated-frequency-coordination-afc"
+  focus_section: "Location/params → available frequencies + max power; protected-service data"
+  retrieved_note: "Cited from Ofcom AFC page (published 2026-07-20) and AFC Framework / Annex 5 technical conditions extract (5925–7125 MHz)."
+
+allowed_statuses:
+  - FIT_EXISTING
+  - FIT_PARTIAL
+  - GAP_PRIMITIVE
+  - GAP_DATA
+  - GAP_ADAPTER
+  - PROCESS
+  - OUT_OF_SCOPE
+  - MATRIX_TEST
+
+allowed_fit_verdicts:
+  - FIT
+  - PARTIAL
+  - GAP
+  - N_A
+
+sources:
+  - id: OFCOM_AFC
+    authority: Ofcom
+    document: "Automated Frequency Coordination (AFC) — product page"
+    url: "https://www.ofcom.org.uk/spectrum/radio-equipment/automated-frequency-coordination-afc"
+  - id: OFCOM_AFC_FRAMEWORK
+    authority: Ofcom
+    document: "AFC Framework / Annex 5 — available frequencies and max power for Standard Power RLAN"
+    url: "https://www.ofcom.org.uk/siteassets/resources/documents/consultations/category-3-4-weeks/automated-frequency-coordination-afc-for-the-6-ghz-frequency-band/main-docs/annex-5_automated-frequency-coordination-framework_v1.0.pdf"
+  - id: ARCH_G0_005
+    authority: project
+    document: "G0-005 Architecture v2 freeze — D9 query_assignment deferred to G9"
+    url: null
+  - id: ARCH_G0_004
+    authority: project
+    document: "G0-004 Conceptual stress test — query_assignment CONFIRM_DEFER → G9"
+    url: null
+  - id: G9_001_UK_SA
+    authority: project
+    document: "G9-001 UK Shared Access fit audit — online maps cited deferred query_assignment"
+    url: null
+  - id: PLAN_CHALLENGE
+    authority: project
+    document: "06_REFERENCE_AND_CUSTOM_PROFILES.md — AFC challenge"
+    url: null
+
+requirements:
+  - id: AFC-001
+    source: OFCOM_AFC
+    section: "6 GHz band"
+    summary: "AFC coordinates Standard Power use in 5925–7125 MHz."
+    profile_field: "spectrum.ranges"
+    mechanisms:
+      - frequency_ranges
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: AFC-002
+    source: OFCOM_AFC_FRAMEWORK
+    section: "§3 Determination of available frequencies / max power"
+    summary: "On request, AFC returns available frequencies and associated maximum power levels for a device at a location/time — the canonical query-assignment shape."
+    profile_field: "authorization.mechanism=query_assignment (deferred; not registered)"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: GAP_PRIMITIVE
+    fit_verdict: GAP
+    notes: "Named in D9; not in builtin_mechanism_registry. Do not fake via Grant or SpectrumInquiryResponse as universal nouns."
+
+  - id: AFC-003
+    source: OFCOM_AFC_FRAMEWORK
+    section: "§3.2 Query inputs"
+    summary: "Availability depends on device location, technical parameters, and protected-system data — not a pre-issued static local licence alone."
+    profile_field: "query_assignment inputs; static_authorization insufficient as sole mechanism"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    forbid_mechanisms_for_semantics:
+      - static_authorization
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: GAP_PRIMITIVE
+    fit_verdict: GAP
+    notes: "static_authorization remains valid for other regimes; AFC primary path is query-driven."
+
+  - id: AFC-004
+    source: ARCH_G0_005
+    section: "D7 / D9"
+    summary: "Must not promote CBRS Grant/CBSD or Spectrum Inquiry protocol types as the generic AFC model."
+    profile_field: "query_assignment (generic); CBRS SIQ stays CBRS adapter"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    forbid_domain_nouns:
+      - Grant
+      - CBSD
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    notes: "CBRS Spectrum Inquiry may share RF math; it is not the universal query_assignment contract."
+
+  - id: AFC-005
+    source: ARCH_G0_005
+    section: "D9 availability_constraint vs query_assignment"
+    summary: "eLSA availability_constraint (push/zone validity) is registered; AFC pull query is a distinct authorization-family mechanism."
+    profile_field: "do not overload availability_constraint for AFC queries"
+    mechanisms:
+      - availability_constraint
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "Both are authorization-family; roles differ (zone/event vs location query)."
+
+  - id: AFC-006
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Protected services"
+    summary: "Protect fixed links, radio astronomy, and other services in Ofcom licence data (incl. non-published stations)."
+    profile_field: "protection + data.protected_entities; Ofcom 6 GHz extract API"
+    mechanisms:
+      - protection_entitlement
+      - distance_exclusion
+      - exclusion_zone
+      - channel_exclusion
+      - single_link_threshold
+      - path_loss
+    data_capabilities:
+      - protected_entities
+      - boundaries
+      - reference_data
+    code_plugin: "providers; Ofcom secure extract not in-repo"
+    test: "MATRIX_TEST"
+    status: GAP_DATA
+    fit_verdict: GAP
+
+  - id: AFC-007
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Geolocation capability"
+    summary: "Standard Power devices must provide geographic coordinates and location uncertainty (metres) at 95% confidence."
+    profile_field: "device adapter capability geolocation; not a core singleton"
+    mechanisms:
+      - point_radius
+    code_plugin: "device/network ConsumerAdapter (geolocation capability)"
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+
+  - id: AFC-008
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Max EIRP ceiling 36 dBm"
+    summary: "Standard Power max permissible EIRP is 36 dBm (4 W); AFC may return lower location-specific limits."
+    profile_field: "rule_table ceiling + query_assignment power result"
+    mechanisms:
+      - rule_table
+      - max_power
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    numeric_notes:
+      - "36 dBm Standard Power ceiling"
+
+  - id: AFC-009
+    source: OFCOM_AFC_FRAMEWORK
+    section: "§3.3 Power step sizes"
+    summary: "Returned max power levels in steps ≤3 dB from ceiling down to ≤21 dBm."
+    profile_field: "query_assignment result encoding (power ladder)"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: GAP_PRIMITIVE
+    fit_verdict: GAP
+    numeric_notes:
+      - "≤3 dB steps; floor ≤21 dBm"
+
+  - id: AFC-010
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Device registration / authentication"
+    summary: "AFC must register and authenticate Standard Power APs and fixed clients before providing availability."
+    profile_field: "protocol adapter (AFC device API)"
+    mechanisms: []
+    code_plugin: "ProtocolAdapter plugin (AFCSP↔device)"
+    test: "MATRIX_TEST"
+    status: GAP_ADAPTER
+    fit_verdict: GAP
+
+  - id: AFC-011
+    source: OFCOM_AFC
+    section: "AFC service provider registration"
+    summary: "Organisations must apply to and register with Ofcom before offering AFC services."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+
+  - id: AFC-012
+    source: OFCOM_AFC_FRAMEWORK
+    section: "§2.8–2.11 Failure to access protected data"
+    summary: "Protected-data access failures trigger retries/notify; Ofcom may instruct cease operation — fail-closed / operator policy."
+    profile_field: "providers fail-closed when required capabilities unavailable"
+    mechanisms: []
+    data_capabilities:
+      - protected_entities
+      - reference_data
+    code_plugin: "providers"
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+    notes: "Cache/last-good behaviour is Ofcom-specific PROCESS layered on fail-closed defaults."
+
+  - id: AFC-013
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Denied geographic area"
+    summary: "Ofcom may specify geographic×frequency locations where Standard Power operation is not permitted."
+    profile_field: "geography.exclusion_zone + channel_exclusion"
+    mechanisms:
+      - exclusion_zone
+      - channel_exclusion
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: AFC-014
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Terrain / clutter + separation"
+    summary: "AFC calculations use terrain/clutter and separation distances to protected systems."
+    profile_field: "rf.required + terrain/land_cover capabilities"
+    mechanisms:
+      - path_loss
+      - distance_exclusion
+      - single_link_threshold
+    data_capabilities:
+      - terrain
+      - land_cover
+    code_plugin: "RF port + providers"
+    test: "MATRIX_TEST"
+    status: GAP_ADAPTER
+    fit_verdict: GAP
+    notes: "RF port exists; Ofcom AFC propagation criteria are a specific RF model plugin, not core."
+
+  - id: AFC-015
+    source: OFCOM_AFC
+    section: "Licence-exempt Standard Power"
+    summary: "Device operation is licence-exempt under exemption regulations when under AFC control — not a spectrum licence grant."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: OUT_OF_SCOPE
+    fit_verdict: N_A
+    notes: "Exemption law is regulatory PROCESS; coordination logic is the product challenge."
+
+  - id: AFC-016
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Available frequencies at a specific time"
+    summary: "Availability is time- and location-specific; devices must operate as directed by AFC (re-query / refresh policy)."
+    profile_field: "query_assignment validity + optional periodic reevaluation"
+    mechanisms:
+      - periodic
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: GAP_PRIMITIVE
+    fit_verdict: GAP
+    notes: "periodic may layer refresh; the assignment itself is still query_assignment, not CBRS heartbeat-inside-lease."
+
+  - id: AFC-017
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Networked element"
+    summary: "A networked element may speak to AFC on behalf of one or more Standard Power devices."
+    profile_field: "device/network ConsumerAdapter"
+    mechanisms: []
+    code_plugin: "ManagedNetworkAdapter / device adapter"
+    test: "MATRIX_TEST"
+    status: FIT_PARTIAL
+    fit_verdict: PARTIAL
+
+  - id: AFC-018
+    source: G9_001_UK_SA
+    section: "Cross-challenge: UK SA online maps"
+    summary: "G9-001 already deferred query_assignment for Ofcom availability maps — second regime pressure alongside AFC (≥2-regime evidence for later interface review)."
+    profile_field: "query_assignment shared name; distinct profiles"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+    notes: "Supports G9-006 gate: avoid redesign from a single isolated case."
+
+  - id: AFC-019
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Indoor assumption"
+    summary: "If indoor/outdoor not provided, AFC shall assume outdoors — closed selector, not YAML DSL."
+    profile_field: "rule_table indoor_outdoor default=outdoor"
+    mechanisms:
+      - rule_table
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: FIT_EXISTING
+    fit_verdict: FIT
+
+  - id: AFC-020
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Protected data refresh ≥24 h"
+    summary: "AFCSP must download Ofcom/ComReg protected data at least every 24 hours."
+    profile_field: null
+    mechanisms:
+      - periodic
+    code_plugin: "provider sync job"
+    test: "MATRIX_TEST"
+    status: PROCESS
+    fit_verdict: PARTIAL
+
+  - id: AFC-021
+    source: OFCOM_AFC_FRAMEWORK
+    section: "Security / NDA"
+    summary: "Security measures and non-disclosure for protected/non-published station data."
+    profile_field: null
+    mechanisms: []
+    code_plugin: null
+    test: null
+    status: PROCESS
+    fit_verdict: N_A
+
+  - id: AFC-022
+    source: PLAN_CHALLENGE
+    section: "Challenge-set role"
+    summary: "AFC is a challenge profile: measure query-driven fit; do not implement query_assignment or an AFCSP product in G9-005."
+    profile_field: "challenge_id=afc_6ghz; profile_id_target deferred; implement_profile_in_this_task=false"
+    mechanisms: []
+    deferred_mechanisms:
+      - query_assignment
+    code_plugin: null
+    test: "MATRIX_TEST"
+    status: MATRIX_TEST
+    fit_verdict: N_A
+
+fit_summary:
+  fit_existing: 5
+  fit_partial: 5
+  gap_primitive: 4
+  gap_data: 1
+  gap_adapter: 2
+  process: 3
+  out_of_scope: 1
+  matrix_test: 1
+  overall_challenge_verdict: GAP
+  overall_notes: >
+    AFC is the strongest evidence that query_assignment (D9) is required as a first-class
+    authorization mechanism: location/params → available frequencies + max power.
+    Do not implement it in G9-005; do not fake it with Grant/SIQ/static_authorization.
+    Supporting gaps: Ofcom protected/terrain datasets (GAP_DATA) and AFC protocol/RF plugins (GAP_ADAPTER).
+    G9-001 UK maps already cite the same deferred mechanism (≥2 regimes for G9-006).
+
+core_redesign_required: false
+implement_profile_in_this_task: false
+implement_query_assignment_in_this_task: false
