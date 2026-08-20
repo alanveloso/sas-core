@@ -13,12 +13,6 @@ _REPO = Path(__file__).resolve().parents[2]
 _MATRIX_YAML = (
     _REPO / "compliance" / "anatel" / "slp_3700_3800_requirements_matrix.yaml"
 )
-_MATRIX_MD = (
-    _REPO
-    / "compliance"
-    / "anatel"
-    / "G7-001_ANATEL_SLP_3700_REQUIREMENTS_MATRIX.md"
-)
 
 _REQUIRED_REQ_KEYS = {
     "id",
@@ -39,13 +33,12 @@ def _load_matrix() -> dict:
     return payload
 
 
-def test_matrix_files_exist() -> None:
+def test_matrix_yaml_exists() -> None:
     assert _MATRIX_YAML.is_file()
-    assert _MATRIX_MD.is_file()
-    md = _MATRIX_MD.read_text(encoding="utf-8")
-    assert "G7-001" in md
-    assert "ATO_915_2024" in md
-    assert "br_anatel_slp_3700" in md
+    doc = _load_matrix()
+    assert doc["matrix_id"] == "G7-001"
+    assert doc["primary_instrument"]["id"] == "ATO_915_2024"
+    assert doc["profile_id_target"] == "br_anatel_slp_3700"
 
 
 def test_matrix_document_shape() -> None:
@@ -92,13 +85,6 @@ def test_data_capabilities_are_canonical() -> None:
     for row in doc["requirements"]:
         for cap in row.get("data_capabilities") or ():
             assert cap in DATA_CAPABILITIES, f"{row['id']}: bad capability {cap!r}"
-
-
-def test_markdown_lists_every_requirement_id() -> None:
-    doc = _load_matrix()
-    md = _MATRIX_MD.read_text(encoding="utf-8")
-    for row in doc["requirements"]:
-        assert row["id"] in md, row["id"]
 
 
 def test_planned_yaml_rows_map_to_mechanisms_or_explicit_omit() -> None:

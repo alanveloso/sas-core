@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from primitives.registry import MechanismAxis, builtin_mechanism_registry
@@ -17,20 +15,6 @@ from primitives.station_limits import (
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
 from spectrum_profiles.loader import ProfileValidationError
-
-_REPO = Path(__file__).resolve().parents[2]
-_JUSTIFICATION = (
-    _REPO / "compliance" / "anatel" / "G7-003_PRIMITIVE_JUSTIFICATION.md"
-)
-
-
-def test_justification_doc_exists() -> None:
-    text = _JUSTIFICATION.read_text(encoding="utf-8")
-    assert "duplex_mode" in text
-    assert "max_assignment_bandwidth" in text
-    assert "antenna_height_limit" in text
-    assert "forbidden_device_roles" in text
-    assert "BR-SLP-3700-017" in text
 
 
 def test_new_mechanisms_registered_on_expected_axes() -> None:

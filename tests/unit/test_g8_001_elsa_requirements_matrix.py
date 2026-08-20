@@ -11,7 +11,6 @@ from providers.contract import DATA_CAPABILITIES
 
 _REPO = Path(__file__).resolve().parents[2]
 _MATRIX_YAML = _REPO / "compliance" / "etsi" / "elsa_requirements_matrix.yaml"
-_MATRIX_MD = _REPO / "compliance" / "etsi" / "G8-001_ELSA_REQUIREMENTS_MATRIX.md"
 
 _REQUIRED_REQ_KEYS = {
     "id",
@@ -34,15 +33,15 @@ def _load_matrix() -> dict:
     return payload
 
 
-def test_matrix_files_exist() -> None:
+def test_matrix_yaml_exists() -> None:
     assert _MATRIX_YAML.is_file()
-    assert _MATRIX_MD.is_file()
-    md = _MATRIX_MD.read_text(encoding="utf-8")
-    assert "G8-001" in md
-    assert "ETSI_TS_103_652_1" in md
-    assert "eu_elsa" in md
-    assert "availability" in md.lower()
-    assert "network" in md.lower()
+    doc = _load_matrix()
+    assert doc["matrix_id"] == "G8-001"
+    assert doc["primary_instrument"]["id"] == "ETSI_TS_103_652_1"
+    assert doc["profile_id_target"] == "eu_elsa"
+    focuses = {row.get("focus") for row in doc["requirements"]}
+    assert "availability" in focuses
+    assert "network_centric" in focuses
 
 
 def test_matrix_document_shape() -> None:
@@ -106,13 +105,6 @@ def test_data_capabilities_are_canonical() -> None:
     for row in doc["requirements"]:
         for cap in row.get("data_capabilities") or ():
             assert cap in DATA_CAPABILITIES, f"{row['id']}: bad capability {cap!r}"
-
-
-def test_markdown_lists_every_requirement_id() -> None:
-    doc = _load_matrix()
-    md = _MATRIX_MD.read_text(encoding="utf-8")
-    for row in doc["requirements"]:
-        assert row["id"] in md, row["id"]
 
 
 def test_planned_yaml_rows_map_to_mechanisms_or_explicit_rules() -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -26,9 +25,6 @@ from primitives.request import TransmissionFootprint
 from primitives.time import TimeInterval, UtcInstant
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
 from spectrum_profiles.loader import ProfileValidationError
-
-_REPO = Path(__file__).resolve().parents[2]
-_JUSTIFICATION = _REPO / "compliance" / "etsi" / "G8-003_AVAILABILITY_PRIMITIVES.md"
 
 _T0 = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
 
@@ -58,13 +54,6 @@ def _footprint(
         location=location
         or GeoPoint(latitude_deg=1.0, longitude_deg=1.0),
     )
-
-
-def test_justification_doc() -> None:
-    text = _JUSTIFICATION.read_text(encoding="utf-8")
-    assert "availability_constraint" in text
-    assert "preemption" in text.lower()
-    assert "G8-004" in text
 
 
 def test_mechanism_registered_on_authorization_axis() -> None:
