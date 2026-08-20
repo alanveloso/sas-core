@@ -70,7 +70,14 @@ include = [
 ]
 
 [tool.setuptools.package-data]
-spectrum_profiles = ["profiles/*.yaml", "profiles/*.yml", "profiles/*.json", "profiles/v2/*.yaml"]
+spectrum_profiles = [
+  "profiles/*.yaml",
+  "profiles/*.yml",
+  "profiles/*.json",
+  "profiles/v2/*.yaml",
+  "profiles/templates/*.yaml",
+  "profiles/examples/*.yaml",
+]
 protection_data = ["manifests/*.yaml", "manifests/*.yml"]
 compliance = ["*.yaml"]
 
