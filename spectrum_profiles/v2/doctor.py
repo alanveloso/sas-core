@@ -26,6 +26,7 @@ from spectrum_profiles.v2.negotiate import (
 )
 from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
 from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.trust import ProfileTrustTier
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +170,7 @@ def diagnose_profile_v2(
     protection_bundle: str | None = None,
     data_root: Path | str | None = None,
     protection_strict: bool = False,
+    trust_tier: ProfileTrustTier | None = None,
 ) -> ProfileDoctorReport:
     """Run doctor checks on an already-parsed Profile v2 document."""
     report = ProfileDoctorReport(source=source)
@@ -186,6 +188,26 @@ def diagnose_profile_v2(
             f"status={parsed.metadata.status} hash={report.profile_hash[:12]}…"
         ),
         section="structure",
+    )
+    based_on_note = (
+        f"based_on={parsed.metadata.based_on} (provenance only; no inheritance)"
+        if parsed.metadata.based_on
+        else "based_on=null"
+    )
+    tier_note = (
+        f"trust_tier={trust_tier.value}"
+        if trust_tier is not None
+        else "trust_tier=unspecified"
+    )
+    _add(
+        report,
+        name="provenance",
+        ok=True,
+        detail=(
+            f"{tier_note} hash={report.profile_hash} "
+            f"status={parsed.metadata.status} {based_on_note} source={source}"
+        ),
+        section="trust",
     )
     _add(
         report,
@@ -453,10 +475,12 @@ def run_profile_doctor(
         if path is not None:
             source = str(Path(path).expanduser().resolve())
             parsed = load_profile_v2_document(Path(path))
+            trust_tier = ProfileTrustTier.OPERATOR_EXPLICIT
         else:
             assert profile_id is not None
             source = f"id:{profile_id}"
             parsed = load_profile_v2(profile_id)
+            trust_tier = ProfileTrustTier.BUILTIN_V2
     except ProfileError as exc:
         report = ProfileDoctorReport(source=str(path or profile_id))
         _add(
@@ -480,6 +504,7 @@ def run_profile_doctor(
         protection_bundle=protection_bundle,
         data_root=data_root,
         protection_strict=protection_strict,
+        trust_tier=trust_tier,
     )
 
 

@@ -1,0 +1,69 @@
+# G11-001 — Loader / plugin / profile trust hardening.
+version: 1
+matrix_id: G11-001
+deliverable: "Paths, validation, failure modes, provenance"
+core_country_profile_branches: false
+yaml_dsl_introduced: false
+
+trust_tiers:
+  - id: builtin_v2
+    meaning: "Resolved under spectrum_profiles/profiles/v2 via profile_id"
+  - id: operator_explicit
+    meaning: "Resolved from an operator-supplied filesystem path (doctor/custom)"
+
+failure_modes:
+  - id: FM-PATH-001
+    surface: profile_id
+    trigger: "path separators, '..', leading/trailing '.', non [a-z0-9_] token"
+    behavior: fail_closed
+  - id: FM-PATH-002
+    surface: builtin_load
+    trigger: "resolved path escapes profiles/v2 allowlist"
+    behavior: fail_closed
+  - id: FM-PATH-003
+    surface: explicit_path
+    trigger: "missing file or non-.yaml/.yml suffix"
+    behavior: fail_closed
+  - id: FM-ID-001
+    surface: builtin_load
+    trigger: "metadata.id != requested profile_id"
+    behavior: fail_closed
+  - id: FM-YAML-001
+    surface: parse
+    trigger: "unsafe YAML / schema / unknown mechanism"
+    behavior: fail_closed
+    notes: "yaml.safe_load only; no executable regulatory code"
+  - id: FM-PLUGIN-001
+    surface: adapter_data_rf_discovery
+    trigger: "path-like or non-token plugin name"
+    behavior: fail_closed
+  - id: FM-PLUGIN-002
+    surface: adapter_discovery
+    trigger: "duplicate name / wrong kind / api_version mismatch / unknown plugin"
+    behavior: fail_closed
+  - id: FM-PLUGIN-003
+    surface: adapter_discovery
+    trigger: "spectrum_access.mechanisms entry-point group"
+    behavior: fail_closed
+    notes: "Mechanisms stay on MechanismRegistry; group is reserved"
+
+provenance:
+  profile_load_record: spectrum_profiles.v2.trust.ProfileLoadProvenance
+  profile_context: primitives.profile_context.ProfileContext
+  doctor_section: trust/provenance
+  based_on_semantics: "metadata/provenance only; no inheritance/merge"
+
+modules:
+  - spectrum_profiles/v2/trust.py
+  - adapters/plugin_names.py
+  - spectrum_profiles/v2/parse.py
+  - spectrum_profiles/v2/doctor.py
+  - adapters/discovery.py
+  - providers/discovery.py
+  - rf/discovery.py
+
+non_goals:
+  - Code signing / remote plugin download
+  - Coordination Core country branching
+  - Register query_assignment
+  - ORM generalization

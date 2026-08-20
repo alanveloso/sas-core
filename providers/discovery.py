@@ -8,6 +8,7 @@ from importlib.metadata import entry_points
 from typing import Any
 
 from adapters.discovery import GROUP_DATA_PROVIDERS
+from adapters.plugin_names import validate_plugin_name
 from providers.contract import (
     DATA_CAPABILITIES,
     PROVIDER_API_VERSION,
@@ -28,8 +29,7 @@ class DataProviderDiscovery:
         return frozenset(self._index())
 
     def load(self, name: str) -> DataProvider:
-        if not name or not name.strip():
-            raise ValueError("plugin name is required")
+        validate_plugin_name(name)
         index = self._index()
         if name not in index:
             raise ValueError(f"unknown data provider {name!r}")
@@ -59,10 +59,12 @@ class DataProviderDiscovery:
             ep_name = getattr(ep, "name", None)
             if not isinstance(ep_name, str) or not ep_name.strip():
                 raise ValueError("entry point in data_providers is missing a name")
+            validate_plugin_name(ep_name)
             if ep_name in found:
                 raise ValueError(f"duplicate plugin name {ep_name!r}")
             found[ep_name] = ep.load
         for ov_name, factory in self.overlays.items():
+            validate_plugin_name(ov_name)
             if ov_name in found:
                 raise ValueError(f"duplicate plugin name {ov_name!r}")
             found[ov_name] = factory

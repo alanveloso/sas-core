@@ -17,6 +17,7 @@ from adapters.device import (
     AdapterKind,
     ConsumerAdapter,
 )
+from adapters.plugin_names import validate_plugin_name
 from adapters.protocol import PROTOCOL_API_VERSION, ProtocolAdapter
 
 GROUP_DEVICE_ADAPTERS = "spectrum_access.device_adapters"
@@ -52,8 +53,7 @@ class AdapterDiscovery:
         return frozenset(self._index(group))
 
     def load(self, group: str, name: str) -> Any:
-        if not name or not name.strip():
-            raise ValueError("plugin name is required")
+        validate_plugin_name(name)
         index = self._index(group)
         if name not in index:
             raise ValueError(f"unknown plugin {name!r} in group {group}")
@@ -74,17 +74,24 @@ class AdapterDiscovery:
 
     def _index(self, group: str) -> dict[str, Any]:
         if group not in ADAPTER_GROUPS:
+            if group == GROUP_MECHANISMS:
+                raise ValueError(
+                    "spectrum_access.mechanisms is reserved; mechanisms load via "
+                    "the builtin MechanismRegistry, not adapter entry points"
+                )
             raise ValueError(f"unsupported adapter group: {group}")
         found: dict[str, Any] = {}
         for ep in self.list_entry_points(group):
             ep_name = getattr(ep, "name", None)
             if not isinstance(ep_name, str) or not ep_name.strip():
                 raise ValueError(f"entry point in {group} is missing a name")
+            validate_plugin_name(ep_name)
             if ep_name in found:
                 raise ValueError(f"duplicate plugin name {ep_name!r} in {group}")
             found[ep_name] = ep.load
         overlay = self.overlays.get(group, {})
         for ov_name, factory in overlay.items():
+            validate_plugin_name(ov_name)
             if ov_name in found:
                 raise ValueError(f"duplicate plugin name {ov_name!r} in {group}")
             found[ov_name] = factory

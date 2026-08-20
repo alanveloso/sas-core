@@ -19,6 +19,8 @@ from spectrum_profiles.v2.negotiate import (
 from spectrum_profiles.v2.parse import (
     load_profile_v2,
     load_profile_v2_document,
+    load_profile_v2_document_with_provenance,
+    load_profile_v2_with_provenance,
     parse_profile_v2_spectrum,
 )
 from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
@@ -37,6 +39,12 @@ from spectrum_profiles.v2.schema import (
     SpectrumSegment,
     TemporalSection,
 )
+from spectrum_profiles.v2.trust import (
+    ProfileLoadProvenance,
+    ProfileTrustTier,
+    builtin_v2_profiles_dir,
+    validate_profile_id,
+)
 
 __all__ = [
     "AccessSection",
@@ -46,7 +54,9 @@ __all__ = [
     "PowerSection",
     "ProfileDoctorFinding",
     "ProfileDoctorReport",
+    "ProfileLoadProvenance",
     "ProfileMetadata",
+    "ProfileTrustTier",
     "ProfileV2SpectrumDocument",
     "ProtectionSection",
     "RfSection",
@@ -54,12 +64,15 @@ __all__ = [
     "SpectrumSection",
     "SpectrumSegment",
     "TemporalSection",
+    "builtin_v2_profiles_dir",
     "diagnose_profile_v2",
     "package_bootstrap_adapter_discovery",
     "package_bootstrap_rf_discovery",
     "parse_profile_v2_spectrum",
     "load_profile_v2",
     "load_profile_v2_document",
+    "load_profile_v2_document_with_provenance",
+    "load_profile_v2_with_provenance",
     "adapters_satisfying_device_capabilities",
     "adapters_satisfying_network_capabilities",
     "negotiate_profile_plugins",
@@ -68,5 +81,6 @@ __all__ = [
     "project_v1_to_v2_document",
     "render_profile_doctor_report",
     "run_profile_doctor",
+    "validate_profile_id",
     "validate_profile_v2_semantics",
 ]

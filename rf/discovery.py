@@ -8,6 +8,7 @@ from importlib.metadata import entry_points
 from typing import Any
 
 from adapters.discovery import GROUP_RF_MODELS
+from adapters.plugin_names import validate_plugin_name
 from rf.port import RF_API_VERSION, RF_MODEL_PATH_LOSS, RfPort
 
 
@@ -24,8 +25,7 @@ class RfModelDiscovery:
         return frozenset(self._index())
 
     def load(self, name: str) -> RfPort:
-        if not name or not name.strip():
-            raise ValueError("plugin name is required")
+        validate_plugin_name(name)
         index = self._index()
         if name not in index:
             raise ValueError(f"unknown RF model {name!r}")
@@ -52,10 +52,12 @@ class RfModelDiscovery:
             ep_name = getattr(ep, "name", None)
             if not isinstance(ep_name, str) or not ep_name.strip():
                 raise ValueError("entry point in rf_models is missing a name")
+            validate_plugin_name(ep_name)
             if ep_name in found:
                 raise ValueError(f"duplicate plugin name {ep_name!r}")
             found[ep_name] = ep.load
         for ov_name, factory in self.overlays.items():
+            validate_plugin_name(ov_name)
             if ov_name in found:
                 raise ValueError(f"duplicate plugin name {ov_name!r}")
             found[ov_name] = factory

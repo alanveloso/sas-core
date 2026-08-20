@@ -1,0 +1,110 @@
+"""G11-001: loader / plugin / profile trust hardening."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from adapters.device import MappingDeviceAdapter
+from adapters.discovery import GROUP_DEVICE_ADAPTERS, GROUP_MECHANISMS, AdapterDiscovery
+from adapters.plugin_names import validate_plugin_name
+from spectrum_profiles.loader import ProfilePathError, ProfileValidationError
+from spectrum_profiles.v2.doctor import run_profile_doctor
+from spectrum_profiles.v2.parse import (
+    load_profile_v2,
+    load_profile_v2_document,
+    load_profile_v2_with_provenance,
+    parse_profile_v2_spectrum,
+)
+from spectrum_profiles.v2.trust import (
+    ProfileTrustTier,
+    assert_path_within,
+    builtin_v2_profiles_dir,
+    validate_profile_id,
+)
+
+_REPO = Path(__file__).resolve().parents[2]
+_MATRIX = _REPO / "compliance" / "generalization" / "g11_001_loader_plugin_trust.yaml"
+_MD = _REPO / "compliance" / "generalization" / "G11-001_LOADER_PLUGIN_TRUST.md"
+
+
+def test_evidence_files_exist() -> None:
+    assert _MATRIX.is_file()
+    assert _MD.is_file()
+    doc = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))
+    assert doc["matrix_id"] == "G11-001"
+    assert doc["core_country_profile_branches"] is False
+    assert doc["yaml_dsl_introduced"] is False
+    assert {fm["behavior"] for fm in doc["failure_modes"]} == {"fail_closed"}
+
+
+def test_profile_id_path_like_fail_closed() -> None:
+    for bad in ("../etc/passwd", "foo/bar", r"foo\bar", "..", ".hidden", "BadId", "a..b"):
+        with pytest.raises((ProfilePathError, ProfileValidationError)):
+            validate_profile_id(bad)
+        with pytest.raises(ProfileValidationError):
+            load_profile_v2(bad)
+
+
+def test_builtin_load_rejects_metadata_id_mismatch() -> None:
+    root = builtin_v2_profiles_dir()
+    src = root / "cbrs_winnforum.yaml"
+    raw = yaml.safe_load(src.read_text(encoding="utf-8"))
+    raw["metadata"]["id"] = "not_cbrs_winnforum"
+    from spectrum_profiles.v2.trust import assert_metadata_id_matches
+
+    parsed = parse_profile_v2_spectrum(raw)
+    with pytest.raises(ProfileValidationError, match="mismatch"):
+        assert_metadata_id_matches(parsed, "cbrs_winnforum")
+
+
+def test_builtin_provenance_and_path_allowlist() -> None:
+    parsed, prov = load_profile_v2_with_provenance("eu_elsa")
+    assert parsed.metadata.id == "eu_elsa"
+    assert prov.trust_tier is ProfileTrustTier.BUILTIN_V2
+    assert prov.profile_hash
+    assert_path_within(Path(prov.source_path), builtin_v2_profiles_dir())
+
+
+def test_operator_path_rejects_non_yaml(tmp_path: Path) -> None:
+    junk = tmp_path / "profile.json"
+    junk.write_text("{}", encoding="utf-8")
+    with pytest.raises(ProfileValidationError, match="unsupported profile format"):
+        load_profile_v2_document(junk)
+
+
+def test_plugin_name_and_mechanisms_group_fail_closed() -> None:
+    with pytest.raises(ValueError, match="plugin name"):
+        validate_plugin_name("../evil")
+    with pytest.raises(ValueError, match="plugin name"):
+        validate_plugin_name("Bad_Name")
+    discovery = AdapterDiscovery(list_entry_points=lambda _g: ())
+    with pytest.raises(ValueError, match="reserved"):
+        discovery.names(GROUP_MECHANISMS)
+    with pytest.raises(ValueError, match="invalid plugin name"):
+        AdapterDiscovery(
+            overlays={GROUP_DEVICE_ADAPTERS: {"bad/name": MappingDeviceAdapter}},
+            list_entry_points=lambda _g: (),
+        ).names(GROUP_DEVICE_ADAPTERS)
+
+
+def test_doctor_emits_trust_provenance() -> None:
+    report = run_profile_doctor(profile_id="br_anatel_slp_3700", check_plugins=False)
+    assert report.ok
+    trust = [f for f in report.findings if f.section == "trust"]
+    assert trust
+    assert any("trust_tier=builtin_v2" in f.detail for f in trust)
+    assert any("hash=" in f.detail for f in trust)
+
+
+def test_reference_profiles_still_load() -> None:
+    for profile_id in (
+        "cbrs_winnforum",
+        "br_anatel_slp_3700",
+        "eu_elsa",
+        "us_tvws_15_711",
+    ):
+        parsed = load_profile_v2(profile_id)
+        assert parsed.metadata.id == profile_id
