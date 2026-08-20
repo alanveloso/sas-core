@@ -113,12 +113,6 @@ def test_planned_yaml_rows_map_to_mechanisms_or_explicit_omit() -> None:
         assert has_mech or has_omit or has_forbid, row["id"]
 
 
-def test_no_br_profile_yaml_yet() -> None:
-    """G7-001 must not sneak in G7-002 profile creation."""
-    v2 = _REPO / "spectrum_profiles" / "profiles" / "v2"
-    assert not (v2 / "br_anatel_slp_3700.yaml").exists()
-
-
 def test_g0_hypothesis_updates_present() -> None:
     doc = _load_matrix()
     updates = doc.get("g0_hypothesis_updates") or []

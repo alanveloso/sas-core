@@ -1,6 +1,6 @@
 # Matriz de requisitos ANATEL — SLP 3700–3800 MHz (G7-001)
 
-**Target profile (ainda não criado):** `br_anatel_slp_3700` (G7-002).  
+**Target profile:** `br_anatel_slp_3700` → `spectrum_profiles/profiles/v2/br_anatel_slp_3700.yaml` (G7-002).  
 **Instrumento primário:** Ato nº 915, de 1º de fevereiro de 2024 — Anexo, item **5.13** (faixa 3.700–3.800 MHz).  
 **URL oficial:** https://informacoes.anatel.gov.br/legislacao/atos-de-requisitos-tecnicos-de-gestao-do-espectro/2024/1920-ato-915  
 **Formato:** colunas de `.cursor/generalization-plan/11_TRACEABILITY.md`.  
@@ -67,8 +67,8 @@ Esta matriz **não** é evidência de conformidade ANATEL nem autorização para
 | RF IAP-style obrigatório | **Não imposto** pelo §5.13; RF de path-loss agregado é opcional; máscaras ACLR = equipamento |
 | Potência só “por licença” sem números | **Atualizar:** números explícitos em 5.13.3 I–III |
 
-## Fora desta task
+## Fora desta task (G7-001)
 
-- Não criar `br_anatel_slp_3700.yaml` (G7-002).
+- Profile YAML: entregue em **G7-002** (`br_anatel_slp_3700.yaml`).
 - Não implementar primitives novas (G7-003) nem providers BR (G7-004).
 - Não alterar Coordination Core nem o path CBRS v1.

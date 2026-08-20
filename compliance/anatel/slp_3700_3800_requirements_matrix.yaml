@@ -1,5 +1,5 @@
 # ANATEL SLP 3700–3800 MHz requirements matrix (G7-001).
-# Traceability only — not a conformity claim. Profile YAML is G7-002.
+# Traceability only — not a conformity claim. Profile YAML: spectrum_profiles/profiles/v2/br_anatel_slp_3700.yaml (G7-002).
 # Columns align with .cursor/generalization-plan/11_TRACEABILITY.md.
 version: 1
 matrix_id: G7-001
