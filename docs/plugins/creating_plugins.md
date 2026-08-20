@@ -1,6 +1,11 @@
 # Criar plugins (adapters, data providers, RF, mecanismos)
 
-**G6-003.** Extensão em Python só quando o comportamento é novo. Profiles YAML só selecionam mecanismos e capabilities já registrados.
+**G6-003** (authoring de plugins) · atualizado em **G11-003** (índice reference/custom) e
+**G11-001** (trust de nomes / mechanisms reservados).
+
+Extensão em Python só quando o comportamento é novo. Profiles YAML só selecionam mecanismos e capabilities já registrados.
+
+Índice de authoring de profiles: [`docs/profiles/README.md`](../profiles/README.md).
 
 Validar um profile (sem escrever plugin):
 
@@ -31,6 +36,8 @@ Modelo de profile sem código: `spectrum_profiles/profiles/templates/custom_prof
 | Coordination Core | Idealmente **zero** mudança; sem `if country` / `if profile` |
 
 Plugins são código **confiável instalado pelo operador**, não scripts enviados por clientes. Compatibilidade de API e capabilities de segurança falham fechado.
+
+Nomes de plugin (e ids de profile builtin) são tokens `[a-z][a-z0-9_]*` — sem `/`, `\\` ou `..` (G11-001).
 
 O profile **não lista nomes de adapters** como regra principal. Declara capabilities (`geolocation`, `frequency_range`, `max_eirp`, `terrain`, …). Qualquer plugin que satisfaça o contrato pode ser usado.
 
@@ -150,7 +157,9 @@ Contrato: `providers.contract.DataProvider`.
 campus_terrain = "my_plugins.campus_terrain:CampusTerrainProvider"
 ```
 
-Profiles v2 listam capabilities em `requirements.data_capabilities`, não nomes de vendor. O doctor (`--check-data`) verifica se algum provider instalado cobre o requisito.
+Profiles v2 listam capabilities em `data.required_capabilities` (e device/network em
+`requirements.*_capabilities`), não nomes de vendor. O doctor (`--check-data`) verifica
+se algum provider instalado cobre o requisito.
 
 Referência: `providers.contract.MappingTerrainProvider` e demais mapping providers.
 

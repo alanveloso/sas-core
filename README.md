@@ -129,6 +129,21 @@ evidence under `compliance/evidence/` — see `compliance/matrix.yaml`.
 
 ---
 
+## Profile authoring (generalization)
+
+Reference/custom Profile v2 and plugin guides:
+
+- [`docs/profiles/README.md`](docs/profiles/README.md) — index (G11-003)
+- [`docs/profiles/reference_and_custom.md`](docs/profiles/reference_and_custom.md)
+- [`docs/plugins/creating_plugins.md`](docs/plugins/creating_plugins.md)
+
+```bash
+python -m tools.profile_doctor --id cbrs_winnforum
+python -m tools.profile_doctor path/to/custom.yaml
+```
+
+---
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
