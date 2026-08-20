@@ -1,6 +1,8 @@
 # Custom Spectrum Profile v2 — copy/adapt template (G6-002).
 # Validate without writing Python:
 #   python -m tools.profile_doctor path/to/your_copy.yaml
+# New device/protocol/RF/data behavior needs a Python plugin — see:
+#   docs/plugins/creating_plugins.md (G6-003)
 #
 # Same schema as reference profiles (status differs: custom vs reference).
 # Do NOT put arbitrary if/else or expressions here — only registered mechanisms.
