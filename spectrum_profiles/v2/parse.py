@@ -71,6 +71,24 @@ def parse_profile_v2_spectrum(
     return parsed
 
 
+def load_profile_v2_document(
+    path: Path,
+    *,
+    registry: MechanismRegistry | None = None,
+) -> ProfileV2SpectrumDocument:
+    """Load and validate a Profile v2 document from an explicit filesystem path."""
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise ProfileNotFoundError(f"profile v2 file not found: {resolved}")
+    try:
+        document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ProfileValidationError(f"profile v2 YAML error: {exc}") from exc
+    except OSError as exc:
+        raise ProfileValidationError(f"profile v2 read error: {exc}") from exc
+    return parse_profile_v2_spectrum(document, registry=registry)
+
+
 def load_profile_v2(
     profile_id: str,
     *,
@@ -86,8 +104,4 @@ def load_profile_v2(
         raise ProfileValidationError("profile path escaped v2 directory") from exc
     if not path.is_file():
         raise ProfileNotFoundError(f"profile v2 '{profile_id}' not found")
-    try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise ProfileValidationError(f"profile v2 YAML error: {exc}") from exc
-    return parse_profile_v2_spectrum(document, registry=registry)
+    return load_profile_v2_document(path, registry=registry)
