@@ -20,7 +20,8 @@ def profile_hash_v2(parsed: ProfileV2SpectrumDocument) -> str:
     return digest.hexdigest()
 
 
-def _selected_mechanism_ids(parsed: ProfileV2SpectrumDocument) -> tuple[str, ...]:
+def selected_mechanism_ids(parsed: ProfileV2SpectrumDocument) -> tuple[str, ...]:
+    """Ordered unique mechanism ids referenced by a validated Profile v2 document."""
     ids: list[str] = []
     if parsed.spectrum.channelization is not None:
         ids.append(parsed.spectrum.channelization.mechanism)
@@ -57,7 +58,7 @@ def profile_context_from_v2(
     registry: MechanismRegistry | None = None,
 ) -> ProfileContext:
     catalog = registry or builtin_mechanism_registry()
-    mechanism_ids = _selected_mechanism_ids(parsed)
+    mechanism_ids = selected_mechanism_ids(parsed)
     mechanism_versions = tuple(
         (mechanism_id, catalog.get(mechanism_id).version) for mechanism_id in mechanism_ids
     )

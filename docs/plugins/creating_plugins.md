@@ -5,8 +5,15 @@
 Validar um profile (sem escrever plugin):
 
 ```bash
-python -m tools.profile_doctor --id us_cbrs_3550_3700
+python -m tools.profile_doctor --id cbrs_winnforum
 python -m tools.profile_doctor path/to/custom.yaml
+```
+
+Custo de authoring (YAML LOC, plugins, core, reuse):
+
+```bash
+python -m tools.profile_cost --id cbrs_winnforum
+python -m tools.profile_cost path/to/custom.yaml --json
 ```
 
 Modelo de profile sem código: `spectrum_profiles/profiles/templates/custom_profile.template.yaml`.
@@ -191,4 +198,4 @@ YAML não é linguagem de programação. Sem `if`/`else`, sem fórmulas livres, 
 - Não muda o path CBRS v1 em produção.
 - Não autoriza branching por país/profile no core.
 - Não substitui evidência WInnForum / gates oficiais.
-- Métricas de custo de profile (core vs plugin vs YAML) são tarefa separada (G6-004).
+- Métricas de custo de profile (core vs plugin vs YAML): `python -m tools.profile_cost` (G6-004).
