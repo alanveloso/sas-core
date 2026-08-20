@@ -133,13 +133,12 @@ requirements:
     source: ETSI_TS_103_652_1
     section: "R-FUNC-GEN-03"
     summary: "Exchange availability information and its changes over time; permanent connection not required when Sharing Framework allows detached mode."
-    profile_field: "temporal.availability_constraint (deferred G8-003); optional connectivity policy"
-    mechanisms: []
-    deferred_mechanisms:
+    profile_field: "temporal.availability.mechanism=availability_constraint"
+    mechanisms:
       - availability_constraint
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-008
@@ -184,59 +183,55 @@ requirements:
     source: ETSI_TS_103_652_1
     section: "R-FUNC-GEN-11"
     summary: "Scheduled mode: availability information changes at pre-set times according to a schedule."
-    profile_field: "temporal schedule → availability windows"
+    profile_field: "temporal.availability.mode=scheduled + AvailabilityConstraint"
     mechanisms:
       - fixed_window
-    deferred_mechanisms:
       - availability_constraint
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-012
     source: ETSI_TS_103_652_1
     section: "R-FUNC-GEN-12"
     summary: "On-demand mode: incumbent usage/protection can change without prior schedule; communicate updated availability (incl. evacuation)."
-    profile_field: "event-driven reevaluation on availability change"
+    profile_field: "temporal.availability.mode=on_demand + AvailabilityChangeEvent"
     mechanisms:
       - snapshot_evaluate_apply
-    deferred_mechanisms:
       - availability_constraint
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-013
     source: ETSI_TS_103_652_2
     section: "5.4.2 eLSRAI / validity"
     summary: "eLSRAI may carry a validity time; when expired the eLC shall treat it as no longer applicable and may obtain updated eLSRAI."
-    profile_field: "authorization/availability validity; fail closed on expiry if profile requires"
+    profile_field: "AvailabilityConstraint.validity (fail closed when expired)"
     mechanisms:
       - fixed_window
-    deferred_mechanisms:
       - availability_constraint
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-014
     source: ETSI_TS_103_652_3
     section: "4.4 eLSRAI Definition"
     summary: "eLSRAI zones have types (allowance, restriction, protection, exclusion) with space, frequency, radio, and time parameters."
-    profile_field: "geography + protection mechanisms; restriction/allowance may need zone model extension"
+    profile_field: "AvailabilityConstraint.zone_kind + scope (freq/geo/power/time)"
     mechanisms:
       - authorized_area
       - exclusion_zone
       - channel_exclusion
       - max_power
-    deferred_mechanisms:
       - availability_constraint
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-015
@@ -256,44 +251,41 @@ requirements:
     source: ETSI_TS_103_652_1
     section: "R-FUNC-INC-02"
     summary: "Translate Incumbent usage/protection requirements into spectrum availability information that constrains the MFCN."
-    profile_field: "protection entities → availability_constraint derivation"
-    mechanisms: []
-    deferred_mechanisms:
+    profile_field: "protection entities → AvailabilityConstraint (derivation via adapters/providers)"
+    mechanisms:
       - availability_constraint
     data_capabilities:
       - protected_entities
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-017
     source: ETSI_TS_103_652_1
     section: "R-FUNC-INC-03"
     summary: "If Incumbent usage/protection requirements change, update availability information communicated to the MFCN."
-    profile_field: "event_driven_reevaluation trigger = availability change"
+    profile_field: "AvailabilityChangeEvent + snapshot_evaluate_apply"
     mechanisms:
       - snapshot_evaluate_apply
-    deferred_mechanisms:
       - availability_constraint
     code_plugin: null
-    test: "TBD:G8-003"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-018
     source: ARCH_G0_005
     section: "D12 + G0-004"
     summary: "Incumbent return / vacated spectrum is availability expiry, not class-vs-class preemption."
-    profile_field: "do not use preemption for incumbent-return"
-    mechanisms: []
+    profile_field: "AvailabilityConstraint.expired_relative_to (not preemption)"
+    mechanisms:
+      - availability_constraint
     forbid_mechanisms_for_semantics:
       - preemption
-    deferred_mechanisms:
-      - availability_constraint
     code_plugin: null
-    test: "MATRIX_TEST"
-    status: GAP_PRIMITIVE
+    test: "tests/unit/test_g8_003_availability_primitives.py"
+    status: PLANNED_YAML
     focus: availability
 
   - id: ELSA-019
@@ -414,7 +406,7 @@ g0_hypothesis_updates:
   - hypothesis: "availability_constraint is first-class for LSA/eLSA"
     verdict: confirmed
     by: ELSA-007
-    note: "Still GAP_PRIMITIVE until G8-003; do not invent from CBRS Grant/heartbeat."
+    note: "Registered in G8-003 (AUTHORIZATION axis); not invented from CBRS Grant/heartbeat."
   - hypothesis: "Incumbent return modeled as preemption"
     verdict: rejected
     by: ELSA-018

@@ -87,18 +87,18 @@ def test_mechanisms_are_builtin_catalog_ids() -> None:
             assert mid in catalog
 
 
-def test_deferred_availability_constraint_not_yet_in_catalog() -> None:
-    """G8-003 owns registration; matrix may only name it under deferred_mechanisms."""
+def test_availability_constraint_is_registered_and_cited() -> None:
+    """G8-003 registered availability_constraint; matrix cites it under mechanisms."""
     catalog = builtin_mechanism_registry().ids()
-    assert "availability_constraint" not in catalog
+    assert "availability_constraint" in catalog
     doc = _load_matrix()
-    deferred_hits = 0
+    cited = 0
     for row in doc["requirements"]:
         deferred = row.get("deferred_mechanisms") or []
-        assert "availability_constraint" not in row["mechanisms"]
-        if "availability_constraint" in deferred:
-            deferred_hits += 1
-    assert deferred_hits >= 5
+        assert "availability_constraint" not in deferred
+        if "availability_constraint" in row["mechanisms"]:
+            cited += 1
+    assert cited >= 5
 
 
 def test_data_capabilities_are_canonical() -> None:

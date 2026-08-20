@@ -1,7 +1,8 @@
 """Lease, fixed window, authorized area, and exclusion zone (D8/D9/D16).
 
-Keep-alive/refresh is not part of the lease. Availability-query mechanisms are
-deferred. This is not a protocol authorization object.
+Keep-alive/refresh is not part of the lease. Availability windows/events are
+first-class in ``primitives.availability`` (G8-003). This is not a protocol
+authorization object.
 """
 
 from __future__ import annotations

@@ -49,6 +49,10 @@ def parse_profile_v2_spectrum(
             catalog.on_axis(
                 MechanismAxis.TEMPORAL, parsed.temporal.reevaluation.mechanism
             )
+        if parsed.temporal is not None and parsed.temporal.availability is not None:
+            catalog.on_axis(
+                MechanismAxis.AUTHORIZATION, parsed.temporal.availability.mechanism
+            )
         if parsed.protection is not None:
             for mechanism_id in parsed.protection.mechanisms:
                 contract = catalog.get(mechanism_id)

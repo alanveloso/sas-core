@@ -55,6 +55,7 @@ _BUILTIN: tuple[MechanismContract, ...] = (
     MechanismContract("dynamic_lease", MechanismAxis.AUTHORIZATION, "1.0.0"),
     MechanismContract("fixed_window", MechanismAxis.AUTHORIZATION, "1.0.0"),
     MechanismContract("static_authorization", MechanismAxis.AUTHORIZATION, "1.0.0"),
+    MechanismContract("availability_constraint", MechanismAxis.AUTHORIZATION, "1.0.0"),
     MechanismContract("point_radius", MechanismAxis.GEOGRAPHY, "1.0.0"),
     MechanismContract("authorized_area", MechanismAxis.GEOGRAPHY, "1.0.0"),
     MechanismContract("exclusion_zone", MechanismAxis.GEOGRAPHY, "1.0.0"),

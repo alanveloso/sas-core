@@ -35,6 +35,8 @@ def selected_mechanism_ids(parsed: ProfileV2SpectrumDocument) -> tuple[str, ...]
         ids.append(parsed.geography.mechanism)
     if parsed.temporal is not None and parsed.temporal.reevaluation is not None:
         ids.append(parsed.temporal.reevaluation.mechanism)
+    if parsed.temporal is not None and parsed.temporal.availability is not None:
+        ids.append(parsed.temporal.availability.mechanism)
     if parsed.protection is not None:
         ids.extend(parsed.protection.mechanisms)
     if parsed.coordination is not None:

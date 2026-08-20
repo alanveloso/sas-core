@@ -284,10 +284,20 @@ class PeriodicReevaluation(BaseModel):
     interval_s: int = Field(..., gt=0)
 
 
+class AvailabilityConstraintConfig(BaseModel):
+    """G8-003: declare availability as a first-class temporal/authorization mechanism."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mechanism: Literal["availability_constraint"] = "availability_constraint"
+    mode: Literal["scheduled", "on_demand"]
+
+
 class TemporalSection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     reevaluation: PeriodicReevaluation | None = None
+    availability: AvailabilityConstraintConfig | None = None
 
 
 _DATA_CAPABILITIES = frozenset(
