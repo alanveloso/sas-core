@@ -14,29 +14,29 @@ from adapters.device import (
 from adapters.discovery import AdapterDiscovery
 from providers.contract import DataProvider, providers_meet_requirements
 from rf.port import RfPort
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.schema import ProfileDocument
 
 
-def _device_caps(profile: ProfileV2SpectrumDocument) -> tuple[str, ...]:
+def _device_caps(profile: ProfileDocument) -> tuple[str, ...]:
     if profile.requirements is None:
         return ()
     return profile.requirements.device_capabilities
 
 
-def _network_caps(profile: ProfileV2SpectrumDocument) -> tuple[str, ...]:
+def _network_caps(profile: ProfileDocument) -> tuple[str, ...]:
     if profile.requirements is None:
         return ()
     return profile.requirements.network_capabilities
 
 
-def _data_caps(profile: ProfileV2SpectrumDocument) -> tuple[str, ...]:
+def _data_caps(profile: ProfileDocument) -> tuple[str, ...]:
     if profile.data is None:
         return ()
     return profile.data.required_capabilities
 
 
 def negotiate_profile_plugins(
-    profile: ProfileV2SpectrumDocument,
+    profile: ProfileDocument,
     *,
     consumer: ConsumerView | None = None,
     consumer_adapter: ConsumerAdapter | None = None,

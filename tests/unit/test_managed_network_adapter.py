@@ -22,7 +22,7 @@ from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_network_capabilities,
     negotiate_profile_plugins,
 )
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.schema import ProfileDocument
 
 
 def _ring() -> list[list[float]]:
@@ -142,7 +142,7 @@ def test_profile_network_capabilities_negotiate_and_discover() -> None:
         },
         "rf": {"required": False, "policy": "path_loss"},
     }
-    profile = ProfileV2SpectrumDocument.model_validate(doc)
+    profile = ProfileDocument.model_validate(doc)
     adapter = ManagedNetworkAdapter()
     view = adapter.to_consumer(
         {
@@ -181,7 +181,7 @@ def test_device_adapter_does_not_satisfy_network_kind_requirement() -> None:
         "requirements": {"network_capabilities": ["managed_area"]},
         "rf": {"required": False, "policy": "path_loss"},
     }
-    profile = ProfileV2SpectrumDocument.model_validate(doc)
+    profile = ProfileDocument.model_validate(doc)
     with pytest.raises(ValueError, match="kind is not network"):
         negotiate_profile_plugins(
             profile, consumer_adapter=MappingDeviceAdapter()
@@ -200,4 +200,4 @@ def test_schema_rejects_geolocation_as_network_capability() -> None:
         "rf": {"required": False, "policy": "path_loss"},
     }
     with pytest.raises(Exception):
-        ProfileV2SpectrumDocument.model_validate(doc)
+        ProfileDocument.model_validate(doc)

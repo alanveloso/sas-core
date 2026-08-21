@@ -18,10 +18,10 @@ from spectrum_profiles.selection import (
     clear_profile_override,
 )
 from spectrum_profiles.v2 import get_active_profile_document, primary_spectrum_range
-from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
+from spectrum_profiles.v2.context import profile_context_from_document, profile_hash
 from spectrum_profiles.v2.cost import measure_profile_cost
 from spectrum_profiles.v2.doctor import run_profile_doctor
-from spectrum_profiles.v2.parse import load_profile_v2
+from spectrum_profiles.v2.parse import load_profile
 
 _PROFILE_IDS = (
     "cbrs_winnforum",
@@ -34,22 +34,22 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def test_all_campaign_profiles_load_doctor_and_isolate_hashes() -> None:
-    parsed = {pid: load_profile_v2(pid) for pid in _PROFILE_IDS}
-    hashes = {pid: profile_hash_v2(doc) for pid, doc in parsed.items()}
+    parsed = {pid: load_profile(pid) for pid in _PROFILE_IDS}
+    hashes = {pid: profile_hash(doc) for pid, doc in parsed.items()}
     assert len(set(hashes.values())) == len(_PROFILE_IDS)
     for pid, doc in parsed.items():
         assert doc.metadata.id == pid
         report = run_profile_doctor(profile_id=pid, check_plugins=False)
         assert report.ok, (pid, [f for f in report.findings if not f.ok])
-        ctx = profile_context_from_v2(doc)
+        ctx = profile_context_from_document(doc)
         assert ctx.profile_id == pid
         assert ctx.profile_hash == hashes[pid]
 
 
 def test_profile_hash_deterministic_across_repeated_loads() -> None:
     for pid in _PROFILE_IDS:
-        first = profile_hash_v2(load_profile_v2(pid))
-        again = [profile_hash_v2(load_profile_v2(pid)) for _ in range(5)]
+        first = profile_hash(load_profile(pid))
+        again = [profile_hash(load_profile(pid)) for _ in range(5)]
         assert set(again) == {first}
 
 
@@ -57,27 +57,27 @@ def test_profile_hash_invariant_under_process_timezone(monkeypatch: pytest.Monke
     monkeypatch.setenv("TZ", "UTC")
     if hasattr(time, "tzset"):
         time.tzset()
-    baseline = {pid: profile_hash_v2(load_profile_v2(pid)) for pid in _PROFILE_IDS}
+    baseline = {pid: profile_hash(load_profile(pid)) for pid in _PROFILE_IDS}
 
     monkeypatch.setenv("TZ", "America/Sao_Paulo")
     if hasattr(time, "tzset"):
         time.tzset()
-    shifted = {pid: profile_hash_v2(load_profile_v2(pid)) for pid in _PROFILE_IDS}
+    shifted = {pid: profile_hash(load_profile(pid)) for pid in _PROFILE_IDS}
     assert shifted == baseline
 
     monkeypatch.setenv("TZ", "Asia/Tokyo")
     if hasattr(time, "tzset"):
         time.tzset()
-    again = {pid: profile_hash_v2(load_profile_v2(pid)) for pid in _PROFILE_IDS}
+    again = {pid: profile_hash(load_profile(pid)) for pid in _PROFILE_IDS}
     assert again == baseline
 
 
 def test_concurrent_multi_profile_loads_preserve_hashes() -> None:
-    expected = {pid: profile_hash_v2(load_profile_v2(pid)) for pid in _PROFILE_IDS}
+    expected = {pid: profile_hash(load_profile(pid)) for pid in _PROFILE_IDS}
 
     def _one(pid: str) -> tuple[str, str, str]:
-        doc = load_profile_v2(pid)
-        return pid, doc.metadata.id, profile_hash_v2(doc)
+        doc = load_profile(pid)
+        return pid, doc.metadata.id, profile_hash(doc)
 
     jobs = list(_PROFILE_IDS) * 8
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -113,8 +113,8 @@ def test_utc_instant_and_interval_timezone_normalization() -> None:
 def test_dataset_versions_recorded_and_doctor_fail_closed_without_providers() -> None:
     # Profiles that declare data capabilities must surface them on ProfileContext.
     for pid in ("cbrs_winnforum", "br_anatel_slp_3700", "eu_elsa", "us_tvws_15_711"):
-        doc = load_profile_v2(pid)
-        ctx = profile_context_from_v2(doc)
+        doc = load_profile(pid)
+        ctx = profile_context_from_document(doc)
         if doc.data is not None and doc.data.required_capabilities:
             assert ctx.dataset_versions
             for cap in doc.data.required_capabilities:
@@ -148,7 +148,7 @@ def test_default_active_profile_remains_cbrs() -> None:
 def test_load_br_does_not_mutate_cbrs_active_or_band() -> None:
     clear_profile_override()
     before = get_active_profile_document()
-    br = load_profile_v2("br_anatel_slp_3700")
+    br = load_profile("br_anatel_slp_3700")
     after = get_active_profile_document()
     assert br.metadata.id == "br_anatel_slp_3700"
     assert before.metadata.id == after.metadata.id == "cbrs_winnforum"
@@ -159,15 +159,15 @@ def test_load_br_does_not_mutate_cbrs_active_or_band() -> None:
 
 
 def test_multi_profile_contexts_are_isolated() -> None:
-    cbrs = load_profile_v2("cbrs_winnforum")
-    br = load_profile_v2("br_anatel_slp_3700")
-    ctx_cbrs = profile_context_from_v2(cbrs)
-    ctx_br = profile_context_from_v2(br)
+    cbrs = load_profile("cbrs_winnforum")
+    br = load_profile("br_anatel_slp_3700")
+    ctx_cbrs = profile_context_from_document(cbrs)
+    ctx_br = profile_context_from_document(br)
     assert ctx_cbrs.profile_id == "cbrs_winnforum"
     assert ctx_br.profile_id == "br_anatel_slp_3700"
     assert ctx_cbrs.profile_hash != ctx_br.profile_hash
-    assert ctx_cbrs.profile_hash == profile_hash_v2(cbrs)
-    assert ctx_br.profile_hash == profile_hash_v2(br)
+    assert ctx_cbrs.profile_hash == profile_hash(cbrs)
+    assert ctx_br.profile_hash == profile_hash(br)
     # Distinct regime shapes
     assert cbrs.access is not None
     assert br.access is None
@@ -197,7 +197,7 @@ def test_mechanism_reuse_full_catalog_for_both_profiles() -> None:
 
 def test_builtin_catalog_loads_non_cbrs_by_id() -> None:
     """Non-CBRS reference profiles resolve from the builtin catalog."""
-    br = load_profile_v2("br_anatel_slp_3700")
+    br = load_profile("br_anatel_slp_3700")
     assert br.metadata.id == "br_anatel_slp_3700"
     assert br.spectrum.ranges[0].low_hz == 3_700_000_000
 
@@ -205,8 +205,8 @@ def test_builtin_catalog_loads_non_cbrs_by_id() -> None:
 def test_interleaved_loads_preserve_invariants() -> None:
     """Alternate loads; CBRS band and BR constraints remain stable."""
     for _ in range(3):
-        cbrs = load_profile_v2("cbrs_winnforum")
-        br = load_profile_v2("br_anatel_slp_3700")
+        cbrs = load_profile("cbrs_winnforum")
+        br = load_profile("br_anatel_slp_3700")
         assert cbrs.spectrum.ranges[0].high_hz == 3_700_000_000
         assert br.spectrum.ranges[0].low_hz == 3_700_000_000
         assert [c.mechanism for c in br.constraints][0] == "duplex_mode"

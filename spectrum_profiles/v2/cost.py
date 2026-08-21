@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from primitives.registry import MechanismRegistry, builtin_mechanism_registry
-from spectrum_profiles.v2.context import profile_hash_v2, selected_mechanism_ids
-from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.context import profile_hash, selected_mechanism_ids
+from spectrum_profiles.v2.parse import load_profile, load_profile_document
+from spectrum_profiles.v2.schema import ProfileDocument
 
 # Path prefixes used when classifying a changed-files list (posix-style).
 _PLUGIN_PREFIXES = ("adapters/", "providers/")
@@ -192,8 +192,8 @@ def measure_profile_cost(
         raise ValueError("provide exactly one of profile_id or path")
 
     if profile_id is not None:
-        parsed = load_profile_v2(profile_id, registry=registry)
-        # Mirror load_profile_v2 path layout for display/LOC.
+        parsed = load_profile(profile_id, registry=registry)
+        # Mirror load_profile path layout for display/LOC.
         yaml_path = (
             Path(__file__).resolve().parent.parent / "profiles" / "v2" / f"{profile_id}.yaml"
         )
@@ -201,7 +201,7 @@ def measure_profile_cost(
     else:
         assert path is not None
         yaml_path = path.expanduser().resolve()
-        parsed = load_profile_v2_document(yaml_path, registry=registry)
+        parsed = load_profile_document(yaml_path, registry=registry)
         source = str(yaml_path)
 
     return measure_parsed_profile_cost(
@@ -221,7 +221,7 @@ def measure_profile_cost(
 
 
 def measure_parsed_profile_cost(
-    parsed: ProfileV2SpectrumDocument,
+    parsed: ProfileDocument,
     *,
     yaml_path: Path,
     source: str,
@@ -312,7 +312,7 @@ def measure_parsed_profile_cost(
         source=source,
         profile_id=parsed.metadata.id,
         profile_version=parsed.metadata.version,
-        profile_hash=profile_hash_v2(parsed),
+        profile_hash=profile_hash(parsed),
         yaml_loc=yaml_loc,
         yaml_path=_rel_display(yaml_resolved, repo_root=repo_root),
         mechanisms_used=used,

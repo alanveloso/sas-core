@@ -14,22 +14,21 @@ from spectrum_profiles.selection import (
 )
 from spectrum_profiles.v2.schema import (
     ProfileDocument,
-    ProfileV2SpectrumDocument,
     SpectrumRange,
 )
 
 
-def canonical_profile_v2_json(parsed: ProfileV2SpectrumDocument) -> str:
+def canonical_profile_json(parsed: ProfileDocument) -> str:
     payload = parsed.model_dump(mode="json", exclude_none=True)
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def profile_hash_v2(parsed: ProfileV2SpectrumDocument) -> str:
-    digest = hashlib.sha256(canonical_profile_v2_json(parsed).encode("utf-8"))
+def profile_hash(parsed: ProfileDocument) -> str:
+    digest = hashlib.sha256(canonical_profile_json(parsed).encode("utf-8"))
     return digest.hexdigest()
 
 
-def selected_mechanism_ids(parsed: ProfileV2SpectrumDocument) -> tuple[str, ...]:
+def selected_mechanism_ids(parsed: ProfileDocument) -> tuple[str, ...]:
     """Ordered unique mechanism ids referenced by a validated Profile v2 document."""
     ids: list[str] = []
     if parsed.spectrum.channelization is not None:
@@ -65,8 +64,8 @@ def selected_mechanism_ids(parsed: ProfileV2SpectrumDocument) -> tuple[str, ...]
     return tuple(ordered)
 
 
-def profile_context_from_v2(
-    parsed: ProfileV2SpectrumDocument,
+def profile_context_from_document(
+    parsed: ProfileDocument,
     *,
     registry: MechanismRegistry | None = None,
 ) -> ProfileContext:
@@ -89,17 +88,11 @@ def profile_context_from_v2(
     return ProfileContext(
         profile_id=parsed.metadata.id,
         profile_version=parsed.metadata.version,
-        profile_hash=profile_hash_v2(parsed),
+        profile_hash=profile_hash(parsed),
         dataset_versions=dataset_versions,
         mechanism_versions=mechanism_versions,
         rf_provenance=rf_provenance,
     )
-
-
-# Canonical aliases (no historical "v2" suffix). Temporary coexistence with *_v2.
-canonical_profile_json = canonical_profile_v2_json
-profile_hash = profile_hash_v2
-profile_context_from_document = profile_context_from_v2
 
 
 def primary_spectrum_range(document: ProfileDocument) -> SpectrumRange:

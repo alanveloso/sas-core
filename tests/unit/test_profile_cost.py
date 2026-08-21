@@ -23,7 +23,7 @@ from spectrum_profiles.v2.cost import (
     mechanism_reuse,
     render_profile_cost_report,
 )
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 from tools.profile_cost import main as profile_cost_main
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -210,7 +210,7 @@ def test_novel_mechanism_reuse_pct(tmp_path: Path) -> None:
     )
     doc = _minimal_doc()
     doc["protection"] = {"mechanisms": ["protection_entitlement", "novel_only"]}
-    parsed = parse_profile_v2_spectrum(doc, registry=extended)
+    parsed = parse_profile_document(doc, registry=extended)
     yaml_path = tmp_path / "novel.yaml"
     yaml_path.write_text("placeholder: 1\n", encoding="utf-8")
     report = measure_parsed_profile_cost(

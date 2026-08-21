@@ -13,7 +13,7 @@ from primitives.station_limits import (
     MaxAssignmentBandwidth,
 )
 from spectrum_profiles.v2.doctor import run_profile_doctor
-from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import load_profile, parse_profile_document
 from spectrum_profiles.errors import ProfileValidationError
 
 
@@ -48,7 +48,7 @@ def test_antenna_height_and_forbidden_roles() -> None:
 
 
 def test_br_profile_constraints_and_doctor() -> None:
-    parsed = load_profile_v2("br_anatel_slp_3700")
+    parsed = load_profile("br_anatel_slp_3700")
     mechs = [c.mechanism for c in parsed.constraints]
     assert mechs == [
         "duplex_mode",
@@ -81,10 +81,10 @@ def test_unknown_constraint_mechanism_fails_closed() -> None:
         "constraints": [{"mechanism": "duplex_mode", "mode": "not_a_mode"}],
     }
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
 
 
 def test_cbrs_reference_still_loads_without_constraints() -> None:
-    parsed = load_profile_v2("cbrs_winnforum")
+    parsed = load_profile("cbrs_winnforum")
     assert parsed.constraints == ()
     assert parsed.metadata.id == "cbrs_winnforum"

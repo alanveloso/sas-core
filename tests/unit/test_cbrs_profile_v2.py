@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from spectrum_profiles.v2.context import profile_context_from_v2
-from spectrum_profiles.v2.parse import load_profile_v2
+from spectrum_profiles.v2.context import profile_context_from_document
+from spectrum_profiles.v2.parse import load_profile
 
 
 def test_cbrs_composes_registered_mechanisms_and_band() -> None:
-    v2 = load_profile_v2("cbrs_winnforum")
+    v2 = load_profile("cbrs_winnforum")
     assert v2.metadata.id == "cbrs_winnforum"
     assert v2.metadata.version == "2.0.0"
     assert v2.metadata.status == "reference"
@@ -33,7 +33,7 @@ def test_cbrs_composes_registered_mechanisms_and_band() -> None:
     assert v2.protection is not None
     assert "iap" not in v2.protection.mechanisms
     assert "dpa" not in v2.protection.mechanisms
-    ctx = profile_context_from_v2(v2)
+    ctx = profile_context_from_document(v2)
     assert ctx.profile_id == "cbrs_winnforum"
     assert ctx.profile_hash
     assert ctx.rf_provenance == "path_loss_plus_aggregate/path_loss"

@@ -15,11 +15,11 @@ from providers.discovery import DataProviderDiscovery
 from rf.cbrs_winnforum import CbrsWinnForumRfAdapter
 from rf.discovery import RfModelDiscovery
 from spectrum_profiles.v2.doctor import (
-    diagnose_profile_v2,
+    diagnose_profile,
     render_profile_doctor_report,
     run_profile_doctor,
 )
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 from tools.profile_doctor import main as profile_doctor_main
 
 _PROV = DatasetProvenance(dataset_id="mem", dataset_version="1", provider_id="map")
@@ -115,14 +115,14 @@ def test_structure_fail_unknown_mechanism(tmp_path: Path):
 def test_device_plugin_fail_when_only_network_adapters():
     from adapters.discovery import GROUP_NETWORK_ADAPTERS
 
-    parsed = parse_profile_v2_spectrum(
+    parsed = parse_profile_document(
         _minimal_doc(
             requirements={
                 "device_capabilities": ["geolocation", "frequency_range", "max_eirp"]
             }
         )
     )
-    report = diagnose_profile_v2(
+    report = diagnose_profile(
         parsed,
         source="mem",
         adapter_discovery=AdapterDiscovery(
@@ -142,7 +142,7 @@ def test_device_plugin_fail_when_only_network_adapters():
 
 
 def test_rf_plugin_fail_when_no_matching_model():
-    parsed = parse_profile_v2_spectrum(
+    parsed = parse_profile_document(
         _minimal_doc(
             rf={
                 "required": True,
@@ -153,7 +153,7 @@ def test_rf_plugin_fail_when_no_matching_model():
             requirements={"device_capabilities": ["geolocation"]},
         )
     )
-    report = diagnose_profile_v2(
+    report = diagnose_profile(
         parsed,
         source="mem",
         adapter_discovery=AdapterDiscovery(

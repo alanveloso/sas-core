@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from primitives.frequency import FrequencyRange
 from primitives.registry import MechanismAxis, MechanismRegistry
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.schema import ProfileDocument
 
 _RF_PROTECTION = frozenset({"single_link_threshold", "aggregate_linear_power"})
 
 
-def validate_profile_v2_semantics(
-    parsed: ProfileV2SpectrumDocument, catalog: MechanismRegistry
+def validate_profile_semantics(
+    parsed: ProfileDocument, catalog: MechanismRegistry
 ) -> None:
     data_caps = (
         set(parsed.data.required_capabilities) if parsed.data is not None else set()

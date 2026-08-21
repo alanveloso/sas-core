@@ -7,13 +7,13 @@ import copy
 import pytest
 
 from spectrum_profiles.errors import ProfileValidationError
-from spectrum_profiles.v2.context import profile_hash_v2
-from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
+from spectrum_profiles.v2.context import profile_hash
+from spectrum_profiles.v2.parse import load_profile, parse_profile_document
 from spectrum_profiles.v2.schema import DistanceExclusionBinding
 
 
 def _cbrs() -> object:
-    return load_profile_v2("cbrs_winnforum")
+    return load_profile("cbrs_winnforum")
 
 
 def _binding_by_id(doc: object, binding_id: str) -> DistanceExclusionBinding:
@@ -73,7 +73,7 @@ def test_invalid_distance_and_extra_field_fail_closed() -> None:
             }
         ]
         with pytest.raises(ProfileValidationError):
-            parse_profile_v2_spectrum(doc)
+            parse_profile_document(doc)
 
     doc = _minimal_with_spectrum()
     doc["protection"]["bindings"] = [
@@ -85,7 +85,7 @@ def test_invalid_distance_and_extra_field_fail_closed() -> None:
         }
     ]
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
 
 
 def test_duplicate_id_and_undeclared_mechanism_fail_closed() -> None:
@@ -95,7 +95,7 @@ def test_duplicate_id_and_undeclared_mechanism_fail_closed() -> None:
         {"id": "dup", "mechanism": "distance_exclusion", "distance_m": 20},
     ]
     with pytest.raises(ProfileValidationError, match="unique"):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
 
     doc2 = _minimal_with_spectrum()
     doc2["protection"]["mechanisms"] = ["protection_entitlement"]
@@ -103,7 +103,7 @@ def test_duplicate_id_and_undeclared_mechanism_fail_closed() -> None:
         {"id": "standoff", "mechanism": "distance_exclusion", "distance_m": 10}
     ]
     with pytest.raises(ProfileValidationError, match="not listed"):
-        parse_profile_v2_spectrum(doc2)
+        parse_profile_document(doc2)
 
 
 def test_unknown_or_wrong_binding_mechanism_fail_closed() -> None:
@@ -113,7 +113,7 @@ def test_unknown_or_wrong_binding_mechanism_fail_closed() -> None:
         {"id": "bad", "mechanism": "channel_exclusion", "distance_m": 10}
     ]
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
 
 
 def test_invalid_and_out_of_spectrum_frequency_fail_closed() -> None:
@@ -127,7 +127,7 @@ def test_invalid_and_out_of_spectrum_frequency_fail_closed() -> None:
         }
     ]
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
 
     outside = _minimal_with_spectrum(low_hz=3_550_000_000, high_hz=3_700_000_000)
     outside["protection"]["bindings"] = [
@@ -139,7 +139,7 @@ def test_invalid_and_out_of_spectrum_frequency_fail_closed() -> None:
         }
     ]
     with pytest.raises(ProfileValidationError, match="not fully contained"):
-        parse_profile_v2_spectrum(outside)
+        parse_profile_document(outside)
 
     partial = _minimal_with_spectrum(low_hz=3_550_000_000, high_hz=3_700_000_000)
     partial["protection"]["bindings"] = [
@@ -151,7 +151,7 @@ def test_invalid_and_out_of_spectrum_frequency_fail_closed() -> None:
         }
     ]
     with pytest.raises(ProfileValidationError, match="not fully contained"):
-        parse_profile_v2_spectrum(partial)
+        parse_profile_document(partial)
 
 
 def test_contained_frequency_scope_passes() -> None:
@@ -164,7 +164,7 @@ def test_contained_frequency_scope_passes() -> None:
             "frequency": {"low_hz": 3_560_000_000, "high_hz": 3_690_000_000},
         }
     ]
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.protection is not None
     assert parsed.protection.bindings[0].frequency is not None
     assert parsed.protection.bindings[0].frequency.low_hz == 3_560_000_000
@@ -172,19 +172,19 @@ def test_contained_frequency_scope_passes() -> None:
 
 def test_other_reference_profiles_still_load() -> None:
     for profile_id in ("br_anatel_slp_3700", "eu_elsa", "us_tvws_15_711"):
-        parsed = load_profile_v2(profile_id)
+        parsed = load_profile(profile_id)
         assert parsed.metadata.id == profile_id
         if parsed.protection is not None:
             assert parsed.protection.bindings == ()
 
 
 def test_cbrs_hash_deterministic_across_repeated_loads() -> None:
-    first = profile_hash_v2(load_profile_v2("cbrs_winnforum"))
-    again = [profile_hash_v2(load_profile_v2("cbrs_winnforum")) for _ in range(5)]
+    first = profile_hash(load_profile("cbrs_winnforum"))
+    again = [profile_hash(load_profile("cbrs_winnforum")) for _ in range(5)]
     assert set(again) == {first}
     # Bindings are part of the hashed document payload.
-    payload = load_profile_v2("cbrs_winnforum").model_dump(mode="json", exclude_none=True)
+    payload = load_profile("cbrs_winnforum").model_dump(mode="json", exclude_none=True)
     stripped = copy.deepcopy(payload)
     stripped["protection"]["bindings"] = []
-    without_bindings = profile_hash_v2(parse_profile_v2_spectrum(stripped))
+    without_bindings = profile_hash(parse_profile_document(stripped))
     assert first != without_bindings

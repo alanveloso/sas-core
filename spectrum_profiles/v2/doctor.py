@@ -19,13 +19,13 @@ from adapters.discovery import (
 from providers.discovery import DataProviderDiscovery
 from rf.discovery import RfModelDiscovery
 from spectrum_profiles.errors import ProfileError
-from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
+from spectrum_profiles.v2.context import profile_context_from_document, profile_hash
 from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_device_capabilities,
     adapters_satisfying_network_capabilities,
 )
-from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.parse import load_profile, load_profile_document
+from spectrum_profiles.v2.schema import ProfileDocument
 from spectrum_profiles.v2.trust import ProfileTrustTier
 
 
@@ -157,8 +157,8 @@ def _data_provider_capability_coverage(
     return frozenset(have), missing
 
 
-def diagnose_profile_v2(
-    parsed: ProfileV2SpectrumDocument,
+def diagnose_profile(
+    parsed: ProfileDocument,
     *,
     source: str,
     adapter_discovery: AdapterDiscovery | None = None,
@@ -176,9 +176,9 @@ def diagnose_profile_v2(
     report = ProfileDoctorReport(source=source)
     report.profile_id = parsed.metadata.id
     report.profile_version = parsed.metadata.version
-    report.profile_hash = profile_hash_v2(parsed)
+    report.profile_hash = profile_hash(parsed)
 
-    ctx = profile_context_from_v2(parsed)
+    ctx = profile_context_from_document(parsed)
     _add(
         report,
         name="structure",
@@ -474,13 +474,13 @@ def run_profile_doctor(
     try:
         if path is not None:
             source = str(Path(path).expanduser().resolve())
-            parsed = load_profile_v2_document(Path(path))
+            parsed = load_profile_document(Path(path))
             trust_tier = ProfileTrustTier.OPERATOR_EXPLICIT
         else:
             assert profile_id is not None
             source = f"id:{profile_id}"
-            parsed = load_profile_v2(profile_id)
-            trust_tier = ProfileTrustTier.BUILTIN_V2
+            parsed = load_profile(profile_id)
+            trust_tier = ProfileTrustTier.BUILTIN
     except ProfileError as exc:
         report = ProfileDoctorReport(source=str(path or profile_id))
         _add(
@@ -492,7 +492,7 @@ def run_profile_doctor(
         )
         return report
 
-    return diagnose_profile_v2(
+    return diagnose_profile(
         parsed,
         source=source,
         adapter_discovery=adapter_discovery,

@@ -18,7 +18,7 @@ from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_device_capabilities,
     negotiate_profile_plugins,
 )
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 
 _PROV = DatasetProvenance(dataset_id="mem", dataset_version="1", provider_id="map")
 
@@ -42,7 +42,7 @@ def _rf_profile() -> dict:
 
 
 def test_device_adapter_and_providers_and_rf_port_satisfy_profile():
-    profile = parse_profile_v2_spectrum(_rf_profile())
+    profile = parse_profile_document(_rf_profile())
     device = MappingDeviceAdapter()
     view = device.to_consumer(
         {
@@ -69,7 +69,7 @@ def test_device_adapter_and_providers_and_rf_port_satisfy_profile():
 
 
 def test_network_adapter_fails_geolocation_requirement_same_profile():
-    profile = parse_profile_v2_spectrum(_rf_profile())
+    profile = parse_profile_document(_rf_profile())
     with pytest.raises(ValueError, match="missing required capabilities"):
         negotiate_profile_plugins(
             profile,
@@ -87,7 +87,7 @@ def test_network_adapter_fails_geolocation_requirement_same_profile():
 
 
 def test_missing_rf_port_or_terrain_provider_fail_closed():
-    profile = parse_profile_v2_spectrum(_rf_profile())
+    profile = parse_profile_document(_rf_profile())
     device = MappingDeviceAdapter()
     ring = LinearRing.from_lon_lat([[0, 0], [1, 0], [1, 1], [0, 0]])
     providers = (
@@ -106,7 +106,7 @@ def test_missing_rf_port_or_terrain_provider_fail_closed():
 
 
 def test_discovery_filters_by_capability_not_profile_plugin_names():
-    profile = parse_profile_v2_spectrum(_rf_profile())
+    profile = parse_profile_document(_rf_profile())
     required = profile.requirements.device_capabilities
     discovery = AdapterDiscovery(
         overlays={

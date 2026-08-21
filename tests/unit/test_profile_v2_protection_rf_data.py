@@ -6,7 +6,7 @@ import pytest
 
 from primitives.registry import MechanismAxis, MechanismContract, builtin_mechanism_registry
 from spectrum_profiles.errors import ProfileValidationError
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 
 
 def _base() -> dict:
@@ -37,7 +37,7 @@ def test_composes_registered_protection_coordination_rf_and_data():
     doc["requirements"] = {
         "device_capabilities": ["geolocation", "frequency_range", "max_eirp"]
     }
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.protection is not None
     assert parsed.coordination is not None
     assert parsed.rf is not None
@@ -50,11 +50,11 @@ def test_rf_required_without_model_and_unknown_capabilities_fail_closed():
     doc = _base()
     doc["rf"] = {"required": True, "policy": "path_loss_plus_aggregate"}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
     doc2 = _base()
     doc2["data"] = {"required_capabilities": ["ned"]}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc2)
+        parse_profile_document(doc2)
     doc3 = _base()
     doc3["rf"] = {
         "required": True,
@@ -62,14 +62,14 @@ def test_rf_required_without_model_and_unknown_capabilities_fail_closed():
         "propagation_model": "itm",
     }
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc3)
+        parse_profile_document(doc3)
     extra = builtin_mechanism_registry()
     extra.register(
         MechanismContract("itm", MechanismAxis.RF, "1.0.0", slot="rf_model")
     )
     doc3["data"] = {"required_capabilities": ["terrain"]}
     doc3["requirements"] = {"device_capabilities": ["geolocation"]}
-    parsed = parse_profile_v2_spectrum(doc3, registry=extra)
+    parsed = parse_profile_document(doc3, registry=extra)
     assert parsed.rf is not None
     assert parsed.rf.propagation_model == "itm"
 
@@ -78,16 +78,16 @@ def test_rejects_unregistered_protection_and_keeps_v1_loader():
     doc = _base()
     doc["protection"] = {"mechanisms": ["iap_fairshare"]}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
     doc2 = _base()
     doc2["coordination"] = {"mechanism": "ordered_classes"}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc2)
+        parse_profile_document(doc2)
     doc3 = _base()
     doc3["rf"] = {
         "required": False,
         "policy": "path_loss_plus_aggregate",
     }
-    parsed = parse_profile_v2_spectrum(doc3)
+    parsed = parse_profile_document(doc3)
     assert parsed.rf is not None
     assert parsed.rf.propagation_model is None

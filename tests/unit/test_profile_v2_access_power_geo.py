@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from spectrum_profiles.errors import ProfileValidationError
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 
 
 def _base() -> dict:
@@ -18,7 +18,7 @@ def _base() -> dict:
 
 
 def test_optional_access_and_ordered_classes():
-    omitted = parse_profile_v2_spectrum(_base())
+    omitted = parse_profile_document(_base())
     assert omitted.access is None
     doc = _base()
     doc["access"] = {
@@ -28,13 +28,13 @@ def test_optional_access_and_ordered_classes():
             {"id": "local", "priority": 200, "preemptible": True},
         ],
     }
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.access is not None
     assert len(parsed.access.classes) == 2
     empty = _base()
     empty["access"] = {"mechanism": "ordered_classes", "classes": []}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(empty)
+        parse_profile_document(empty)
 
 
 def test_power_rule_table_closed_selectors_and_time_geo():
@@ -59,7 +59,7 @@ def test_power_rule_table_closed_selectors_and_time_geo():
         ],
     }
     doc["temporal"] = {"reevaluation": {"mechanism": "periodic", "interval_s": 60}}
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.authorization is not None
     assert parsed.power is not None
     assert parsed.geography is not None
@@ -73,15 +73,15 @@ def test_rejects_dsl_wrong_axis_and_keeps_v1_loader():
         "rules": [{"max_eirp_dbm": 10, "expr": "eirp < 10"}],
     }
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
     doc2 = _base()
     doc2["access"] = {
         "mechanism": "dynamic_lease",
         "classes": [{"id": "a", "priority": 1, "preemptible": True}],
     }
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc2)
+        parse_profile_document(doc2)
     doc3 = _base()
     doc3["not_a_section"] = {}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc3)
+        parse_profile_document(doc3)

@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from spectrum_profiles.v2.doctor import run_profile_doctor
-from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
+from spectrum_profiles.v2.parse import load_profile, load_profile_document
 
 _PROFILES = Path(__file__).resolve().parents[2] / "spectrum_profiles" / "profiles"
 _TEMPLATE = _PROFILES / "templates" / "custom_profile.template.yaml"
@@ -26,7 +26,7 @@ def test_template_and_example_pass_profile_doctor():
 
 
 def test_example_is_custom_status_and_builtin_catalog_untouched():
-    parsed = load_profile_v2_document(_EXAMPLE)
+    parsed = load_profile_document(_EXAMPLE)
     assert parsed.metadata.status == "custom"
     assert parsed.metadata.id == "custom_campus_6ghz"
     assert parsed.spectrum.ranges[0].low_hz == 5_925_000_000
@@ -36,7 +36,7 @@ def test_example_is_custom_status_and_builtin_catalog_untouched():
         "guest",
     ]
     # Builtin reference catalog remains loadable by id.
-    cbrs = load_profile_v2("cbrs_winnforum")
+    cbrs = load_profile("cbrs_winnforum")
     assert cbrs.metadata.version == "2.0.0"
     assert cbrs.metadata.status == "reference"
 
@@ -62,7 +62,7 @@ def test_copy_adapt_template_without_python(tmp_path: Path):
     report = run_profile_doctor(path=dest)
     assert report.ok
     assert report.profile_id == "my_site_private"
-    adapted = load_profile_v2_document(dest)
+    adapted = load_profile_document(dest)
     assert adapted.access is not None
     assert [c.id for c in adapted.access.classes] == ["owner", "visitor"]
     assert adapted.spectrum.ranges[0].low_hz == 6_000_000_000

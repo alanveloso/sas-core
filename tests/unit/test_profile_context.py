@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from primitives.decision import Decision, DecisionAction
-from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.context import profile_context_from_document, profile_hash
+from spectrum_profiles.v2.parse import parse_profile_document
 
 
 def _doc() -> dict:
@@ -25,18 +25,18 @@ def _doc() -> dict:
 
 
 def test_hash_stable_and_changes_with_content():
-    parsed = parse_profile_v2_spectrum(_doc())
-    again = parse_profile_v2_spectrum(_doc())
-    assert profile_hash_v2(parsed) == profile_hash_v2(again)
+    parsed = parse_profile_document(_doc())
+    again = parse_profile_document(_doc())
+    assert profile_hash(parsed) == profile_hash(again)
     other = _doc()
     other["metadata"] = {"id": "example", "version": "1.0.1", "status": "custom"}
-    parsed_other = parse_profile_v2_spectrum(other)
-    assert profile_hash_v2(parsed) != profile_hash_v2(parsed_other)
+    parsed_other = parse_profile_document(other)
+    assert profile_hash(parsed) != profile_hash(parsed_other)
 
 
 def test_context_records_id_version_hash_and_binds_decision():
-    parsed = parse_profile_v2_spectrum(_doc())
-    ctx = profile_context_from_v2(parsed)
+    parsed = parse_profile_document(_doc())
+    ctx = profile_context_from_document(parsed)
     assert ctx.profile_id == "example"
     assert ctx.profile_version == "1.0.0"
     assert len(ctx.profile_hash) == 64

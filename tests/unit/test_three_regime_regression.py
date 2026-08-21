@@ -18,10 +18,10 @@ from spectrum_profiles.selection import (
     clear_profile_override,
 )
 from spectrum_profiles.v2 import get_active_profile_document, primary_spectrum_range
-from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
+from spectrum_profiles.v2.context import profile_context_from_document, profile_hash
 from spectrum_profiles.v2.cost import measure_profile_cost
 from spectrum_profiles.v2.doctor import run_profile_doctor
-from spectrum_profiles.v2.parse import load_profile_v2
+from spectrum_profiles.v2.parse import load_profile
 
 _REPO = Path(__file__).resolve().parents[2]
 _REGIME_IDS = ("cbrs_winnforum", "br_anatel_slp_3700", "eu_elsa")
@@ -30,9 +30,9 @@ _REGIME_IDS = ("cbrs_winnforum", "br_anatel_slp_3700", "eu_elsa")
 def test_default_active_remains_cbrs_after_three_regime_loads() -> None:
     clear_profile_override()
     assert DEFAULT_PROFILE_ID == "cbrs_winnforum"
-    _ = load_profile_v2("cbrs_winnforum")
-    _ = load_profile_v2("br_anatel_slp_3700")
-    _ = load_profile_v2("eu_elsa")
+    _ = load_profile("cbrs_winnforum")
+    _ = load_profile("br_anatel_slp_3700")
+    _ = load_profile("eu_elsa")
     assert active_profile_id() == "cbrs_winnforum"
     active = get_active_profile_document()
     band = primary_spectrum_range(active)
@@ -41,16 +41,16 @@ def test_default_active_remains_cbrs_after_three_regime_loads() -> None:
 
 
 def test_three_profile_contexts_are_isolated() -> None:
-    cbrs = load_profile_v2("cbrs_winnforum")
-    br = load_profile_v2("br_anatel_slp_3700")
-    elsa = load_profile_v2("eu_elsa")
+    cbrs = load_profile("cbrs_winnforum")
+    br = load_profile("br_anatel_slp_3700")
+    elsa = load_profile("eu_elsa")
     hashes = {
-        profile_hash_v2(cbrs),
-        profile_hash_v2(br),
-        profile_hash_v2(elsa),
+        profile_hash(cbrs),
+        profile_hash(br),
+        profile_hash(elsa),
     }
     assert len(hashes) == 3
-    ctx = {p.metadata.id: profile_context_from_v2(p) for p in (cbrs, br, elsa)}
+    ctx = {p.metadata.id: profile_context_from_document(p) for p in (cbrs, br, elsa)}
     assert ctx["cbrs_winnforum"].profile_id == "cbrs_winnforum"
     assert ctx["br_anatel_slp_3700"].profile_id == "br_anatel_slp_3700"
     assert ctx["eu_elsa"].profile_id == "eu_elsa"
@@ -87,15 +87,15 @@ def test_all_three_reference_profiles_pass_doctor_and_cost() -> None:
 
 def test_builtin_catalog_resolves_all_three_regimes() -> None:
     for regime in _REGIME_IDS:
-        doc = load_profile_v2(regime)
+        doc = load_profile(regime)
         assert doc.metadata.id == regime
 
 
 def test_interleaved_three_regime_loads_preserve_bands() -> None:
     for _ in range(3):
-        cbrs = load_profile_v2("cbrs_winnforum")
-        br = load_profile_v2("br_anatel_slp_3700")
-        elsa = load_profile_v2("eu_elsa")
+        cbrs = load_profile("cbrs_winnforum")
+        br = load_profile("br_anatel_slp_3700")
+        elsa = load_profile("eu_elsa")
         assert cbrs.spectrum.ranges[0].low_hz == 3_550_000_000
         assert br.spectrum.ranges[0].low_hz == 3_700_000_000
         assert elsa.spectrum.ranges[0].low_hz == 2_300_000_000

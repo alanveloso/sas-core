@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from spectrum_profiles.errors import ProfileValidationError
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 
 
 def _base() -> dict:
@@ -20,7 +20,7 @@ def _base() -> dict:
 def test_no_rf_profile_is_valid_without_threshold_protection():
     doc = _base()
     doc["protection"] = {"mechanisms": ["channel_exclusion", "exclusion_zone"]}
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.rf is None
 
 
@@ -32,12 +32,12 @@ def test_rf_required_needs_terrain_and_geolocation():
         "propagation_model": "path_loss",
     }
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
     doc["data"] = {"required_capabilities": ["terrain"]}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
     doc["requirements"] = {"device_capabilities": ["geolocation"]}
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.rf is not None
 
 
@@ -45,7 +45,7 @@ def test_aggregate_protection_requires_rf_and_policy_slot():
     doc = _base()
     doc["protection"] = {"mechanisms": ["aggregate_linear_power"]}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)
     swapped = _base()
     swapped["rf"] = {
         "required": True,
@@ -55,4 +55,4 @@ def test_aggregate_protection_requires_rf_and_policy_slot():
     swapped["data"] = {"required_capabilities": ["terrain"]}
     swapped["requirements"] = {"device_capabilities": ["geolocation"]}
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(swapped)
+        parse_profile_document(swapped)

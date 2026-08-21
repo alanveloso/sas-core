@@ -13,15 +13,15 @@ from adapters.plugin_names import validate_plugin_name
 from spectrum_profiles.errors import ProfilePathError, ProfileValidationError
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import (
-    load_profile_v2,
-    load_profile_v2_document,
-    load_profile_v2_with_provenance,
-    parse_profile_v2_spectrum,
+    load_profile,
+    load_profile_document,
+    load_profile_with_provenance,
+    parse_profile_document,
 )
 from spectrum_profiles.v2.trust import (
     ProfileTrustTier,
     assert_path_within,
-    builtin_v2_profiles_dir,
+    builtin_profiles_dir,
     validate_profile_id,
 )
 
@@ -31,34 +31,38 @@ def test_profile_id_path_like_fail_closed() -> None:
         with pytest.raises((ProfilePathError, ProfileValidationError)):
             validate_profile_id(bad)
         with pytest.raises(ProfileValidationError):
-            load_profile_v2(bad)
+            load_profile(bad)
 
 
 def test_builtin_load_rejects_metadata_id_mismatch() -> None:
-    root = builtin_v2_profiles_dir()
+    root = builtin_profiles_dir()
     src = root / "cbrs_winnforum.yaml"
     raw = yaml.safe_load(src.read_text(encoding="utf-8"))
     raw["metadata"]["id"] = "not_cbrs_winnforum"
     from spectrum_profiles.v2.trust import assert_metadata_id_matches
 
-    parsed = parse_profile_v2_spectrum(raw)
+    parsed = parse_profile_document(raw)
     with pytest.raises(ProfileValidationError, match="mismatch"):
         assert_metadata_id_matches(parsed, "cbrs_winnforum")
 
 
 def test_builtin_provenance_and_path_allowlist() -> None:
-    parsed, prov = load_profile_v2_with_provenance("eu_elsa")
+    parsed, prov = load_profile_with_provenance("eu_elsa")
     assert parsed.metadata.id == "eu_elsa"
-    assert prov.trust_tier is ProfileTrustTier.BUILTIN_V2
+    assert ProfileTrustTier.BUILTIN.name == "BUILTIN"
+    assert ProfileTrustTier.BUILTIN.value == "builtin_v2"
+    assert not hasattr(ProfileTrustTier, "BUILTIN_V2")
+    assert prov.trust_tier is ProfileTrustTier.BUILTIN
+    assert prov.as_dict()["trust_tier"] == "builtin_v2"
     assert prov.profile_hash
-    assert_path_within(Path(prov.source_path), builtin_v2_profiles_dir())
+    assert_path_within(Path(prov.source_path), builtin_profiles_dir())
 
 
 def test_operator_path_rejects_non_yaml(tmp_path: Path) -> None:
     junk = tmp_path / "profile.json"
     junk.write_text("{}", encoding="utf-8")
     with pytest.raises(ProfileValidationError, match="unsupported profile format"):
-        load_profile_v2_document(junk)
+        load_profile_document(junk)
 
 
 def test_plugin_name_and_mechanisms_group_fail_closed() -> None:
@@ -92,5 +96,5 @@ def test_reference_profiles_still_load() -> None:
         "eu_elsa",
         "us_tvws_15_711",
     ):
-        parsed = load_profile_v2(profile_id)
+        parsed = load_profile(profile_id)
         assert parsed.metadata.id == profile_id

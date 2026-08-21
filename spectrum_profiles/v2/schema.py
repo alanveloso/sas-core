@@ -521,7 +521,7 @@ ProfileConstraint = Annotated[
 ]
 
 
-class ProfileV2SpectrumDocument(BaseModel):
+class ProfileDocument(BaseModel):
     """v2 envelope including protection/coordination/rf/data/requirements."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -543,7 +543,7 @@ class ProfileV2SpectrumDocument(BaseModel):
     constraints: tuple[ProfileConstraint, ...] = ()
 
     @model_validator(mode="after")
-    def _envelope(self) -> ProfileV2SpectrumDocument:
+    def _envelope(self) -> ProfileDocument:
         if self.api_version != "spectrum-access/v2":
             raise ValueError("api_version must be 'spectrum-access/v2'")
         if self.kind != "SpectrumProfile":
@@ -551,7 +551,3 @@ class ProfileV2SpectrumDocument(BaseModel):
         if self.metadata.status not in {"reference", "custom"}:
             raise ValueError("metadata.status must be 'reference' or 'custom'")
         return self
-
-
-# Canonical public name; physical class remains ProfileV2SpectrumDocument for now.
-ProfileDocument = ProfileV2SpectrumDocument

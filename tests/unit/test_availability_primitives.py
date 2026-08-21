@@ -23,7 +23,7 @@ from primitives.access import AccessClass, OrderedAccess
 from primitives.registry import MechanismAxis, builtin_mechanism_registry
 from primitives.request import TransmissionFootprint
 from primitives.time import TimeInterval, UtcInstant
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import parse_profile_document
 from spectrum_profiles.errors import ProfileValidationError
 
 _T0 = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
@@ -172,7 +172,7 @@ def test_profile_v2_temporal_availability_wiring() -> None:
         },
         "rf": {"required": False, "policy": "path_loss_plus_aggregate"},
     }
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert parsed.temporal is not None
     assert parsed.temporal.availability is not None
     assert parsed.temporal.availability.mode == "scheduled"
@@ -195,4 +195,4 @@ def test_profile_rejects_unknown_availability_mode() -> None:
         "rf": {"required": False, "policy": "path_loss_plus_aggregate"},
     }
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(doc)
+        parse_profile_document(doc)

@@ -17,19 +17,19 @@ from spectrum_profiles.errors import (
     ProfilePathError,
     ProfileValidationError,
 )
-from spectrum_profiles.v2.context import profile_hash_v2
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.v2.context import profile_hash
+from spectrum_profiles.v2.schema import ProfileDocument
 
 # Closed id shape used by reference + custom profiles (same schema, D21/D freeze).
 _PROFILE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-_V2_PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles" / "v2"
+_BUILTIN_PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles" / "v2"
 
 
 class ProfileTrustTier(str, Enum):
     """Where a Profile v2 document was resolved from."""
 
-    BUILTIN_V2 = "builtin_v2"
+    BUILTIN = "builtin_v2"
     OPERATOR_EXPLICIT = "operator_explicit"
 
 
@@ -57,8 +57,8 @@ class ProfileLoadProvenance:
         }
 
 
-def builtin_v2_profiles_dir() -> Path:
-    return _V2_PROFILES_DIR.resolve()
+def builtin_profiles_dir() -> Path:
+    return _BUILTIN_PROFILES_DIR.resolve()
 
 
 def validate_profile_id(profile_id: str) -> str:
@@ -105,7 +105,7 @@ def assert_yaml_profile_file(path: Path) -> Path:
 
 
 def provenance_for(
-    parsed: ProfileV2SpectrumDocument,
+    parsed: ProfileDocument,
     *,
     source_path: Path | str,
     trust_tier: ProfileTrustTier,
@@ -115,13 +115,13 @@ def provenance_for(
         source_path=str(Path(source_path).expanduser().resolve()),
         profile_id=parsed.metadata.id,
         profile_version=parsed.metadata.version,
-        profile_hash=profile_hash_v2(parsed),
+        profile_hash=profile_hash(parsed),
         metadata_status=parsed.metadata.status,
         based_on=parsed.metadata.based_on,
     )
 
 
-def assert_metadata_id_matches(parsed: ProfileV2SpectrumDocument, profile_id: str) -> None:
+def assert_metadata_id_matches(parsed: ProfileDocument, profile_id: str) -> None:
     if parsed.metadata.id != profile_id:
         raise ProfileValidationError(
             f"profile id mismatch: requested '{profile_id}', "

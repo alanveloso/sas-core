@@ -1,4 +1,4 @@
-"""Canonical profile API aliases, shared errors, and root package exports."""
+"""Canonical profile API, shared errors, and root package exports."""
 
 from __future__ import annotations
 
@@ -19,22 +19,15 @@ from spectrum_profiles.errors import (
 )
 from spectrum_profiles.v2 import (
     ProfileDocument,
-    ProfileV2SpectrumDocument,
-    load_profile as v2_load_profile,
+    load_profile,
     load_profile_document,
     load_profile_document_with_provenance,
-    load_profile_v2,
-    load_profile_v2_document,
-    load_profile_v2_with_provenance,
     load_profile_with_provenance,
     parse_profile_document,
-    parse_profile_v2_spectrum,
     profile_context_from_document,
-    profile_context_from_v2,
-    profile_hash as v2_profile_hash,
-    profile_hash_v2,
+    profile_hash,
 )
-from spectrum_profiles.v2.trust import ProfileTrustTier, builtin_v2_profiles_dir
+from spectrum_profiles.v2.trust import ProfileTrustTier, builtin_profiles_dir
 
 _ROOT_INIT = Path(__file__).resolve().parents[2] / "spectrum_profiles" / "__init__.py"
 
@@ -46,36 +39,37 @@ def test_shared_error_classes_from_errors_module() -> None:
     assert ProfilePathError is shared_errors.ProfilePathError
 
 
-def test_profile_document_alias_and_canonical_loads() -> None:
-    assert ProfileDocument is ProfileV2SpectrumDocument
+def test_profile_document_loads() -> None:
     for profile_id in (
         "cbrs_winnforum",
         "br_anatel_slp_3700",
         "eu_elsa",
         "us_tvws_15_711",
     ):
-        doc = v2_load_profile(profile_id)
+        doc = load_profile(profile_id)
         assert isinstance(doc, ProfileDocument)
         assert doc.metadata.id == profile_id
 
 
-def test_canonical_api_equivalent_to_legacy_v2_names() -> None:
-    left = v2_load_profile("cbrs_winnforum")
-    right = load_profile_v2("cbrs_winnforum")
+def test_canonical_load_parse_hash_and_provenance() -> None:
+    left = load_profile("cbrs_winnforum")
+    right = load_profile("cbrs_winnforum")
     assert left == right
-    assert v2_profile_hash(left) == profile_hash_v2(right)
-    assert profile_context_from_document(left) == profile_context_from_v2(right)
+    assert profile_hash(left) == profile_hash(right)
+    assert profile_context_from_document(left) == profile_context_from_document(right)
 
     payload = left.model_dump(mode="json", exclude_none=True)
-    assert parse_profile_document(payload) == parse_profile_v2_spectrum(payload)
+    assert parse_profile_document(payload) == parse_profile_document(payload)
 
-    path = builtin_v2_profiles_dir() / "cbrs_winnforum.yaml"
-    assert load_profile_document(path) == load_profile_v2_document(path)
+    path = builtin_profiles_dir() / "cbrs_winnforum.yaml"
+    assert load_profile_document(path) == load_profile_document(path)
     with_prov = load_profile_with_provenance("cbrs_winnforum")
-    legacy_prov = load_profile_v2_with_provenance("cbrs_winnforum")
-    assert with_prov[0] == legacy_prov[0]
-    assert with_prov[1] == legacy_prov[1]
-    assert with_prov[1].trust_tier is ProfileTrustTier.BUILTIN_V2
+    again = load_profile_with_provenance("cbrs_winnforum")
+    assert with_prov[0] == again[0]
+    assert with_prov[1] == again[1]
+    assert with_prov[1].trust_tier is ProfileTrustTier.BUILTIN
+    assert with_prov[1].trust_tier.value == "builtin_v2"
+    assert with_prov[1].as_dict()["trust_tier"] == "builtin_v2"
 
     path_prov = load_profile_document_with_provenance(path)
     assert path_prov[0].metadata.id == "cbrs_winnforum"
@@ -84,9 +78,9 @@ def test_canonical_api_equivalent_to_legacy_v2_names() -> None:
 
 def test_canonical_load_fail_closed_shared_errors() -> None:
     with pytest.raises(ProfileValidationError):
-        v2_load_profile("../etc/passwd")
+        load_profile("../etc/passwd")
     with pytest.raises(ProfileNotFoundError):
-        v2_load_profile("does_not_exist_profile_xyz")
+        load_profile("does_not_exist_profile_xyz")
     with pytest.raises(ProfileValidationError):
         parse_profile_document({"not": "a profile"})
     missing = Path("/tmp/spectrum_access_missing_profile_step1a.yaml")
@@ -104,10 +98,10 @@ def test_root_load_profile_returns_canonical_document() -> None:
 
 def test_root_load_profile_matches_v2_namespace() -> None:
     root_doc = spectrum_profiles.load_profile("cbrs_winnforum")
-    ns_doc = v2_load_profile("cbrs_winnforum")
+    ns_doc = load_profile("cbrs_winnforum")
     assert root_doc.metadata.id == ns_doc.metadata.id
     assert root_doc.metadata.version == ns_doc.metadata.version
-    assert spectrum_profiles.profile_hash(root_doc) == v2_profile_hash(ns_doc)
+    assert spectrum_profiles.profile_hash(root_doc) == profile_hash(ns_doc)
 
 
 def test_root_exports_canonical_symbols() -> None:
@@ -129,7 +123,7 @@ def test_root_exports_canonical_symbols() -> None:
         assert name in spectrum_profiles.__all__
 
 
-def test_root_does_not_export_v1_symbols() -> None:
+def test_root_does_not_export_v1_or_historical_v2_symbols() -> None:
     banned = (
         "SpectrumProfile",
         "BandPlan",
@@ -145,10 +139,32 @@ def test_root_does_not_export_v1_symbols() -> None:
         "clear_profile_cache",
         "load_profile_v2",
         "ProfileV2SpectrumDocument",
+        "builtin_v2_profiles_dir",
+        "profile_hash_v2",
+        "diagnose_profile_v2",
     )
     for name in banned:
         assert not hasattr(spectrum_profiles, name), name
         assert name not in spectrum_profiles.__all__
+
+
+def test_v2_namespace_has_no_historical_symbols() -> None:
+    import spectrum_profiles.v2 as profile_api
+
+    for banned in (
+        "ProfileV2SpectrumDocument",
+        "load_profile_v2",
+        "load_profile_v2_document",
+        "load_profile_v2_with_provenance",
+        "parse_profile_v2_spectrum",
+        "profile_hash_v2",
+        "canonical_profile_v2_json",
+        "profile_context_from_v2",
+        "validate_profile_v2_semantics",
+        "diagnose_profile_v2",
+        "builtin_v2_profiles_dir",
+    ):
+        assert not hasattr(profile_api, banned), banned
 
 
 def test_root_init_does_not_import_deleted_v1_modules() -> None:

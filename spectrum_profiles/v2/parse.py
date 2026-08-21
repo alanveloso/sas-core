@@ -14,15 +14,15 @@ from spectrum_profiles.errors import (
     ProfilePathError,
     ProfileValidationError,
 )
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
-from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
+from spectrum_profiles.v2.schema import ProfileDocument
+from spectrum_profiles.v2.semantics import validate_profile_semantics
 from spectrum_profiles.v2.trust import (
     ProfileLoadProvenance,
     ProfileTrustTier,
     assert_metadata_id_matches,
     assert_path_within,
     assert_yaml_profile_file,
-    builtin_v2_profiles_dir,
+    builtin_profiles_dir,
     provenance_for,
     validate_profile_id,
 )
@@ -32,15 +32,15 @@ def _catalog(registry: MechanismRegistry | None) -> MechanismRegistry:
     return registry or builtin_mechanism_registry()
 
 
-def parse_profile_v2_spectrum(
+def parse_profile_document(
     document: Any,
     *,
     registry: MechanismRegistry | None = None,
-) -> ProfileV2SpectrumDocument:
+) -> ProfileDocument:
     if not isinstance(document, dict):
         raise ProfileValidationError("profile v2 document must be a mapping")
     try:
-        parsed = ProfileV2SpectrumDocument.model_validate(document)
+        parsed = ProfileDocument.model_validate(document)
     except ValidationError as exc:
         raise ProfileValidationError(f"profile v2 failed validation: {exc}") from exc
     catalog = _catalog(registry)
@@ -93,21 +93,21 @@ def parse_profile_v2_spectrum(
                 raise ValueError(f"unsupported constraint mechanism {mid!r}")
             # Instantiates closed primitive (fail closed on bad params).
             item.to_primitive()
-        validate_profile_v2_semantics(parsed, catalog)
+        validate_profile_semantics(parsed, catalog)
     except ValueError as exc:
         raise ProfileValidationError(str(exc)) from exc
     return parsed
 
 
-def load_profile_v2_document(
+def load_profile_document(
     path: Path,
     *,
     registry: MechanismRegistry | None = None,
-) -> ProfileV2SpectrumDocument:
+) -> ProfileDocument:
     """Load and validate a Profile v2 document from an explicit filesystem path.
 
     Operator-explicit paths are allowed (doctor / custom authoring). Callers that
-    need a trust record should use :func:`load_profile_v2_document_with_provenance`.
+    need a trust record should use :func:`load_profile_document_with_provenance`.
     """
     resolved = assert_yaml_profile_file(path)
     try:
@@ -116,61 +116,53 @@ def load_profile_v2_document(
         raise ProfileValidationError(f"profile v2 YAML error: {exc}") from exc
     except OSError as exc:
         raise ProfileValidationError(f"profile v2 read error: {exc}") from exc
-    return parse_profile_v2_spectrum(document, registry=registry)
+    return parse_profile_document(document, registry=registry)
 
 
-def load_profile_v2_document_with_provenance(
+def load_profile_document_with_provenance(
     path: Path,
     *,
     registry: MechanismRegistry | None = None,
     trust_tier: ProfileTrustTier = ProfileTrustTier.OPERATOR_EXPLICIT,
-) -> tuple[ProfileV2SpectrumDocument, ProfileLoadProvenance]:
-    """Like :func:`load_profile_v2_document`, plus immutable load provenance."""
+) -> tuple[ProfileDocument, ProfileLoadProvenance]:
+    """Like :func:`load_profile_document`, plus immutable load provenance."""
     resolved = assert_yaml_profile_file(path)
-    if trust_tier is ProfileTrustTier.BUILTIN_V2:
-        assert_path_within(resolved, builtin_v2_profiles_dir())
-    parsed = load_profile_v2_document(resolved, registry=registry)
+    if trust_tier is ProfileTrustTier.BUILTIN:
+        assert_path_within(resolved, builtin_profiles_dir())
+    parsed = load_profile_document(resolved, registry=registry)
     return parsed, provenance_for(
         parsed, source_path=resolved, trust_tier=trust_tier
     )
 
 
-def load_profile_v2(
+def load_profile(
     profile_id: str,
     *,
     registry: MechanismRegistry | None = None,
-) -> ProfileV2SpectrumDocument:
+) -> ProfileDocument:
     """Load a built-in serialized v2 Profile from ``profiles/v2``."""
     try:
         validate_profile_id(profile_id)
     except ProfilePathError as exc:
         raise ProfileValidationError(str(exc)) from exc
-    root = builtin_v2_profiles_dir()
+    root = builtin_profiles_dir()
     path = assert_path_within(root / f"{profile_id}.yaml", root)
     if not path.is_file():
         raise ProfileNotFoundError(f"profile v2 '{profile_id}' not found")
-    parsed = load_profile_v2_document(path, registry=registry)
+    parsed = load_profile_document(path, registry=registry)
     assert_metadata_id_matches(parsed, profile_id)
     return parsed
 
 
-def load_profile_v2_with_provenance(
+def load_profile_with_provenance(
     profile_id: str,
     *,
     registry: MechanismRegistry | None = None,
-) -> tuple[ProfileV2SpectrumDocument, ProfileLoadProvenance]:
+) -> tuple[ProfileDocument, ProfileLoadProvenance]:
     """Builtin-tree load with provenance (trust_tier=builtin_v2)."""
-    parsed = load_profile_v2(profile_id, registry=registry)
-    root = builtin_v2_profiles_dir()
+    parsed = load_profile(profile_id, registry=registry)
+    root = builtin_profiles_dir()
     path = assert_path_within(root / f"{profile_id}.yaml", root)
     return parsed, provenance_for(
-        parsed, source_path=path, trust_tier=ProfileTrustTier.BUILTIN_V2
+        parsed, source_path=path, trust_tier=ProfileTrustTier.BUILTIN
     )
-
-
-# Canonical aliases (no historical "v2" suffix). Temporary coexistence with *_v2.
-parse_profile_document = parse_profile_v2_spectrum
-load_profile_document = load_profile_v2_document
-load_profile_document_with_provenance = load_profile_v2_document_with_provenance
-load_profile = load_profile_v2
-load_profile_with_provenance = load_profile_v2_with_provenance

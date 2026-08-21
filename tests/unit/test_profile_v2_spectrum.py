@@ -6,7 +6,7 @@ import pytest
 
 from primitives.registry import builtin_mechanism_registry
 from spectrum_profiles.errors import ProfileValidationError
-from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
+from spectrum_profiles.v2.parse import load_profile, parse_profile_document
 
 
 def _doc(**spectrum_extra: object) -> dict:
@@ -48,16 +48,16 @@ def test_parses_multiple_ranges_and_optional_channelization():
             "role": "assignment",
         },
     )
-    parsed = parse_profile_v2_spectrum(doc)
+    parsed = parse_profile_document(doc)
     assert len(parsed.spectrum.ranges) == 2
     assert parsed.spectrum.channelization is not None
     assert parsed.spectrum.channelization.origin_hz == 1000
-    assert parse_profile_v2_spectrum(_doc()).spectrum.channelization is None
+    assert parse_profile_document(_doc()).spectrum.channelization is None
 
 
 def test_rejects_overlap_bad_segment_and_unregistered_mechanism():
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(
+        parse_profile_document(
             _doc(
                 ranges=[
                     {"id": "a", "low_hz": 1000, "high_hz": 2000},
@@ -66,7 +66,7 @@ def test_rejects_overlap_bad_segment_and_unregistered_mechanism():
             )
         )
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(
+        parse_profile_document(
             _doc(
                 ranges=[
                     {
@@ -86,14 +86,14 @@ def test_rejects_overlap_bad_segment_and_unregistered_mechanism():
         }
     )
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(bad)
+        parse_profile_document(bad)
     registry = builtin_mechanism_registry()
     assert "fixed_width_channelization" in registry.ids()
 
 
 def test_rejects_expressions_and_does_not_break_v1_cbrs_loader():
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(
+        parse_profile_document(
             {
                 "api_version": "spectrum-access/v2",
                 "kind": "SpectrumProfile",
@@ -104,6 +104,6 @@ def test_rejects_expressions_and_does_not_break_v1_cbrs_loader():
     extra = _doc()
     extra["spectrum"]["if"] = "low_hz > 1"
     with pytest.raises(ProfileValidationError):
-        parse_profile_v2_spectrum(extra)
-    cbrs = load_profile_v2("cbrs_winnforum")
+        parse_profile_document(extra)
+    cbrs = load_profile("cbrs_winnforum")
     assert cbrs.spectrum.ranges[0].low_hz == 3_550_000_000

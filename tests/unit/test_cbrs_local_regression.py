@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from services.grant_service import DEFAULT_GRANT_DURATION_SEC, HEARTBEAT_INTERVAL_SEC
 from services.spectrum_inquiry_service import CBRS_HIGH_HZ, CBRS_LOW_HZ, CHANNEL_HZ
-from spectrum_profiles.v2.parse import load_profile_v2
+from spectrum_profiles.v2.parse import load_profile
 
 
 def test_runtime_cbrs_constants_match_canonical_composition() -> None:
-    v2 = load_profile_v2("cbrs_winnforum")
+    v2 = load_profile("cbrs_winnforum")
     rng = v2.spectrum.ranges[0]
     ch = v2.spectrum.channelization
     assert ch is not None

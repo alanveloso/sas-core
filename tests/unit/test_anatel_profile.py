@@ -8,7 +8,7 @@ import yaml
 
 from spectrum_profiles.v2.cost import measure_profile_cost
 from spectrum_profiles.v2.doctor import run_profile_doctor
-from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
+from spectrum_profiles.v2.parse import load_profile, load_profile_document
 from tools.profile_doctor import main as profile_doctor_main
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -35,7 +35,7 @@ def test_cli_doctor_by_id() -> None:
 
 
 def test_band_channelization_and_power_from_ato_915() -> None:
-    parsed = load_profile_v2("br_anatel_slp_3700")
+    parsed = load_profile("br_anatel_slp_3700")
     assert parsed.metadata.status == "reference"
     assert parsed.metadata.id == "br_anatel_slp_3700"
     assert parsed.access is None
@@ -67,7 +67,7 @@ def test_band_channelization_and_power_from_ato_915() -> None:
 
 
 def test_geography_authorized_area_and_non_iap_protection() -> None:
-    parsed = load_profile_v2("br_anatel_slp_3700")
+    parsed = load_profile("br_anatel_slp_3700")
     assert parsed.geography is not None
     assert parsed.geography.mechanism == "authorized_area"
     assert parsed.geography.authorized_areas
@@ -82,7 +82,7 @@ def test_geography_authorized_area_and_non_iap_protection() -> None:
 
 
 def test_data_capabilities_without_invented_providers() -> None:
-    parsed = load_profile_v2("br_anatel_slp_3700")
+    parsed = load_profile("br_anatel_slp_3700")
     assert parsed.data is not None
     assert set(parsed.data.required_capabilities) == {
         "protected_entities",
@@ -92,7 +92,7 @@ def test_data_capabilities_without_invented_providers() -> None:
 
 
 def test_metadata_references_matrix_requirement_ids() -> None:
-    parsed = load_profile_v2_document(_PROFILE)
+    parsed = load_profile_document(_PROFILE)
     refs = set(parsed.metadata.references)
     assert "ATO_915_2024" in refs
     matrix = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))
@@ -109,7 +109,7 @@ def test_zero_profile_specific_python_and_cbrs_catalog_untouched() -> None:
     assert cost.profile_python_loc == 0
     assert cost.mechanism_reuse_pct == 100.0
     assert cost.mechanisms_novel == ()
-    cbrs = load_profile_v2("cbrs_winnforum")
+    cbrs = load_profile("cbrs_winnforum")
     assert cbrs.metadata.id == "cbrs_winnforum"
 
 
