@@ -28,10 +28,6 @@ from services.iap.models import ProtectedEntityKind, ProtectionPoint
 
 logger = logging.getLogger(__name__)
 
-# Fallback only when spectrum profile is unavailable (tests / early import).
-_DEFAULT_CBRS_LOW_HZ = 3_550_000_000
-_DEFAULT_CBRS_HIGH_HZ = 3_700_000_000
-
 # Normative ESC passband (WINNF interference.ESC_LOW/HIGH_FREQ_HZ).
 ESC_PASSBAND_LOW_HZ = 3_550_000_000
 ESC_PASSBAND_HIGH_HZ = 3_680_000_000
@@ -54,6 +50,9 @@ NEIGHBORHOOD_ESC_KM_A = 40.0
 NEIGHBORHOOD_ESC_KM_B = 80.0
 NEIGHBORHOOD_ESC_KM = NEIGHBORHOOD_ESC_KM_B
 
+# Current IAP implementation requires aggregate-linear-power protection semantics.
+_IAP_REQUIRED_PROTECTION_MECHANISM = "aggregate_linear_power"
+
 
 def esc_neighborhood_km_for_category(category: str | None) -> float:
     """Delegate to IAP engine helper (single source for ESC A/B distances)."""
@@ -70,18 +69,43 @@ class ProtectionEntityError(ValueError):
 
 
 def cbrs_band_hz() -> tuple[int, int]:
-    """Active spectrum-profile band edges (not fixture-specific)."""
+    """Active Profile operating-band edges for IAP clipping / FSS gates.
+
+    Current IAP implementation requires aggregate-linear-power protection
+    semantics. Edges come from ``primary_spectrum_range``, not assignment
+    channelization.
+    """
+    from spectrum_profiles.errors import (
+        ProfileNotFoundError,
+        ProfilePathError,
+        ProfileValidationError,
+    )
+    from spectrum_profiles.v2 import get_active_profile_document, primary_spectrum_range
+
     try:
-        from spectrum_profiles.context import get_active_profile
+        document = get_active_profile_document()
+    except (ProfileNotFoundError, ProfilePathError, ProfileValidationError) as exc:
+        raise ProtectionEntityError(
+            f"IAP operating band unavailable: {exc}"
+        ) from exc
 
-        plan = get_active_profile().band_plan
-        return int(plan.low_hz), int(plan.high_hz)
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        return _DEFAULT_CBRS_LOW_HZ, _DEFAULT_CBRS_HIGH_HZ
+    if (
+        document.protection is None
+        or _IAP_REQUIRED_PROTECTION_MECHANISM not in document.protection.mechanisms
+    ):
+        raise ProtectionEntityError(
+            "Current IAP implementation requires aggregate-linear-power "
+            "protection semantics"
+        )
 
+    try:
+        primary = primary_spectrum_range(document)
+    except ProfileValidationError as exc:
+        raise ProtectionEntityError(
+            f"IAP operating band unavailable: {exc}"
+        ) from exc
 
-CBRS_LOW_HZ = _DEFAULT_CBRS_LOW_HZ
-CBRS_HIGH_HZ = _DEFAULT_CBRS_HIGH_HZ
+    return int(primary.low_hz), int(primary.high_hz)
 
 
 @dataclass(frozen=True)

@@ -30,10 +30,13 @@ def apply_pre_iap_margin_db(threshold_dbm: float, margin_db: float) -> float:
 
 
 def resolve_iap_band_origin_hz() -> int:
-    """CBRS/WInnForum band lower edge from the active spectrum profile."""
-    from spectrum_profiles.context import get_active_profile
+    """Lower edge of the active Profile operating band (IAP 5 MHz grid origin).
 
-    return int(get_active_profile().band_plan.low_hz)
+    Uses the primary spectrum range, not assignment ``channelization.origin_hz``.
+    """
+    from services.iap.protection_points import cbrs_band_hz
+
+    return cbrs_band_hz()[0]
 
 
 def overlapping_iap_channels(

@@ -7,7 +7,6 @@ Does not change product behavior.
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pytest
 
@@ -21,24 +20,17 @@ from services.iap.aggregate import (
     sum_interference_mw,
 )
 from services.iap.models import FrequencyChannel, GrantRfInfo
+from services.iap.protection_points import cbrs_band_hz
 from services.spectrum_inquiry_service import CHANNEL_HZ, _split_10mhz
-from spectrum_profiles.context import (
-    clear_profile_override,
-    get_active_profile,
-    set_active_profile,
-)
-from spectrum_profiles.loader import clear_profile_cache, set_profiles_dir
+from spectrum_profiles.selection import clear_profile_override
+from spectrum_profiles.v2 import load_profile, parse_profile_document, primary_spectrum_range
 
 
 @pytest.fixture(autouse=True)
 def _reset_profile_state():
     clear_profile_override()
-    clear_profile_cache()
-    set_profiles_dir(None)
     yield
     clear_profile_override()
-    clear_profile_cache()
-    set_profiles_dir(None)
 
 
 def test_assignment_and_aggregation_channel_widths_are_independent():
@@ -106,27 +98,31 @@ def test_grant_overlaps_channel_partial_true_touching_false():
     assert grant_overlaps_channel(grant, touching) is False
 
 
-def test_iap_band_origin_follows_active_profile_low_hz(tmp_path: Path):
-    assert resolve_iap_band_origin_hz() == get_active_profile().band_plan.low_hz
+def test_iap_band_origin_follows_active_profile_low_hz(monkeypatch: pytest.MonkeyPatch):
+    """IAP grid origin tracks primary.low_hz, not assignment channelization.origin_hz."""
+    assert resolve_iap_band_origin_hz() == cbrs_band_hz()[0]
     assert resolve_iap_band_origin_hz() == 3_550_000_000
 
-    (tmp_path / "shifted.yaml").write_text(
-        """
-id: shifted
-version: "0.0.1"
-rule_applied: characterization_origin
-band_plan:
-  low_hz: 3560000000
-  high_hz: 3700000000
-  unit: Hz
-protections: []
-entities: []
-""".lstrip(),
-        encoding="utf-8",
+    payload = load_profile("cbrs_winnforum").model_dump(mode="json", exclude_none=True)
+    for item in payload["spectrum"]["ranges"]:
+        if item["id"] == "primary":
+            item["low_hz"] = 3_560_000_000
+    for binding in payload["protection"]["bindings"]:
+        if binding["id"] == "peer_esc" and binding.get("frequency"):
+            binding["frequency"]["low_hz"] = 3_560_000_000
+    # Keep assignment origin at 3550 MHz to prove conceptual separation.
+    assert payload["spectrum"]["channelization"]["origin_hz"] == 3_550_000_000
+    shifted = parse_profile_document(payload)
+    assert primary_spectrum_range(shifted).low_hz == 3_560_000_000
+    assert shifted.spectrum.channelization is not None
+    assert shifted.spectrum.channelization.origin_hz == 3_550_000_000
+
+    monkeypatch.setattr(
+        "spectrum_profiles.v2.get_active_profile_document",
+        lambda: shifted,
     )
-    set_profiles_dir(tmp_path)
-    set_active_profile("shifted")
     assert resolve_iap_band_origin_hz() == 3_560_000_000
+    assert resolve_iap_band_origin_hz() != shifted.spectrum.channelization.origin_hz
 
     # Default path (band_origin_hz=None) realigns to the active profile origin.
     chans = overlapping_iap_channels(3_560_000_000, 3_570_000_000)
