@@ -7,7 +7,16 @@ import json
 
 from primitives.profile_context import ProfileContext
 from primitives.registry import MechanismRegistry, builtin_mechanism_registry
-from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
+from spectrum_profiles.errors import ProfileValidationError
+from spectrum_profiles.selection import (
+    active_profile_id,
+    set_profile_override,
+)
+from spectrum_profiles.v2.schema import (
+    ProfileDocument,
+    ProfileV2SpectrumDocument,
+    SpectrumRange,
+)
 
 
 def canonical_profile_v2_json(parsed: ProfileV2SpectrumDocument) -> str:
@@ -91,3 +100,37 @@ def profile_context_from_v2(
 canonical_profile_json = canonical_profile_v2_json
 profile_hash = profile_hash_v2
 profile_context_from_document = profile_context_from_v2
+
+
+def primary_spectrum_range(document: ProfileDocument) -> SpectrumRange:
+    """Resolve the single primary continuous range for logging / band consumers.
+
+    Fail closed when multiple disconnected ranges lack a unique ``primary`` id.
+    """
+    ranges = document.spectrum.ranges
+    if len(ranges) == 1:
+        return ranges[0]
+    primary = [item for item in ranges if item.id == "primary"]
+    if len(primary) == 1:
+        return primary[0]
+    raise ProfileValidationError(
+        f"profile '{document.metadata.id}' has {len(ranges)} spectrum ranges "
+        "without a unique id='primary'; cannot select a single band"
+    )
+
+
+def get_active_profile_document() -> ProfileDocument:
+    # Lazy import: parse/trust import hash helpers from this module.
+    from spectrum_profiles.v2.parse import load_profile
+
+    return load_profile(active_profile_id())
+
+
+def set_active_profile_document(profile_id: str) -> ProfileDocument:
+    set_profile_override(profile_id)
+    return get_active_profile_document()
+
+
+def reload_active_profile_document() -> ProfileDocument:
+    """Reload the active canonical document (no separate canonical loader cache)."""
+    return get_active_profile_document()

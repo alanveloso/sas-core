@@ -65,7 +65,11 @@ app.include_router(sas_sas_router)
 
 @app.on_event("startup")
 def on_startup():
-    from spectrum_profiles.context import active_profile_id, get_active_profile
+    from spectrum_profiles.selection import active_profile_id
+    from spectrum_profiles.v2 import (
+        get_active_profile_document,
+        primary_spectrum_range,
+    )
     from services.cpas_schedule_service import (
         ensure_scheduler_loop_started,
         is_schedule_enabled,
@@ -82,11 +86,14 @@ def on_startup():
         strict=settings.sas_protection_data_strict,
     )
 
-    profile = get_active_profile()
+    profile = get_active_profile_document()
+    band = primary_spectrum_range(profile)
+    references = profile.metadata.references
+    rule = references[0] if len(references) == 1 else ",".join(references)
     print(
         f"Active spectrum profile: {active_profile_id()} "
-        f"(rule={profile.rule_applied}, "
-        f"band={profile.band_plan.low_hz}-{profile.band_plan.high_hz} Hz)"
+        f"(rule={rule}, "
+        f"band={band.low_hz}-{band.high_hz} Hz)"
     )
     print(
         f"Protection data: {settings.sas_protection_data_bundle} "

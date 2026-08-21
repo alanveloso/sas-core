@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from config import clear_settings_cache
-from spectrum_profiles.loader import load_profile
+from spectrum_profiles.v2 import load_profile, primary_spectrum_range
 
 from tests.support.repo import REPO_ROOT as ROOT
 PYTHON = sys.executable
@@ -103,13 +103,13 @@ def test_import_all_project_modules():
 
 def test_startup_sqlite_default_profile(sqlite_url: str):
     expected = load_profile("cbrs_winnforum")
+    band = primary_spectrum_range(expected)
     result = _run_startup(database_url=sqlite_url, sas_profile="cbrs_winnforum")
     output = _combined_output(result)
     assert result.returncode == 0, output
     assert "Active spectrum profile: cbrs_winnforum" in result.stdout
-    assert (
-        f"{expected.band_plan.low_hz}-{expected.band_plan.high_hz}" in result.stdout
-    )
+    assert "rule=winnforum_cbrs_baseline_v1" in result.stdout
+    assert f"{band.low_hz}-{band.high_hz}" in result.stdout
 
 
 def test_startup_invalid_profile_fails(sqlite_url: str):

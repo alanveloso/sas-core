@@ -1,13 +1,19 @@
 """Profile YAML v2 (incremental). G3-001: spectrum/ranges/channelization/segments."""
 
 from spectrum_profiles.v2.context import (
+    active_profile_id,
     canonical_profile_json,
     canonical_profile_v2_json,
+    get_active_profile_document,
+    primary_spectrum_range,
     profile_context_from_document,
     profile_context_from_v2,
     profile_hash,
     profile_hash_v2,
+    reload_active_profile_document,
+    set_active_profile_document,
 )
+from spectrum_profiles.selection import DEFAULT_PROFILE_ID
 from spectrum_profiles.v2.doctor import (
     ProfileDoctorFinding,
     ProfileDoctorReport,
@@ -62,6 +68,7 @@ from spectrum_profiles.v2.trust import (
 __all__ = [
     "AccessSection",
     "AuthorizationSection",
+    "DEFAULT_PROFILE_ID",
     "FixedWidthChannelization",
     "GeographySection",
     "PowerSection",
@@ -78,10 +85,12 @@ __all__ = [
     "SpectrumSection",
     "SpectrumSegment",
     "TemporalSection",
+    "active_profile_id",
     "builtin_v2_profiles_dir",
     "canonical_profile_json",
     "canonical_profile_v2_json",
     "diagnose_profile_v2",
+    "get_active_profile_document",
     "package_bootstrap_adapter_discovery",
     "package_bootstrap_rf_discovery",
     "parse_profile_document",
@@ -97,13 +106,16 @@ __all__ = [
     "adapters_satisfying_device_capabilities",
     "adapters_satisfying_network_capabilities",
     "negotiate_profile_plugins",
+    "primary_spectrum_range",
     "profile_context_from_document",
     "profile_context_from_v2",
     "profile_hash",
     "profile_hash_v2",
     "project_v1_to_v2_document",
+    "reload_active_profile_document",
     "render_profile_doctor_report",
     "run_profile_doctor",
+    "set_active_profile_document",
     "validate_profile_id",
     "validate_profile_v2_semantics",
 ]
