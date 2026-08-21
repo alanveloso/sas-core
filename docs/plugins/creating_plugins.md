@@ -202,11 +202,10 @@ YAML não é linguagem de programação. Sem `if`/`else`, sem fórmulas livres, 
 4. Publique o entry point no `pyproject.toml` (ou equivalente) do pacote instalável.
 5. Reinstale o pacote no ambiente (`pip install -e .`).
 6. Rode o profile doctor; para dados, `--check-data` / `--require-data-plugins` conforme o caso.
-7. Não altere Coordination Core nem o loader CBRS v1 do request path só para plugar um adapter.
+7. Não altere Coordination Core só para plugar um adapter.
 
 ## O que este guia não faz
 
-- Não muda o path CBRS v1 em produção.
 - Não autoriza branching por país/profile no core.
 - Não substitui evidência WInnForum / gates oficiais.
 - Métricas de custo de profile (core vs plugin vs YAML): `python -m tools.profile_cost` (G6-004).

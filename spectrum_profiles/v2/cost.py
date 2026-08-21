@@ -1,7 +1,7 @@
 """Automatic Profile v2 cost metrics (G6-004).
 
 Reports YAML LOC, optional plugin/profile/primitive/test/core/RF LOC, and
-catalog mechanism reuse. Does not execute YAML or touch the CBRS v1 loader.
+catalog mechanism reuse. YAML is parsed as configuration, not executed as code.
 """
 
 from __future__ import annotations

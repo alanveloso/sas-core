@@ -1,6 +1,5 @@
 # Reference Profile v2 — ANATEL SLP terrestrial 3700–3800 MHz (G7-002).
 # Traceability: compliance/anatel/G7-001_ANATEL_SLP_3700_REQUIREMENTS_MATRIX.md
-# Not loaded by the CBRS v1 request-path loader (spectrum_profiles.loader.load_profile).
 # Not an ANATEL conformity claim. Zero profile-specific Python.
 #
 # Gaps deferred (see matrix / G7-003 justification): indoor-over-outdoor priority (017),

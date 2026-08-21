@@ -2,7 +2,7 @@
 # Representable subset ONLY against frozen Profile v2 + registered mechanisms.
 # CONDITIONAL: full §15.711 database query path requires query_assignment
 # (G9-006 OPEN_FOR_LATER_DESIGN) — NOT registered; NOT used as authorization.mechanism here.
-# Zero profile-specific Python. Not an FCC conformity claim. Not loaded by CBRS v1 loader.
+# Zero profile-specific Python. Not an FCC conformity claim.
 # Illustrative UHF TV-channel range only (not a complete national TVWS band plan).
 
 api_version: spectrum-access/v2

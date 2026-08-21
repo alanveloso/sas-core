@@ -2,7 +2,6 @@
 # Traceability: compliance/etsi/G8-001_ELSA_REQUIREMENTS_MATRIX.md
 # Illustrative band only (eLSA is band-agnostic in ETSI TS 103 652); not a national
 # Sharing Framework claim. Zero profile-specific Python.
-# Not loaded by the CBRS v1 request-path loader.
 
 api_version: spectrum-access/v2
 kind: SpectrumProfile

@@ -1,4 +1,4 @@
-"""Parse Profile v2 documents. Does not replace the CBRS v1 loader."""
+"""Parse and load canonical spectrum Profile documents."""
 
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def load_profile_v2(
     *,
     registry: MechanismRegistry | None = None,
 ) -> ProfileV2SpectrumDocument:
-    """Load a v2 YAML from ``profiles/v2``. Does not replace ``load_profile``."""
+    """Load a built-in serialized v2 Profile from ``profiles/v2``."""
     try:
         validate_profile_id(profile_id)
     except ProfilePathError as exc:

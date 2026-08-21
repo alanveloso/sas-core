@@ -1,6 +1,6 @@
-# Reference CBRS composition for Profile v2 (G5-007).
-# Not loaded by spectrum_profiles.loader.load_profile (v1 cbrs_winnforum.yaml stays).
-# IAP fairshare, DPA move-list, ESC mask, and daily CPAS publication stay in services.
+# Reference CBRS composition for the canonical spectrum Profile (G5-007).
+# IAP fairshare, DPA move-list, ESC mask, and daily CPAS publication
+# remain implemented in services.
 
 api_version: spectrum-access/v2
 kind: SpectrumProfile

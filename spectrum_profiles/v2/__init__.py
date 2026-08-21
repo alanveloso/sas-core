@@ -1,4 +1,4 @@
-"""Profile YAML v2 (incremental). G3-001: spectrum/ranges/channelization/segments."""
+"""Canonical spectrum Profile API for serialized spectrum-access/v2 documents."""
 
 from spectrum_profiles.v2.context import (
     active_profile_id,

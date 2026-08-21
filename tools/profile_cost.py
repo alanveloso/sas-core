@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Measure Profile v2 authoring cost: YAML LOC, optional plugin/test/"
             "primitive/core/RF LOC, and catalog mechanism reuse percent. "
-            "Does not execute YAML or change the CBRS v1 request-path loader."
+            "YAML is parsed as configuration, not executed as code."
         ),
     )
     src = p.add_mutually_exclusive_group(required=True)

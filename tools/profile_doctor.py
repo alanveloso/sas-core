@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Validate a Spectrum Profile v2 YAML: structure, semantics, "
             "plugin/capability discovery, and optional protection-data readiness. "
-            "Does not execute YAML or change the CBRS v1 request-path loader."
+            "YAML is parsed as configuration, not executed as code."
         ),
     )
     src = p.add_mutually_exclusive_group(required=True)

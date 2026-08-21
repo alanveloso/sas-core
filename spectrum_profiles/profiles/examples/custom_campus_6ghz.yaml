@@ -1,5 +1,5 @@
 # Example custom Profile v2 (G6-002) — campus / private 6 GHz-style composition.
-# Not a national regulator profile and not loaded by the CBRS v1 request path.
+# Not a national regulator profile.
 # Copy, rename metadata.id, edit band/classes/parameters, then:
 #   python -m tools.profile_doctor spectrum_profiles/profiles/examples/custom_campus_6ghz.yaml
 
