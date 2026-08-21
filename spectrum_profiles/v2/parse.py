@@ -9,7 +9,7 @@ from pydantic import ValidationError
 import yaml
 
 from primitives.registry import MechanismAxis, MechanismRegistry, builtin_mechanism_registry
-from spectrum_profiles.loader import (
+from spectrum_profiles.errors import (
     ProfileNotFoundError,
     ProfilePathError,
     ProfileValidationError,
@@ -166,3 +166,11 @@ def load_profile_v2_with_provenance(
     return parsed, provenance_for(
         parsed, source_path=path, trust_tier=ProfileTrustTier.BUILTIN_V2
     )
+
+
+# Canonical aliases (no historical "v2" suffix). Temporary coexistence with *_v2.
+parse_profile_document = parse_profile_v2_spectrum
+load_profile_document = load_profile_v2_document
+load_profile_document_with_provenance = load_profile_v2_document_with_provenance
+load_profile = load_profile_v2
+load_profile_with_provenance = load_profile_v2_with_provenance

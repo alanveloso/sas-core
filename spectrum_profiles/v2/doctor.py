@@ -18,7 +18,7 @@ from adapters.discovery import (
 )
 from providers.discovery import DataProviderDiscovery
 from rf.discovery import RfModelDiscovery
-from spectrum_profiles.loader import ProfileError
+from spectrum_profiles.errors import ProfileError
 from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
 from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_device_capabilities,

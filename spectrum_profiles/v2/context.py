@@ -85,3 +85,9 @@ def profile_context_from_v2(
         mechanism_versions=mechanism_versions,
         rf_provenance=rf_provenance,
     )
+
+
+# Canonical aliases (no historical "v2" suffix). Temporary coexistence with *_v2.
+canonical_profile_json = canonical_profile_v2_json
+profile_hash = profile_hash_v2
+profile_context_from_document = profile_context_from_v2

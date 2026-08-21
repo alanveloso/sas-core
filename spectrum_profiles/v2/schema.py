@@ -551,3 +551,7 @@ class ProfileV2SpectrumDocument(BaseModel):
         if self.metadata.status not in {"reference", "custom"}:
             raise ValueError("metadata.status must be 'reference' or 'custom'")
         return self
+
+
+# Canonical public name; physical class remains ProfileV2SpectrumDocument for now.
+ProfileDocument = ProfileV2SpectrumDocument

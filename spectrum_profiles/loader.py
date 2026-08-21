@@ -10,6 +10,12 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from spectrum_profiles.errors import (
+    ProfileError,  # noqa: F401 — re-exported for temporary loader import compatibility
+    ProfileNotFoundError,
+    ProfilePathError,
+    ProfileValidationError,
+)
 from spectrum_profiles.schema import SpectrumProfile
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -18,22 +24,6 @@ DEFAULT_PROFILES_DIR = _PACKAGE_DIR / "profiles"
 _cache: dict[str, SpectrumProfile] = {}
 _cache_lock = RLock()
 _profiles_dir_override: Path | None = None
-
-
-class ProfileError(Exception):
-    """Base error for spectrum profile loading failures."""
-
-
-class ProfileNotFoundError(ProfileError):
-    """Raised when no profile file exists for the requested id."""
-
-
-class ProfileValidationError(ProfileError):
-    """Raised when a profile file fails schema or structural validation."""
-
-
-class ProfilePathError(ProfileError):
-    """Raised when a resolved profile path escapes the allowlisted directory."""
 
 
 def get_profiles_dir() -> Path:

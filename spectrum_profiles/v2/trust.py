@@ -12,7 +12,11 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from spectrum_profiles.loader import ProfilePathError, ProfileValidationError
+from spectrum_profiles.errors import (
+    ProfileNotFoundError,
+    ProfilePathError,
+    ProfileValidationError,
+)
 from spectrum_profiles.v2.context import profile_hash_v2
 from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
 
@@ -96,8 +100,6 @@ def assert_yaml_profile_file(path: Path) -> Path:
             f"unsupported profile format '{resolved.suffix}' for '{resolved}'"
         )
     if not resolved.is_file():
-        from spectrum_profiles.loader import ProfileNotFoundError
-
         raise ProfileNotFoundError(f"profile v2 file not found: {resolved}")
     return resolved
 
