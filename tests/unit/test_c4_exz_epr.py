@@ -695,7 +695,7 @@ def test_c4_numeric_provenance_not_fixture_ids():
         NEIGHBORHOOD_ESC_KM_B,
         IapThresholdProfile,
     )
-    from spectrum_profiles.context import get_active_profile
+    from spectrum_profiles.v2 import get_active_profile_document
 
     assert EXZ_BUFFER_M == 50.0
     thr = IapThresholdProfile()
@@ -709,14 +709,11 @@ def test_c4_numeric_provenance_not_fixture_ids():
     assert esc_neighborhood_km_for_category(None) == 80.0
     assert esc_neighborhood_km_for_category("Z") == 80.0
 
-    peer_esc = get_active_profile().get_protection("peer_esc")
-    assert peer_esc is not None and peer_esc.enabled
-    assert float(peer_esc.params["radius_m"]) == 40_000.0
-
-    esc_entity = next(
-        e for e in get_active_profile().entities if e.entity_type == "esc"
-    )
-    assert float(esc_entity.params["default_protection_radius_m"]) == 40_000.0
+    doc = get_active_profile_document()
+    assert doc.protection is not None
+    peer_esc = next(b for b in doc.protection.bindings if b.id == "peer_esc")
+    assert peer_esc.mechanism == "distance_exclusion"
+    assert float(peer_esc.distance_m) == 40_000.0
 
     product_paths = [
         Path("services/exclusion_zone_service.py"),

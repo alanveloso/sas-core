@@ -24,7 +24,7 @@ from primitives.registry import MechanismAxis, builtin_mechanism_registry
 from primitives.request import TransmissionFootprint
 from primitives.time import TimeInterval, UtcInstant
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
-from spectrum_profiles.loader import ProfileValidationError
+from spectrum_profiles.errors import ProfileValidationError
 
 _T0 = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
 

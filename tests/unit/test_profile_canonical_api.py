@@ -1,4 +1,4 @@
-"""Canonical profile API aliases and shared error identity (STEP 1A)."""
+"""Canonical profile API aliases and shared errors."""
 
 from __future__ import annotations
 
@@ -12,18 +12,6 @@ from spectrum_profiles.errors import (
     ProfileNotFoundError,
     ProfilePathError,
     ProfileValidationError,
-)
-from spectrum_profiles.loader import (
-    ProfileError as LoaderProfileError,
-)
-from spectrum_profiles.loader import (
-    ProfileNotFoundError as LoaderProfileNotFoundError,
-)
-from spectrum_profiles.loader import (
-    ProfilePathError as LoaderProfilePathError,
-)
-from spectrum_profiles.loader import (
-    ProfileValidationError as LoaderProfileValidationError,
 )
 from spectrum_profiles.v2 import (
     ProfileDocument,
@@ -45,15 +33,11 @@ from spectrum_profiles.v2 import (
 from spectrum_profiles.v2.trust import ProfileTrustTier, builtin_v2_profiles_dir
 
 
-def test_shared_error_classes_are_identical_through_loader() -> None:
+def test_shared_error_classes_from_errors_module() -> None:
     assert ProfileError is shared_errors.ProfileError
     assert ProfileNotFoundError is shared_errors.ProfileNotFoundError
     assert ProfileValidationError is shared_errors.ProfileValidationError
     assert ProfilePathError is shared_errors.ProfilePathError
-    assert LoaderProfileError is ProfileError
-    assert LoaderProfileNotFoundError is ProfileNotFoundError
-    assert LoaderProfileValidationError is ProfileValidationError
-    assert LoaderProfilePathError is ProfilePathError
 
 
 def test_profile_document_alias_and_canonical_loads() -> None:

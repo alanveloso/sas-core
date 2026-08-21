@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from spectrum_profiles.loader import ProfileValidationError, load_profile
+from spectrum_profiles.errors import ProfileValidationError
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
 
 
@@ -56,4 +56,3 @@ def test_aggregate_protection_requires_rf_and_policy_slot():
     swapped["requirements"] = {"device_capabilities": ["geolocation"]}
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(swapped)
-    assert load_profile("cbrs_winnforum").id == "cbrs_winnforum"

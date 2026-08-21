@@ -1,4 +1,4 @@
-"""Shared profile-id selection and canonical active-document API (STEP 1B)."""
+"""Shared profile-id selection and canonical active-document API."""
 
 from __future__ import annotations
 
@@ -8,13 +8,6 @@ from pathlib import Path
 import pytest
 
 from config import clear_settings_cache
-from spectrum_profiles.context import (
-    clear_profile_override as clear_v1_override,
-)
-from spectrum_profiles.context import (
-    get_active_profile,
-    set_active_profile,
-)
 from spectrum_profiles.selection import (
     DEFAULT_PROFILE_ID,
     active_profile_id,
@@ -35,12 +28,10 @@ _SELECTION_PATH = Path(__file__).resolve().parents[2] / "spectrum_profiles" / "s
 @pytest.fixture(autouse=True)
 def _reset_selection(monkeypatch: pytest.MonkeyPatch):
     clear_profile_override()
-    clear_v1_override()
     monkeypatch.delenv("SAS_PROFILE", raising=False)
     clear_settings_cache()
     yield
     clear_profile_override()
-    clear_v1_override()
     clear_settings_cache()
 
 
@@ -89,12 +80,11 @@ def test_selection_module_has_no_loader_or_schema_deps() -> None:
     assert not (found & forbidden)
 
 
-def test_v1_and_canonical_share_selection() -> None:
-    set_active_profile("cbrs_winnforum")
-    assert get_active_profile().id == "cbrs_winnforum"
-    assert canonical_active_profile_id() == "cbrs_winnforum"
+def test_canonical_active_document_shares_selection() -> None:
+    set_active_profile_document("cbrs_winnforum")
     assert get_active_profile_document().metadata.id == "cbrs_winnforum"
-    clear_v1_override()
+    assert canonical_active_profile_id() == "cbrs_winnforum"
+    clear_profile_override()
     assert active_profile_id() == DEFAULT_PROFILE_ID
     assert canonical_active_profile_id() == DEFAULT_PROFILE_ID
 

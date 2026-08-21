@@ -10,7 +10,7 @@ import yaml
 from adapters.device import MappingDeviceAdapter
 from adapters.discovery import GROUP_DEVICE_ADAPTERS, GROUP_MECHANISMS, AdapterDiscovery
 from adapters.plugin_names import validate_plugin_name
-from spectrum_profiles.loader import ProfilePathError, ProfileValidationError
+from spectrum_profiles.errors import ProfilePathError, ProfileValidationError
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import (
     load_profile_v2,

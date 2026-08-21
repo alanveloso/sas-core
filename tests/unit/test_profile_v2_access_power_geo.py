@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from spectrum_profiles.loader import ProfileValidationError, load_profile
+from spectrum_profiles.errors import ProfileValidationError
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
 
 
@@ -85,4 +85,3 @@ def test_rejects_dsl_wrong_axis_and_keeps_v1_loader():
     doc3["not_a_section"] = {}
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(doc3)
-    assert load_profile("cbrs_winnforum").id == "cbrs_winnforum"

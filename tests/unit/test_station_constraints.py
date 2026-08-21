@@ -14,7 +14,7 @@ from primitives.station_limits import (
 )
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
-from spectrum_profiles.loader import ProfileValidationError
+from spectrum_profiles.errors import ProfileValidationError
 
 
 def test_new_mechanisms_registered_on_expected_axes() -> None:

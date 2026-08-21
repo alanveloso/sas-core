@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from primitives.registry import builtin_mechanism_registry
-from spectrum_profiles.loader import ProfileValidationError, load_profile
-from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
+from spectrum_profiles.errors import ProfileValidationError
+from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
 
 
 def _doc(**spectrum_extra: object) -> dict:
@@ -105,5 +105,5 @@ def test_rejects_expressions_and_does_not_break_v1_cbrs_loader():
     extra["spectrum"]["if"] = "low_hz > 1"
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(extra)
-    v1 = load_profile("cbrs_winnforum")
-    assert v1.band_plan.low_hz == 3_550_000_000
+    cbrs = load_profile_v2("cbrs_winnforum")
+    assert cbrs.spectrum.ranges[0].low_hz == 3_550_000_000

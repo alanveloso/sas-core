@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from primitives.registry import MechanismAxis, MechanismContract, builtin_mechanism_registry
-from spectrum_profiles.loader import ProfileValidationError, load_profile
+from spectrum_profiles.errors import ProfileValidationError
 from spectrum_profiles.v2.parse import parse_profile_v2_spectrum
 
 
@@ -83,7 +83,6 @@ def test_rejects_unregistered_protection_and_keeps_v1_loader():
     doc2["coordination"] = {"mechanism": "ordered_classes"}
     with pytest.raises(ProfileValidationError):
         parse_profile_v2_spectrum(doc2)
-    assert load_profile("cbrs_winnforum").id == "cbrs_winnforum"
     doc3 = _base()
     doc3["rf"] = {
         "required": False,

@@ -6,7 +6,7 @@ import copy
 
 import pytest
 
-from spectrum_profiles.loader import ProfileValidationError
+from spectrum_profiles.errors import ProfileValidationError
 from spectrum_profiles.v2.context import profile_hash_v2
 from spectrum_profiles.v2.parse import load_profile_v2, parse_profile_v2_spectrum
 from spectrum_profiles.v2.schema import DistanceExclusionBinding

@@ -12,13 +12,12 @@ from adapters.elsa1 import Elsa1ProtocolAdapter
 from adapters.managed_consumer import ManagedNetworkAdapter
 from adapters.protocol import DomainOperation
 from primitives.availability import AvailabilityZoneKind
-from spectrum_profiles.context import (
+from spectrum_profiles.selection import (
     DEFAULT_PROFILE_ID,
     active_profile_id,
     clear_profile_override,
-    get_active_profile,
 )
-from spectrum_profiles.loader import ProfileNotFoundError, get_profiles_dir, load_profile
+from spectrum_profiles.v2 import get_active_profile_document, primary_spectrum_range
 from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
 from spectrum_profiles.v2.cost import measure_profile_cost
 from spectrum_profiles.v2.doctor import run_profile_doctor
@@ -35,9 +34,10 @@ def test_default_active_remains_cbrs_after_three_regime_loads() -> None:
     _ = load_profile_v2("br_anatel_slp_3700")
     _ = load_profile_v2("eu_elsa")
     assert active_profile_id() == "cbrs_winnforum"
-    active = get_active_profile()
-    assert active.band_plan.low_hz == 3_550_000_000
-    assert active.band_plan.high_hz == 3_700_000_000
+    active = get_active_profile_document()
+    band = primary_spectrum_range(active)
+    assert band.low_hz == 3_550_000_000
+    assert band.high_hz == 3_700_000_000
 
 
 def test_three_profile_contexts_are_isolated() -> None:
@@ -85,17 +85,10 @@ def test_all_three_reference_profiles_pass_doctor_and_cost() -> None:
         assert cost.profile_python_loc == 0
 
 
-def test_v1_loader_ignores_v2_only_regimes() -> None:
-    v1_dir = get_profiles_dir()
-    assert (v1_dir / "cbrs_winnforum.yaml").is_file()
-    for regime in ("br_anatel_slp_3700", "eu_elsa"):
-        assert not (v1_dir / f"{regime}.yaml").exists()
-        assert (v1_dir / "v2" / f"{regime}.yaml").is_file()
-        try:
-            load_profile(regime)
-            raise AssertionError(f"v1 loader must not resolve {regime}")
-        except ProfileNotFoundError:
-            pass
+def test_builtin_catalog_resolves_all_three_regimes() -> None:
+    for regime in _REGIME_IDS:
+        doc = load_profile_v2(regime)
+        assert doc.metadata.id == regime
 
 
 def test_interleaved_three_regime_loads_preserve_bands() -> None:
@@ -103,8 +96,6 @@ def test_interleaved_three_regime_loads_preserve_bands() -> None:
         cbrs = load_profile_v2("cbrs_winnforum")
         br = load_profile_v2("br_anatel_slp_3700")
         elsa = load_profile_v2("eu_elsa")
-        v1 = load_profile("cbrs_winnforum")
-        assert v1.band_plan.high_hz == 3_700_000_000
         assert cbrs.spectrum.ranges[0].low_hz == 3_550_000_000
         assert br.spectrum.ranges[0].low_hz == 3_700_000_000
         assert elsa.spectrum.ranges[0].low_hz == 2_300_000_000

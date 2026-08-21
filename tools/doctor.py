@@ -11,7 +11,8 @@ from uvicorn.config import Config
 
 from config import clear_settings_cache, get_settings
 from services.cert_layout import validate_certificate_layout
-from spectrum_profiles.loader import ProfileError, load_profile
+from spectrum_profiles.errors import ProfileError
+from spectrum_profiles.v2 import load_profile, primary_spectrum_range
 
 
 @dataclass
@@ -57,13 +58,14 @@ def run_doctor() -> DoctorReport:
 
     try:
         profile = load_profile(settings.sas_profile)
+        band = primary_spectrum_range(profile)
         report.findings.append(
             DoctorFinding(
                 name="spectrum_profile",
                 ok=True,
                 detail=(
-                    f"{profile.id} v{profile.version} "
-                    f"band={profile.band_plan.low_hz}-{profile.band_plan.high_hz} Hz"
+                    f"{profile.metadata.id} v{profile.metadata.version} "
+                    f"band={band.low_hz}-{band.high_hz} Hz"
                 ),
             )
         )

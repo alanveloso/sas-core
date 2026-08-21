@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-from spectrum_profiles.loader import load_profile
 from spectrum_profiles.v2.cost import measure_profile_cost
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
@@ -105,15 +104,13 @@ def test_metadata_references_matrix_requirement_ids() -> None:
     assert planned <= refs, f"PLANNED_YAML missing from metadata.references: {planned - refs}"
 
 
-def test_zero_profile_specific_python_and_cbrs_v1_untouched() -> None:
+def test_zero_profile_specific_python_and_cbrs_catalog_untouched() -> None:
     cost = measure_profile_cost(profile_id="br_anatel_slp_3700", repo_root=_REPO)
     assert cost.profile_python_loc == 0
     assert cost.mechanism_reuse_pct == 100.0
     assert cost.mechanisms_novel == ()
-    v1 = load_profile("cbrs_winnforum")
-    assert v1.id == "cbrs_winnforum"
-    cbrs_v2 = load_profile_v2("cbrs_winnforum")
-    assert cbrs_v2.metadata.id == "cbrs_winnforum"
+    cbrs = load_profile_v2("cbrs_winnforum")
+    assert cbrs.metadata.id == "cbrs_winnforum"
 
 
 def test_no_brazil_branching_module() -> None:

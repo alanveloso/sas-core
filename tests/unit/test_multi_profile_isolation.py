@@ -12,13 +12,12 @@ import pytest
 
 from primitives.time import TimeInterval, UtcInstant
 from providers.discovery import DataProviderDiscovery
-from spectrum_profiles.context import (
+from spectrum_profiles.selection import (
     DEFAULT_PROFILE_ID,
     active_profile_id,
     clear_profile_override,
-    get_active_profile,
 )
-from spectrum_profiles.loader import load_profile
+from spectrum_profiles.v2 import get_active_profile_document, primary_spectrum_range
 from spectrum_profiles.v2.context import profile_context_from_v2, profile_hash_v2
 from spectrum_profiles.v2.cost import measure_profile_cost
 from spectrum_profiles.v2.doctor import run_profile_doctor
@@ -134,27 +133,28 @@ def test_dataset_versions_recorded_and_doctor_fail_closed_without_providers() ->
     assert any(not f.ok for f in report.findings)
 
 
-def test_default_active_profile_remains_cbrs_v1() -> None:
+def test_default_active_profile_remains_cbrs() -> None:
     clear_profile_override()
     assert DEFAULT_PROFILE_ID == "cbrs_winnforum"
     assert active_profile_id() == "cbrs_winnforum"
-    active = get_active_profile()
-    assert active.id == "cbrs_winnforum"
-    assert active.version == "1.0.0"
-    assert active.band_plan.low_hz == 3_550_000_000
-    assert active.band_plan.high_hz == 3_700_000_000
+    active = get_active_profile_document()
+    assert active.metadata.id == "cbrs_winnforum"
+    assert active.metadata.version == "2.0.0"
+    band = primary_spectrum_range(active)
+    assert band.low_hz == 3_550_000_000
+    assert band.high_hz == 3_700_000_000
 
 
-def test_load_br_v2_does_not_mutate_cbrs_v1_active_or_band() -> None:
+def test_load_br_does_not_mutate_cbrs_active_or_band() -> None:
     clear_profile_override()
-    before = load_profile("cbrs_winnforum")
+    before = get_active_profile_document()
     br = load_profile_v2("br_anatel_slp_3700")
-    after = load_profile("cbrs_winnforum")
+    after = get_active_profile_document()
     assert br.metadata.id == "br_anatel_slp_3700"
-    assert before.band_plan.low_hz == after.band_plan.low_hz == 3_550_000_000
-    assert before.band_plan.high_hz == after.band_plan.high_hz == 3_700_000_000
-    assert get_active_profile().id == "cbrs_winnforum"
-    # BR must not be selectable via v1 active profile loader.
+    assert before.metadata.id == after.metadata.id == "cbrs_winnforum"
+    assert primary_spectrum_range(before).low_hz == primary_spectrum_range(after).low_hz
+    assert primary_spectrum_range(before).high_hz == primary_spectrum_range(after).high_hz
+    assert active_profile_id() == "cbrs_winnforum"
     assert br.metadata.id != active_profile_id()
 
 
@@ -195,22 +195,11 @@ def test_mechanism_reuse_full_catalog_for_both_profiles() -> None:
         assert cost.profile_python_loc == 0
 
 
-def test_cbrs_v1_request_path_profile_dir_ignores_v2_br_file() -> None:
-    """v1 loader catalogs only profiles/*.yaml — not profiles/v2/."""
-    from spectrum_profiles.loader import get_profiles_dir
-
-    v1_dir = get_profiles_dir()
-    assert (v1_dir / "cbrs_winnforum.yaml").is_file()
-    assert not (v1_dir / "br_anatel_slp_3700.yaml").exists()
-    assert (v1_dir / "v2" / "br_anatel_slp_3700.yaml").is_file()
-    # v1 load of BR id must fail (not on v1 path)
-    from spectrum_profiles.loader import ProfileNotFoundError
-
-    try:
-        load_profile("br_anatel_slp_3700")
-        raise AssertionError("v1 loader must not resolve BR v2-only profile")
-    except ProfileNotFoundError:
-        pass
+def test_builtin_catalog_loads_non_cbrs_by_id() -> None:
+    """Non-CBRS reference profiles resolve from the builtin catalog."""
+    br = load_profile_v2("br_anatel_slp_3700")
+    assert br.metadata.id == "br_anatel_slp_3700"
+    assert br.spectrum.ranges[0].low_hz == 3_700_000_000
 
 
 def test_interleaved_loads_preserve_invariants() -> None:
@@ -218,8 +207,6 @@ def test_interleaved_loads_preserve_invariants() -> None:
     for _ in range(3):
         cbrs = load_profile_v2("cbrs_winnforum")
         br = load_profile_v2("br_anatel_slp_3700")
-        v1 = load_profile("cbrs_winnforum")
-        assert v1.band_plan.high_hz == 3_700_000_000
         assert cbrs.spectrum.ranges[0].high_hz == 3_700_000_000
         assert br.spectrum.ranges[0].low_hz == 3_700_000_000
         assert [c.mechanism for c in br.constraints][0] == "duplex_mode"

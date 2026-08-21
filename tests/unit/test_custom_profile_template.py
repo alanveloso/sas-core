@@ -7,7 +7,6 @@ from pathlib import Path
 
 import yaml
 
-from spectrum_profiles.loader import load_profile
 from spectrum_profiles.v2.doctor import run_profile_doctor
 from spectrum_profiles.v2.parse import load_profile_v2, load_profile_v2_document
 
@@ -26,7 +25,7 @@ def test_template_and_example_pass_profile_doctor():
         assert report.profile_hash
 
 
-def test_example_is_custom_status_and_not_v1_or_v2_request_catalog():
+def test_example_is_custom_status_and_builtin_catalog_untouched():
     parsed = load_profile_v2_document(_EXAMPLE)
     assert parsed.metadata.status == "custom"
     assert parsed.metadata.id == "custom_campus_6ghz"
@@ -36,13 +35,10 @@ def test_example_is_custom_status_and_not_v1_or_v2_request_catalog():
         "enterprise",
         "guest",
     ]
-    # CBRS v1 request-path loader and v2 id catalog remain untouched.
-    v1 = load_profile("cbrs_winnforum")
-    assert v1.id == "cbrs_winnforum"
-    assert v1.version == "1.0.0"
-    v2 = load_profile_v2("cbrs_winnforum")
-    assert v2.metadata.version == "2.0.0"
-    assert v2.metadata.status == "reference"
+    # Builtin reference catalog remains loadable by id.
+    cbrs = load_profile_v2("cbrs_winnforum")
+    assert cbrs.metadata.version == "2.0.0"
+    assert cbrs.metadata.status == "reference"
 
 
 def test_copy_adapt_template_without_python(tmp_path: Path):
