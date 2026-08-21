@@ -407,7 +407,7 @@ def build_package(
         if src.is_file():
             _copy_file(src, outdir / "dependency-locks" / name)
 
-    profile = root / "spectrum_profiles" / "profiles" / "cbrs_winnforum.yaml"
+    profile = root / "spectrum_profiles" / "profiles" / "v2" / "cbrs_winnforum.yaml"
     _copy_file(profile, outdir / "profiles" / "cbrs_winnforum.yaml")
 
     _copy_file(root / ".env.example", outdir / "configs" / "env.example")

@@ -23,7 +23,6 @@ from spectrum_profiles.v2.doctor import (
     render_profile_doctor_report,
     run_profile_doctor,
 )
-from spectrum_profiles.v2.migrate import project_v1_to_v2_document
 from spectrum_profiles.v2.negotiate import (
     adapters_satisfying_device_capabilities,
     adapters_satisfying_network_capabilities,
@@ -113,7 +112,6 @@ __all__ = [
     "profile_context_from_v2",
     "profile_hash",
     "profile_hash_v2",
-    "project_v1_to_v2_document",
     "reload_active_profile_document",
     "render_profile_doctor_report",
     "run_profile_doctor",

@@ -64,6 +64,7 @@ def test_selection_module_has_no_loader_or_schema_deps() -> None:
     forbidden = {
         "spectrum_profiles.loader",
         "spectrum_profiles.schema",
+        "spectrum_profiles.context",
         "spectrum_profiles.v2",
         "SpectrumProfile",
         "ProfileDocument",
