@@ -30,6 +30,7 @@ from services.concurrency import (
 from services.fad_client_service import run_peer_fad_sync
 from services.fad_service import create_full_activity_dump, fad_cbsd_id
 from services.meas_report import clear_admin_flags, set_admin_flag
+from spectrum_profiles.v2 import DistanceExclusionBinding, get_active_profile_document
 
 logger = logging.getLogger(__name__)
 
@@ -1205,27 +1206,43 @@ def _frozen_conflicts_peer_esc(
     return False
 
 
-def _peer_esc_params() -> tuple[float, int, int]:
-    from spectrum_profiles.context import get_active_profile
+def _required_distance_exclusion_binding(binding_id: str) -> DistanceExclusionBinding:
+    """Resolve a required CBRS peer protection binding from the active canonical Profile."""
+    profile = get_active_profile_document()
+    if profile.protection is None:
+        raise CpasRfEvaluationError(
+            f"required protection binding '{binding_id}' is missing "
+            f"(active profile '{profile.metadata.id}' has no protection section)"
+        )
+    for item in profile.protection.bindings:
+        if item.id == binding_id:
+            return item
+    raise CpasRfEvaluationError(
+        f"required protection binding '{binding_id}' is missing "
+        f"(active profile '{profile.metadata.id}')"
+    )
 
-    profile = get_active_profile()
-    rule = profile.get_protection("peer_esc")
-    if rule and rule.enabled:
-        radius_m = float(rule.params.get("radius_m", 40_000.0))
-        low = int(rule.params.get("low_hz", profile.band_plan.low_hz))
-        high = int(rule.params.get("high_hz", profile.band_plan.high_hz))
-        return radius_m, low, high
-    bp = profile.band_plan
-    return 40_000.0, bp.low_hz, bp.high_hz
+
+def _peer_esc_params() -> tuple[float, int, int]:
+    binding = _required_distance_exclusion_binding("peer_esc")
+    if binding.frequency is None:
+        raise CpasRfEvaluationError(
+            "required protection binding 'peer_esc' is missing a frequency scope"
+        )
+    return (
+        float(binding.distance_m),
+        int(binding.frequency.low_hz),
+        int(binding.frequency.high_hz),
+    )
 
 
 def _peer_ppa_buffer_m() -> float:
-    from spectrum_profiles.context import get_active_profile
-
-    rule = get_active_profile().get_protection("peer_ppa")
-    if rule and rule.enabled:
-        return float(rule.params.get("buffer_m", 1_000.0))
-    return 1_000.0
+    binding = _required_distance_exclusion_binding("peer_ppa")
+    if binding.frequency is not None:
+        raise CpasRfEvaluationError(
+            "peer_ppa distance binding must not declare a frequency scope"
+        )
+    return float(binding.distance_m)
 
 
 def _peer_records_of_type(db: Session, record_type: str) -> list[dict[str, Any]]:

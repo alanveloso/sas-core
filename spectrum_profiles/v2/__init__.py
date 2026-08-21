@@ -45,6 +45,7 @@ from spectrum_profiles.v2.semantics import validate_profile_v2_semantics
 from spectrum_profiles.v2.schema import (
     AccessSection,
     AuthorizationSection,
+    DistanceExclusionBinding,
     FixedWidthChannelization,
     GeographySection,
     PowerSection,
@@ -69,6 +70,7 @@ __all__ = [
     "AccessSection",
     "AuthorizationSection",
     "DEFAULT_PROFILE_ID",
+    "DistanceExclusionBinding",
     "FixedWidthChannelization",
     "GeographySection",
     "PowerSection",
