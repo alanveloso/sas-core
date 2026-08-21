@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from primitives.registry import MechanismRegistry
+from primitives.frequency import FrequencyRange
+from primitives.registry import MechanismAxis, MechanismRegistry
 from spectrum_profiles.v2.schema import ProfileV2SpectrumDocument
 
 _RF_PROTECTION = frozenset({"single_link_threshold", "aggregate_linear_power"})
@@ -43,3 +44,23 @@ def validate_profile_v2_semantics(
             raise ValueError(
                 "single_link_threshold/aggregate_linear_power require rf.required"
             )
+
+    if parsed.protection is not None:
+        parents = tuple(
+            FrequencyRange(low_hz=item.low_hz, high_hz=item.high_hz)
+            for item in parsed.spectrum.ranges
+        )
+        for binding in parsed.protection.bindings:
+            catalog.on_axis(MechanismAxis.PROTECTION, binding.mechanism)
+            if binding.frequency is None:
+                continue
+            scope = FrequencyRange(
+                low_hz=binding.frequency.low_hz,
+                high_hz=binding.frequency.high_hz,
+            )
+            if not any(parent.contains(scope) for parent in parents):
+                raise ValueError(
+                    f"protection binding {binding.id!r} frequency scope "
+                    f"[{scope.low_hz}, {scope.high_hz}) is not fully contained "
+                    "in any declared spectrum range"
+                )

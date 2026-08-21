@@ -317,10 +317,44 @@ _NETWORK_CAPABILITIES = frozenset(
 )
 
 
+class FrequencyScopeConfig(BaseModel):
+    """Closed frequency window for a protection binding (Hz)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    low_hz: int
+    high_hz: int
+
+    @model_validator(mode="after")
+    def _interval(self) -> FrequencyScopeConfig:
+        FrequencyRange(low_hz=self.low_hz, high_hz=self.high_hz)
+        return self
+
+
+class DistanceExclusionBinding(BaseModel):
+    """Parameterized ``distance_exclusion`` instance; ``id`` is profile-local opaque."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(..., min_length=1)
+    mechanism: Literal["distance_exclusion"] = "distance_exclusion"
+    distance_m: float = Field(..., gt=0)
+    frequency: FrequencyScopeConfig | None = None
+
+    @model_validator(mode="after")
+    def _id_token(self) -> DistanceExclusionBinding:
+        if not self.id.strip() or self.id != self.id.strip():
+            raise ValueError("binding id must be a non-blank token")
+        return self
+
+
 class ProtectionSection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     mechanisms: tuple[str, ...] = ()
+    # Single typed binding kind for STEP 0; promote to a mechanism-discriminated
+    # union when a second real parameterized protection binding is needed.
+    bindings: tuple[DistanceExclusionBinding, ...] = ()
 
     @model_validator(mode="after")
     def _unique(self) -> ProtectionSection:
@@ -329,6 +363,16 @@ class ProtectionSection(BaseModel):
         for item in self.mechanisms:
             if not item.strip():
                 raise ValueError("protection.mechanisms entries must be non-empty")
+        binding_ids = [item.id for item in self.bindings]
+        if len(binding_ids) != len(set(binding_ids)):
+            raise ValueError("protection.bindings ids must be unique")
+        declared = set(self.mechanisms)
+        for item in self.bindings:
+            if item.mechanism not in declared:
+                raise ValueError(
+                    f"binding {item.id!r} mechanism {item.mechanism!r} "
+                    "is not listed in protection.mechanisms"
+                )
         return self
 
 

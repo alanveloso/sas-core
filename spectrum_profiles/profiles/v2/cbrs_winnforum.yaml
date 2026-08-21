@@ -64,6 +64,16 @@ protection:
     - exclusion_zone
     - single_link_threshold
     - aggregate_linear_power
+  bindings:
+    - id: peer_esc
+      mechanism: distance_exclusion
+      distance_m: 40000
+      frequency:
+        low_hz: 3550000000
+        high_hz: 3700000000
+    - id: peer_ppa
+      mechanism: distance_exclusion
+      distance_m: 1000
 
 coordination:
   mechanism: snapshot_evaluate_apply
